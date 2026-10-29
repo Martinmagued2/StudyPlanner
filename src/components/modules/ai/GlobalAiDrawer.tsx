@@ -42,7 +42,7 @@ export const GlobalAiDrawer: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [newMemoryText, setNewMemoryText] = useState('');
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
-  const [geminiApiKey, setGeminiApiKey] = useState(() => (import.meta.env.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '');
+  const [geminiApiKey, setGeminiApiKey] = useState(() => ((import.meta as any).env?.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '');
   const [apiKeySavedStatus, setApiKeySavedStatus] = useState('');
   const [isTestingKey, setIsTestingKey] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);

@@ -1602,7 +1602,7 @@ What would you like to start with?`,
       }
     }
 
-    const geminiKey = (import.meta.env.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '';
+    const geminiKey = ((import.meta as any).env?.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '';
     const lower = text.toLowerCase();
 
     // If student has connected their free Google Gemini API key and is asking study/concept questions

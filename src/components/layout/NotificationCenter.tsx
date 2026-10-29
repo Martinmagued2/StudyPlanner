@@ -83,3 +83,5 @@ export const NotificationCenter: React.FC<{ onClose: () => void }> = ({ onClose 
     </div>
   );
 };
+
+export default NotificationCenter;
