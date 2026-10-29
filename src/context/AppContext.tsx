@@ -432,6 +432,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveStored('active_chat_session_id', activeChatSessionId);
   }, [activeChatSessionId, storageKey]);
 
+  // Persistent Local Storage Synchronization for All Workspace Entities
+  useEffect(() => { saveStored('courses', courses); }, [courses, storageKey]);
+  useEffect(() => { saveStored('assignments', assignments); }, [assignments, storageKey]);
+  useEffect(() => { saveStored('tasks', tasks); }, [tasks, storageKey]);
+  useEffect(() => { saveStored('notes', notes); }, [notes, storageKey]);
+  useEffect(() => { saveStored('events', events); }, [events, storageKey]);
+  useEffect(() => { saveStored('inbox', inboxItems); }, [inboxItems, storageKey]);
+  useEffect(() => { saveStored('files', files); }, [files, storageKey]);
+  useEffect(() => { saveStored('flashcards', flashcards); }, [flashcards, storageKey]);
+  useEffect(() => { saveStored('flashcard_decks', flashcardDecks); }, [flashcardDecks, storageKey]);
+  useEffect(() => { saveStored('focus_sessions', focusSessions); }, [focusSessions, storageKey]);
+  useEffect(() => { saveStored('quizzes', quizzes); }, [quizzes, storageKey]);
+  useEffect(() => { saveStored('exams', exams); }, [exams, storageKey]);
+  useEffect(() => { saveStored('grade_items', gradeItems); }, [gradeItems, storageKey]);
+  useEffect(() => { saveStored('previous_term_courses', previousTermCourses); }, [previousTermCourses, storageKey]);
+  useEffect(() => { saveStored('ai_memories', aiMemories); }, [aiMemories, storageKey]);
+  useEffect(() => { saveStored('daily_plan', dailyPlan); }, [dailyPlan, storageKey]);
+  useEffect(() => { saveStored('integrations', integrations); }, [integrations, storageKey]);
+  useEffect(() => { saveStored('repos', githubRepos); }, [githubRepos, storageKey]);
+  useEffect(() => { saveStored('notifications', notifications); }, [notifications, storageKey]);
+  useEffect(() => { saveStored('reminder_logs', reminderLogs); }, [reminderLogs, storageKey]);
+
   // Derived current session messages
   const activeChatSession = chatSessions.find(s => s.id === activeChatSessionId) || chatSessions[0];
   const aiMessages = activeChatSession ? activeChatSession.messages : [defaultInitialWelcome];
