@@ -1,0 +1,217 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-main: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f1f5f9;
+    --border-color: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+  }
+
+  .dark {
+    --bg-main: #0b0f17;
+    --bg-surface: #111827;
+    --bg-subtle: #1f2937;
+    --border-color: #374151;
+    --text-primary: #f9fafb;
+    --text-secondary: #9ca3af;
+  }
+
+  * {
+    border-color: var(--border-color);
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Custom crisp scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 3px;
+}
+
+/* TipTap / Note editor styling */
+.note-content-editor h1 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: inherit;
+}
+
+.note-content-editor h2 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-top: 0.8rem;
+  margin-bottom: 0.4rem;
+  color: inherit;
+}
+
+.note-content-editor h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-top: 0.6rem;
+  margin-bottom: 0.3rem;
+  color: inherit;
+}
+
+.note-content-editor p {
+  margin-bottom: 0.6rem;
+  line-height: 1.6;
+}
+
+.note-content-editor ul {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  margin-bottom: 0.6rem;
+}
+
+.note-content-editor ol {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+  margin-bottom: 0.6rem;
+}
+
+.note-content-editor code {
+  font-family: 'JetBrains Mono', monospace;
+  background-color: #e2e8f0;
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.dark .note-content-editor code {
+  background-color: #1e293b;
+}
+
+.note-content-editor pre {
+  background-color: #0f172a;
+  color: #f8fafc;
+  padding: 0.875rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.875rem;
+}
+
+.note-content-editor table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+}
+
+.note-content-editor th, 
+.note-content-editor td {
+  border: 1px solid #cbd5e1;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.dark .note-content-editor th,
+.dark .note-content-editor td {
+  border-color: #374151;
+}
+
+.note-content-editor th {
+  background-color: #f1f5f9;
+  font-weight: 600;
+}
+
+.dark .note-content-editor th {
+  background-color: #1e293b;
+}
+
+/* Blockquote styling */
+.note-content-editor blockquote, blockquote {
+  border-left: 4px solid #3b82f6 !important;
+  padding-left: 1rem !important;
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+  margin: 0.85rem 0 !important;
+  background-color: rgba(59, 130, 246, 0.12) !important;
+  font-style: italic !important;
+  color: #1e293b !important;
+  border-radius: 0 0.5rem 0.5rem 0 !important;
+  display: block !important;
+}
+
+.dark .note-content-editor blockquote, .dark blockquote {
+  color: #f1f5f9 !important;
+  background-color: rgba(59, 130, 246, 0.22) !important;
+}
+
+/* Prism Code Block Syntax Highlighting */
+.token.comment, .token.prolog, .token.doctype, .token.cdata {
+  color: #64748b;
+  font-style: italic;
+}
+.token.punctuation {
+  color: #94a3b8;
+}
+.token.property, .token.tag, .token.boolean, .token.number, .token.constant, .token.symbol {
+  color: #fb923c;
+}
+.token.selector, .token.attr-name, .token.string, .token.char, .token.builtin {
+  color: #4ade80;
+}
+.token.operator, .token.entity, .token.url {
+  color: #38bdf8;
+}
+.token.atrule, .token.attr-value, .token.keyword {
+  color: #60a5fa;
+  font-weight: 600;
+}
+.token.function, .token.class-name {
+  color: #facc15;
+}
+.token.regex, .token.important, .token.variable {
+  color: #c084fc;
+}
+
+/* Print / PDF document styles - Hide all web app chrome */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  aside,
+  nav,
+  header,
+  .no-print,
+  button,
+  input,
+  select,
+  .ai-drawer,
+  .quick-create-modal,
+  .command-palette {
+    display: none !important;
+  }
+  .note-content-editor {
+    min-height: auto !important;
+    color: #000000 !important;
+  }
+}
+
