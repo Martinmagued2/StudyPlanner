@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { MeetingSlot } from '../../../types';
+import { getLiveScheduleStatus } from '../../../services/academicScheduleService';
 import {
   CheckSquare,
   FileCheck2,
@@ -101,24 +102,13 @@ export const TodayDashboard: React.FC = () => {
     .filter(e => e.diffDays >= 0 && e.diffDays <= 14)
     .sort((a, b) => a.diffDays - b.diffDays);
 
-  // Next Class Logic dynamically derived from courses
+  // Live Schedule & Next Class Logic dynamically derived from courses
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const currentDayNum = new Date().getDay();
   const currentDayName = days[currentDayNum];
-  const todayClasses = courses.flatMap(c =>
-    (c.meetingSlots || [])
-      .filter((s: MeetingSlot) => s.day === currentDayNum)
-      .map((s: MeetingSlot) => ({
-        code: c.code,
-        name: c.name,
-        time: `${s.startTime} - ${s.endTime}`,
-        location: s.location || c.location || 'Campus Room',
-        type: s.type || 'Lecture',
-        color: c.color,
-        courseId: c.id,
-        instructor: c.instructor
-      }))
-  );
+  const liveSchedule = getLiveScheduleStatus(courses);
+  const todayClasses = liveSchedule.todayClasses;
+  const activeOrNext = liveSchedule.activeOrNextClass;
 
   // What should I do now
   const recommendation = getWhatShouldIDoNow(timeWindow);
@@ -784,27 +774,41 @@ export const TodayDashboard: React.FC = () => {
           {/* Next Class Banner & Countdown */}
           <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
             <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-              Next Scheduled Class
+              {activeOrNext.status === 'happening_now' ? 'Class In Progress' : 'Next Scheduled Class'}
             </div>
-            {todayClasses.length > 0 ? (
+            {activeOrNext.classItem ? (
               <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                    {todayClasses[0].time}
+                  <span className={`px-2 py-0.5 text-[10px] font-semibold rounded ${
+                    activeOrNext.status === 'happening_now'
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1.5'
+                      : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                  }`}>
+                    {activeOrNext.status === 'happening_now' && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                    )}
+                    {activeOrNext.classItem.time}
                   </span>
-                  <span className="text-[10px] font-mono text-emerald-600 font-bold">Today</span>
+                  <span className={`text-[10px] font-mono font-bold ${
+                    activeOrNext.status === 'happening_now' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'
+                  }`}>
+                    {activeOrNext.badgeLabel}
+                  </span>
                 </div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  {todayClasses[0].code} — {todayClasses[0].location}
+                  {activeOrNext.classItem.courseCode} — {activeOrNext.classItem.location}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {todayClasses[0].name}
+                  {activeOrNext.classItem.courseName}
                 </p>
+                <div className="text-[11px] text-slate-400 font-medium">
+                  {activeOrNext.subLabel}
+                </div>
                 <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500">
-                  <span>{todayClasses[0].instructor}</span>
+                  <span>{activeOrNext.classItem.instructor}</span>
                   <button
-                    onClick={() => navigateToCourse(todayClasses[0].courseId)}
-                    className="text-blue-600 hover:underline flex items-center gap-0.5"
+                    onClick={() => navigateToCourse(activeOrNext.classItem!.courseId)}
+                    className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 font-medium"
                   >
                     <span>Open course</span>
                     <ChevronRight className="w-3 h-3" />
@@ -815,12 +819,12 @@ export const TodayDashboard: React.FC = () => {
               <div className="p-4 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
                 <Clock className="w-6 h-6 text-slate-300 dark:text-slate-700 mx-auto" />
                 <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  {courses.length === 0 ? 'No courses added yet' : 'No classes scheduled today'}
+                  {courses.length === 0 ? 'No courses added yet' : 'No upcoming classes scheduled'}
                 </div>
                 <p className="text-[11px] text-slate-400">
                   {courses.length === 0
                     ? 'Tell Ask AI what classes you have to build your timetable schedule.'
-                    : 'Check the Timetable tab for the rest of your week.'}
+                    : 'All sessions are complete for now. Check the Timetable tab for the rest of your week.'}
                 </p>
                 {courses.length === 0 && (
                   <button
@@ -857,21 +861,35 @@ export const TodayDashboard: React.FC = () => {
                 {todayClasses.map((cls, idx) => (
                   <div
                     key={idx}
-                    className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-1"
+                    onClick={() => navigateToCourse(cls.courseId)}
+                    className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-1 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition-colors group"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cls.color }} />
-                        <span className="font-semibold text-xs text-slate-900 dark:text-slate-100">
-                          {cls.code}
+                        <span className="font-semibold text-xs text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition-colors">
+                          {cls.courseCode}
                         </span>
                       </div>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono">
-                        {cls.type}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {cls.status === 'in_progress' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                            Live
+                          </span>
+                        )}
+                        {cls.status === 'completed' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
+                            Done
+                          </span>
+                        )}
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono capitalize">
+                          {cls.type}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                      {cls.name}
+                      {cls.courseName}
                     </div>
                     <div className="text-[11px] text-slate-400 font-mono flex items-center justify-between">
                       <span>{cls.time}</span>

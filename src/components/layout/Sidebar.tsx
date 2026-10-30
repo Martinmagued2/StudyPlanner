@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp, ActiveView } from '../../context/AppContext';
+import { getLiveScheduleStatus } from '../../services/academicScheduleService';
 import {
   LayoutDashboard,
   BookOpen,
@@ -58,6 +59,9 @@ export const Sidebar: React.FC = () => {
   } = useApp();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const liveSchedule = getLiveScheduleStatus(courses);
+  const selectedCourse = courses.find(c => c.id === selectedCourseId);
 
   // Live Counts
   const openTasksCount = tasks.filter(t => !t.completed).length;
@@ -403,17 +407,84 @@ export const Sidebar: React.FC = () => {
                 <span>Ask AI to add course</span>
               </button>
             </div>
+          ) : activeView === 'course-detail' && selectedCourse ? (
+            <button
+              type="button"
+              onClick={() => navigateToCourse(selectedCourse.id)}
+              className="w-full text-left group"
+            >
+              <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-1">
+                <span className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: selectedCourse.color }} />
+                  Active Course
+                </span>
+                <span className="text-[10px] font-mono text-slate-400 group-hover:text-blue-500">Details →</span>
+              </div>
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                {selectedCourse.code} — {selectedCourse.name}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                {selectedCourse.instructor} • {selectedCourse.location || 'Campus'}
+              </div>
+            </button>
+          ) : liveSchedule.activeOrNextClass.status === 'happening_now' && liveSchedule.currentClass ? (
+            <button
+              type="button"
+              onClick={() => navigateToCourse(liveSchedule.currentClass!.courseId)}
+              className="w-full text-left group"
+            >
+              <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-1">
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                  </span>
+                  In Session Now
+                </span>
+                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                  {liveSchedule.currentClass.remainingMinutes}m left
+                </span>
+              </div>
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                {liveSchedule.currentClass.courseCode} — {liveSchedule.currentClass.courseName}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                {liveSchedule.currentClass.time} • {liveSchedule.currentClass.location}
+              </div>
+            </button>
+          ) : liveSchedule.activeOrNextClass.classItem ? (
+            <button
+              type="button"
+              onClick={() => navigateToCourse(liveSchedule.activeOrNextClass.classItem!.courseId)}
+              className="w-full text-left group"
+            >
+              <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-1">
+                <span className="font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                  <Clock className="w-3 h-3 text-blue-500" />
+                  Next Class
+                </span>
+                <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 font-bold">
+                  {liveSchedule.activeOrNextClass.badgeLabel}
+                </span>
+              </div>
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                {liveSchedule.activeOrNextClass.classItem.courseCode} — {liveSchedule.activeOrNextClass.classItem.courseName}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                {liveSchedule.activeOrNextClass.subLabel} • {liveSchedule.activeOrNextClass.classItem.location}
+              </div>
+            </button>
           ) : (
             <div>
               <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-1">
-                <span className="font-medium">Current Course</span>
+                <span className="font-medium">Academic Workspace</span>
                 <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">{courses.length} enrolled</span>
               </div>
               <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                {courses[0].code} — {courses[0].name}
+                All Courses Active
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                {courses[0].meetingSlots?.[0] ? `Day ${courses[0].meetingSlots[0].day} • ${courses[0].meetingSlots[0].startTime}` : 'Schedule flexible'} • {courses[0].instructor}
+                No classes scheduled for today
               </div>
             </div>
           )}
