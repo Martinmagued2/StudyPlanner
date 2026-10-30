@@ -40,6 +40,7 @@ export const FilesView: React.FC = () => {
   const {
     files,
     addFile,
+    updateFile,
     deleteFile,
     toggleFavoriteFile,
     reindexFile,
@@ -55,6 +56,14 @@ export const FilesView: React.FC = () => {
   const [selectedFileId, setSelectedFileId] = useState<string>(files[0]?.id || 'all');
   const [isProcessingUpload, setIsProcessingUpload] = useState(false);
   const [uploadToast, setUploadToast] = useState<string | null>(null);
+
+  // Course Filter & Upload Course Assignment state
+  const [courseFilter, setCourseFilter] = useState<string>('all');
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
+  const [uploadCourseId, setUploadCourseId] = useState<string>(courses[0]?.id || '');
+  const [pastedCourseId, setPastedCourseId] = useState<string>(courses[0]?.id || '');
+  const [ytCourseId, setYtCourseId] = useState<string>(courses[0]?.id || '');
 
   // Q&A grounded state
   const [qaInput, setQaInput] = useState('');
@@ -100,10 +109,17 @@ export const FilesView: React.FC = () => {
   const [ytUrl, setYtUrl] = useState('');
   const [ytTranscript, setYtTranscript] = useState('');
 
+  // Course-filtered documents
+  const filteredFiles = courseFilter === 'all'
+    ? files
+    : courseFilter === 'unassigned'
+      ? files.filter(f => !f.courseId)
+      : files.filter(f => f.courseId === courseFilter);
+
   // Active files resolution: single file or all files
   const isAllFiles = selectedFileId === 'all';
-  const selectedFile = files.find(f => f.id === selectedFileId) || (files.length > 0 ? files[0] : null);
-  const targetFiles: DocumentFile[] = isAllFiles ? files : selectedFile ? [selectedFile] : files;
+  const selectedFile = files.find(f => f.id === selectedFileId) || (filteredFiles.length > 0 ? filteredFiles[0] : null);
+  const targetFiles: DocumentFile[] = isAllFiles ? filteredFiles : selectedFile ? [selectedFile] : filteredFiles;
 
   const hasApiKey = Boolean(getGeminiApiKey());
 
@@ -113,8 +129,8 @@ export const FilesView: React.FC = () => {
     setTimeout(() => setUploadToast(null), 4000);
   };
 
-  // 1. Real File Upload Handler
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 1. Stage File Picked (opens modal to choose course & verify)
+  const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -123,38 +139,54 @@ export const FilesView: React.FC = () => {
       return;
     }
 
+    setStagedFile(file);
+    if (courseFilter !== 'all' && courseFilter !== 'unassigned') {
+      setUploadCourseId(courseFilter);
+    } else if (!uploadCourseId && courses[0]?.id) {
+      setUploadCourseId(courses[0].id);
+    }
+    setIsUploadModalOpen(true);
+    e.target.value = '';
+  };
+
+  // 1b. Real File Upload Execution with Assigned Course
+  const handleConfirmUpload = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!stagedFile) return;
+
     setIsProcessingUpload(true);
     try {
-      const { text, pageCount, fileType } = await extractTextFromFile(file);
+      const { text, pageCount, fileType } = await extractTextFromFile(stagedFile);
+      const targetCourse = courses.find(c => c.id === uploadCourseId);
 
       const newDoc = addFile(
         {
-          name: file.name,
-          sizeBytes: file.size,
+          name: stagedFile.name,
+          sizeBytes: stagedFile.size,
           fileType,
           status: 'fully_read',
           pageCount,
-          courseId: courses[0]?.id,
+          courseId: uploadCourseId || undefined,
           isFavorite: false,
           rawText: text,
-          summary: `Extracted ${text.split(/\s+/).length} words across ${pageCount} pages from ${file.name}. Vectorized and ready for AI lecture notes, quizzes, and flashcards.`
+          summary: `Extracted ${text.split(/\s+/).length} words across ${pageCount} pages from ${stagedFile.name}. Linked to ${targetCourse ? targetCourse.code : 'General Library'}. Ready for AI lecture notes, quizzes, and flashcards.`
         },
         text
       );
 
       setSelectedFileId(newDoc.id);
-      triggerToast(`✓ Read "${file.name}" successfully (${pageCount} pages, ${text.split(/\s+/).length} words extracted)!`);
+      setIsUploadModalOpen(false);
+      setStagedFile(null);
+      triggerToast(`✓ Read "${stagedFile.name}" successfully (${pageCount} pages) and linked to ${targetCourse ? targetCourse.code : 'General'}!`);
     } catch (err) {
       console.error('File parsing failed:', err);
       alert('Error extracting text from file. Please ensure it is a valid PDF, Word doc, or text file.');
     } finally {
       setIsProcessingUpload(false);
-      // Reset input value so same file can be re-uploaded if needed
-      e.target.value = '';
     }
   };
 
-  // 2. Paste Lecture Text / Transcript Handler
+  // 2. Paste Lecture Text / Transcript Handler with Course Assignment
   const handlePasteLectureSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!pastedContent.trim()) return;
@@ -162,6 +194,7 @@ export const FilesView: React.FC = () => {
     const title = pastedTitle.trim() || `Pasted_Lecture_Notes_${Date.now().toString().slice(-4)}.txt`;
     const wordCount = pastedContent.split(/\s+/).length;
     const pageCount = Math.max(1, Math.ceil(pastedContent.length / 1500));
+    const targetCourse = courses.find(c => c.id === pastedCourseId);
 
     const newDoc = addFile(
       {
@@ -170,10 +203,10 @@ export const FilesView: React.FC = () => {
         fileType: 'txt',
         status: 'fully_read',
         pageCount,
-        courseId: courses[0]?.id,
+        courseId: pastedCourseId || undefined,
         isFavorite: false,
         rawText: pastedContent,
-        summary: `Lecture transcript with ${wordCount} words. Ready for AI note generation and active recall practice.`
+        summary: `Lecture transcript with ${wordCount} words for ${targetCourse ? targetCourse.code : 'General'}. Ready for AI note generation and active recall practice.`
       },
       pastedContent
     );
@@ -182,32 +215,33 @@ export const FilesView: React.FC = () => {
     setIsPasteTextModalOpen(false);
     setPastedTitle('');
     setPastedContent('');
-    triggerToast(`✓ Added lecture notes "${title}" with ${wordCount} words!`);
+    triggerToast(`✓ Added lecture notes "${title}" linked to ${targetCourse ? targetCourse.code : 'General'}!`);
   };
 
-  // 3. YouTube Captions Handler
+  // 3. YouTube Captions Handler with Course Assignment
   const handleImportYoutube = (e: React.FormEvent) => {
     e.preventDefault();
     const docName = ytUrl ? `YouTube_Lecture_${Date.now().toString().slice(-4)}.txt` : 'Lecture_Captions.txt';
     const content = ytTranscript.trim() || '00:01:20 [Lecturer] In today’s lecture we examine fundamental system mechanisms and computational complexity bounds...';
-    
+    const targetCourse = courses.find(c => c.id === ytCourseId);
+
     const newDoc = addFile({
       name: docName,
       sizeBytes: content.length,
       fileType: 'txt',
       status: 'fully_read',
       pageCount: Math.max(1, Math.ceil(content.length / 1500)),
-      courseId: courses[0]?.id,
+      courseId: ytCourseId || undefined,
       isFavorite: false,
       rawText: content,
-      summary: 'Timestamped lecture transcription extracted from video captions.'
+      summary: `Timestamped lecture transcription extracted from video captions for ${targetCourse ? targetCourse.code : 'General'}.`
     }, content);
 
     setSelectedFileId(newDoc.id);
     setIsYoutubeModalOpen(false);
     setYtUrl('');
     setYtTranscript('');
-    triggerToast(`✓ Imported captions from video!`);
+    triggerToast(`✓ Imported captions linked to ${targetCourse ? targetCourse.code : 'General'}!`);
   };
 
   // 4. Grounded QA Handler
@@ -412,22 +446,22 @@ export const FilesView: React.FC = () => {
             <span>Video Captions</span>
           </button>
 
-          {/* Upload File Input */}
-          <label className={`px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white cursor-pointer flex items-center gap-1.5 shadow-sm transition-opacity ${isProcessingUpload ? 'opacity-60 cursor-not-allowed' : ''}`}>
-            {isProcessingUpload ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <UploadCloud className="w-3.5 h-3.5" />
-            )}
-            <span>{isProcessingUpload ? 'Extracting Text...' : 'Upload Document'}</span>
-            <input
-              type="file"
-              disabled={isProcessingUpload}
-              accept=".pdf,.docx,.doc,.txt,.md,.csv,.json,.py,.java,.cpp,.html"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </label>
+          {/* Upload Document Button */}
+          <button
+            onClick={() => {
+              setStagedFile(null);
+              if (courseFilter !== 'all' && courseFilter !== 'unassigned') {
+                setUploadCourseId(courseFilter);
+              } else if (!uploadCourseId && courses[0]?.id) {
+                setUploadCourseId(courses[0].id);
+              }
+              setIsUploadModalOpen(true);
+            }}
+            className="px-3.5 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center gap-1.5 shadow-sm transition-colors"
+          >
+            <UploadCloud className="w-3.5 h-3.5" />
+            <span>Upload Document</span>
+          </button>
         </div>
       </div>
 
@@ -436,8 +470,26 @@ export const FilesView: React.FC = () => {
         {/* Left Column: Documents Selector & Scope */}
         <div className="space-y-4">
           <div className="flex items-center justify-between text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            <span>Documents Library ({files.length})</span>
-            <span className="text-[10px] font-mono">PDF, DOCX, TXT, MD</span>
+            <span>Documents Library ({filteredFiles.length})</span>
+            <span className="text-[10px] font-mono">PDF, PPTX, DOCX, TXT</span>
+          </div>
+
+          {/* Course Filter Dropdown */}
+          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Filter Course:</span>
+            <select
+              value={courseFilter}
+              onChange={e => setCourseFilter(e.target.value)}
+              className="text-xs font-semibold rounded-lg px-2.5 py-1 border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500 max-w-[180px] truncate"
+            >
+              <option value="all">All Courses ({files.length})</option>
+              {courses.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.code} ({files.filter(f => f.courseId === c.id).length})
+                </option>
+              ))}
+              <option value="unassigned">General ({files.filter(f => !f.courseId).length})</option>
+            </select>
           </div>
 
           {/* Scope Selector: "All Documents" Combined vs Single File */}
@@ -453,7 +505,7 @@ export const FilesView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Layers className={`w-4 h-4 ${isAllFiles ? 'text-blue-600' : 'text-slate-400'}`} />
                 <span className={`text-xs font-bold ${isAllFiles ? 'text-blue-900 dark:text-blue-200' : 'text-slate-800 dark:text-slate-200'}`}>
-                  All {files.length} Documents Combined
+                  All {filteredFiles.length} Documents Combined
                 </span>
               </div>
               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
@@ -461,73 +513,111 @@ export const FilesView: React.FC = () => {
               </span>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-              Have the AI read across all uploaded files to generate comprehensive course notes and cross-chapter exams.
+              Have the AI read across all {filteredFiles.length} uploaded files in this scope to generate comprehensive course notes and cross-chapter exams.
             </p>
           </div>
 
           {/* Files List */}
           <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-            {files.map(file => {
-              const isSelected = selectedFileId === file.id;
-              const course = courses.find(c => c.id === file.courseId);
-
-              return (
-                <div
-                  key={file.id}
-                  onClick={() => setSelectedFileId(file.id)}
-                  className={`p-3 rounded-xl border cursor-pointer transition-colors space-y-1.5 text-xs ${
-                    isSelected
-                      ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 shadow-xs'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
-                  }`}
+            {filteredFiles.length === 0 ? (
+              <div className="p-8 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-slate-400 text-xs space-y-2">
+                <FileText className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
+                <p>No documents found for this filter.</p>
+                <button
+                  onClick={() => {
+                    setStagedFile(null);
+                    if (courseFilter !== 'all' && courseFilter !== 'unassigned') {
+                      setUploadCourseId(courseFilter);
+                    }
+                    setIsUploadModalOpen(true);
+                  }}
+                  className="text-blue-600 hover:underline font-semibold"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 truncate">
-                      <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                      <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
-                        {file.name}
+                  Upload a file for this course →
+                </button>
+              </div>
+            ) : (
+              filteredFiles.map(file => {
+                const isSelected = selectedFileId === file.id;
+                const course = courses.find(c => c.id === file.courseId);
+
+                return (
+                  <div
+                    key={file.id}
+                    onClick={() => setSelectedFileId(file.id)}
+                    className={`p-3 rounded-xl border cursor-pointer transition-colors space-y-2 text-xs ${
+                      isSelected
+                        ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 shadow-xs'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 truncate">
+                        <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                          {file.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            toggleFavoriteFile(file.id);
+                          }}
+                          className="p-1 text-slate-400 hover:text-amber-500"
+                          title="Star document"
+                        >
+                          <Star className={`w-3.5 h-3.5 ${file.isFavorite ? 'fill-amber-400 text-amber-500' : ''}`} />
+                        </button>
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            deleteFile(file.id);
+                            if (selectedFileId === file.id) setSelectedFileId('all');
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-500"
+                          title="Delete document"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                      <span>{file.pageCount} pages • {(file.sizeBytes / 1024).toFixed(0)} KB</span>
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-sans text-[10px]">
+                        {file.status.replace('_', ' ')}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          toggleFavoriteFile(file.id);
+
+                    {/* Inline Course Reassignment Dropdown */}
+                    <div
+                      className="flex items-center justify-between gap-1 pt-1.5 border-t border-slate-100 dark:border-slate-800"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <span className="text-[10px] text-slate-400 font-medium">Course:</span>
+                      <select
+                        value={file.courseId || ''}
+                        onChange={e => {
+                          const newCourseId = e.target.value || undefined;
+                          updateFile(file.id, { courseId: newCourseId });
+                          const targetCourse = courses.find(c => c.id === newCourseId);
+                          triggerToast(`Moved "${file.name}" to ${targetCourse ? targetCourse.code : 'General Library'}`);
                         }}
-                        className="p-1 text-slate-400 hover:text-amber-500"
-                        title="Star document"
+                        className="text-[10px] font-bold rounded px-1.5 py-0.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:border-blue-400 focus:outline-none max-w-[170px] truncate"
                       >
-                        <Star className={`w-3.5 h-3.5 ${file.isFavorite ? 'fill-amber-400 text-amber-500' : ''}`} />
-                      </button>
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          deleteFile(file.id);
-                          if (selectedFileId === file.id) setSelectedFileId('all');
-                        }}
-                        className="p-1 text-slate-400 hover:text-rose-500"
-                        title="Delete document"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <option value="">No Course (General)</option>
+                        {courses.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.code}: {c.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
-
-                  <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
-                    <span>{file.pageCount} pages • {(file.sizeBytes / 1024).toFixed(0)} KB</span>
-                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-sans text-[10px]">
-                      {file.status.replace('_', ' ')}
-                    </span>
-                  </div>
-
-                  {course && (
-                    <div className="text-[10px] font-semibold" style={{ color: course.color }}>
-                      {course.code}: {course.name}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -553,6 +643,29 @@ export const FilesView: React.FC = () => {
                     ? 'The AI can synthesize, explain, and extract test questions covering your complete library.'
                     : selectedFile?.summary || 'Text extracted and ready for analysis.'}
                 </p>
+
+                {!isAllFiles && selectedFile && (
+                  <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <span className="text-[11px] font-semibold text-slate-500">Course:</span>
+                    <select
+                      value={selectedFile.courseId || ''}
+                      onChange={e => {
+                        const newCourseId = e.target.value || undefined;
+                        updateFile(selectedFile.id, { courseId: newCourseId });
+                        const targetCourse = courses.find(c => c.id === newCourseId);
+                        triggerToast(`Assigned "${selectedFile.name}" to ${targetCourse ? targetCourse.code : 'General Library'}`);
+                      }}
+                      className="text-xs font-semibold rounded-md px-2 py-1 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="">General Library (No Course)</option>
+                      {courses.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.code}: {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {!isAllFiles && selectedFile && (
@@ -1268,6 +1381,153 @@ export const FilesView: React.FC = () => {
         </div>
       )}
 
+      {/* MODAL 0: Upload Document with Course Selection */}
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                  <UploadCloud className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    Upload Document & Assign Course
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Choose your lecture file and specify which course it relates to for AI indexing.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  if (!isProcessingUpload) {
+                    setIsUploadModalOpen(false);
+                    setStagedFile(null);
+                  }
+                }}
+                disabled={isProcessingUpload}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmUpload} className="space-y-4">
+              {/* Course Selector Dropdown */}
+              <div>
+                <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1.5 text-xs">
+                  Assign to Course <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={uploadCourseId}
+                  onChange={e => setUploadCourseId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-semibold focus:outline-none focus:border-blue-500 text-xs"
+                >
+                  <option value="">General Library (No Specific Course)</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.code}: {c.name} ({c.instructor || 'Staff'})
+                    </option>
+                  ))}
+                </select>
+                {courses.length === 0 ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                    No courses enrolled yet. You can add courses in the Courses tab!
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    The document will be linked to this course for flashcards, notes, and course files.
+                  </p>
+                )}
+              </div>
+
+              {/* File Selection Area */}
+              <div>
+                <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1.5 text-xs">
+                  Document File (.pdf, .pptx, .docx, .txt, .md) <span className="text-rose-500">*</span>
+                </label>
+
+                {stagedFile ? (
+                  <div className="p-3.5 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/20 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                        {stagedFile.name.split('.').pop() || 'DOC'}
+                      </div>
+                      <div className="truncate">
+                        <div className="font-bold text-slate-900 dark:text-slate-100 text-xs truncate max-w-[280px]">
+                          {stagedFile.name}
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                          {(stagedFile.size / (1024 * 1024)).toFixed(2)} MB • Ready to extract
+                        </div>
+                      </div>
+                    </div>
+                    <label className="px-2.5 py-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer hover:underline shrink-0">
+                      Change File
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.doc,.txt,.md,.pptx,.ppt,.csv,.json,.py,.java,.cpp,.html"
+                        onChange={handleFilePicked}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-colors text-center bg-slate-50/50 dark:bg-slate-800/20">
+                    <UploadCloud className="w-7 h-7 text-blue-500 mb-2" />
+                    <span className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                      Click to choose document or drop file here
+                    </span>
+                    <span className="text-[11px] text-slate-400 mt-1">
+                      Supports PDF, PowerPoint (PPTX), Word (DOCX), and Text up to 30 MB
+                    </span>
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.doc,.txt,.md,.pptx,.ppt,.csv,.json,.py,.java,.cpp,.html"
+                      onChange={handleFilePicked}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* Submit / Cancel Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUploadModalOpen(false);
+                    setStagedFile(null);
+                  }}
+                  disabled={isProcessingUpload}
+                  className="px-3.5 py-1.5 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!stagedFile || isProcessingUpload}
+                  className="px-4 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+                >
+                  {isProcessingUpload ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Extracting & Indexing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Upload & Process with AI</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL 4: Paste Lecture Text / Transcript */}
       {isPasteTextModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5">
@@ -1287,6 +1547,25 @@ export const FilesView: React.FC = () => {
             </p>
 
             <form onSubmit={handlePasteLectureSubmit} className="space-y-3">
+              {/* Course Selection */}
+              <div>
+                <label className="block font-medium mb-1 text-slate-700 dark:text-slate-300">
+                  Assign to Course <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={pastedCourseId}
+                  onChange={e => setPastedCourseId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">General Library (No Course)</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.code}: {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block font-medium mb-1 text-slate-700 dark:text-slate-300">
                   Lecture Title / Topic
@@ -1353,6 +1632,25 @@ export const FilesView: React.FC = () => {
             </p>
 
             <form onSubmit={handleImportYoutube} className="space-y-3">
+              {/* Course Selection */}
+              <div>
+                <label className="block font-medium mb-1 text-slate-700 dark:text-slate-300">
+                  Assign to Course <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={ytCourseId}
+                  onChange={e => setYtCourseId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">General Library (No Course)</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.code}: {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block font-medium mb-1 text-slate-700 dark:text-slate-300">Video URL</label>
                 <input

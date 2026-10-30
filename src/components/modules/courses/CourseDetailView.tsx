@@ -22,9 +22,11 @@ import {
   CheckSquare,
   Trash2,
   Pencil,
-  X
+  X,
+  UploadCloud
 } from 'lucide-react';
 import { ClassType, MeetingSlot } from '../../../types';
+import { extractTextFromFile } from '../../../services/fileAiService';
 
 export const CourseDetailView: React.FC = () => {
   const {
@@ -40,6 +42,7 @@ export const CourseDetailView: React.FC = () => {
     githubRepos,
     addNote,
     addAssignment,
+    addFile,
     startFocusTimer,
     breakdownAssignmentWithAi,
     createQuizFromCourse,
@@ -48,6 +51,43 @@ export const CourseDetailView: React.FC = () => {
   } = useApp();
 
   const course = courses.find(c => c.id === selectedCourseId) || courses[0];
+
+  const [isUploadingCourseFile, setIsUploadingCourseFile] = useState(false);
+
+  const handleCourseFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !course) return;
+
+    if (file.size > 30 * 1024 * 1024) {
+      alert('Upload error: File exceeds 30 MB size limit.');
+      return;
+    }
+
+    setIsUploadingCourseFile(true);
+    try {
+      const { text, pageCount, fileType } = await extractTextFromFile(file);
+      addFile(
+        {
+          name: file.name,
+          sizeBytes: file.size,
+          fileType,
+          status: 'fully_read',
+          pageCount,
+          courseId: course.id,
+          isFavorite: false,
+          rawText: text,
+          summary: `Extracted ${text.split(/\s+/).length} words across ${pageCount} pages for ${course.code}: ${course.name}.`
+        },
+        text
+      );
+    } catch (err) {
+      console.error('File extraction failed:', err);
+      alert('Error extracting text from file.');
+    } finally {
+      setIsUploadingCourseFile(false);
+      e.target.value = '';
+    }
+  };
 
   if (!course) {
     return (
@@ -480,34 +520,80 @@ export const CourseDetailView: React.FC = () => {
         {/* TAB 4: FILES */}
         {activeCourseTab === 'files' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Indexed Course Documents & Slides</h3>
-              <button
-                onClick={() => setActiveView('files')}
-                className="text-xs text-blue-600 hover:underline"
-              >
-                Upload to File Library →
-              </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Documents & Lecture Slides for {course.code} ({courseFiles.length})
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  All materials linked to this course are vectorized for AI notes, quizzes, and tutoring.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors">
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>{isUploadingCourseFile ? 'Extracting...' : `Upload to ${course.code}`}</span>
+                  <input
+                    type="file"
+                    disabled={isUploadingCourseFile}
+                    accept=".pdf,.docx,.doc,.txt,.md,.pptx,.ppt,.csv"
+                    onChange={handleCourseFileUpload}
+                    className="hidden"
+                  />
+                </label>
+                <button
+                  onClick={() => setActiveView('files')}
+                  className="text-xs text-blue-600 hover:underline font-medium"
+                >
+                  File Library →
+                </button>
+              </div>
             </div>
-            <div className="space-y-3">
-              {courseFiles.map(file => (
-                <div key={file.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-3">
-                    <FolderArchive className="w-5 h-5 text-blue-600" />
-                    <div>
-                      <span className="font-bold text-slate-900 dark:text-slate-100">{file.name}</span>
-                      <div className="text-[11px] text-slate-500">{file.pageCount} pages • {file.status}</div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setActiveView('files')}
-                    className="px-3 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium"
-                  >
-                    Ask Document
-                  </button>
+
+            {courseFiles.length === 0 ? (
+              <div className="p-8 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-slate-400 text-xs space-y-3 bg-slate-50/50 dark:bg-slate-900/50">
+                <FolderArchive className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600" />
+                <div>
+                  <p className="font-semibold text-slate-700 dark:text-slate-300">
+                    No documents uploaded for {course.code} yet.
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Upload lecture slides (.pptx, .pdf) to generate AI notes, quizzes, and flashcards specifically for this course.
+                  </p>
                 </div>
-              ))}
-            </div>
+                <label className="inline-flex px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs items-center gap-1.5 cursor-pointer shadow-sm">
+                  <UploadCloud className="w-4 h-4" />
+                  <span>Upload Lecture File Now</span>
+                  <input
+                    type="file"
+                    disabled={isUploadingCourseFile}
+                    accept=".pdf,.docx,.doc,.txt,.md,.pptx,.ppt,.csv"
+                    onChange={handleCourseFileUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {courseFiles.map(file => (
+                  <div key={file.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-3">
+                      <FolderArchive className="w-5 h-5 text-blue-600 shrink-0" />
+                      <div>
+                        <span className="font-bold text-slate-900 dark:text-slate-100">{file.name}</span>
+                        <div className="text-[11px] text-slate-500">{file.pageCount} pages • {file.status.replace('_', ' ')} • {(file.sizeBytes / 1024).toFixed(0)} KB</div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setActiveView('files')}
+                      className="px-3 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      Ask Document
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

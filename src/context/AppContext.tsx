@@ -190,6 +190,7 @@ interface AppContextType {
 
   files: DocumentFile[];
   addFile: (file: Omit<DocumentFile, 'id' | 'uploadedAt' | 'chunks'>, sampleContent?: string) => DocumentFile;
+  updateFile: (id: string, updates: Partial<DocumentFile>) => void;
   deleteFile: (id: string) => void;
   toggleFavoriteFile: (id: string) => void;
   reindexFile: (id: string) => void;
@@ -1098,6 +1099,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setFiles(prev => [newFile, ...prev]);
     return newFile;
+  };
+
+  const updateFile = (id: string, updates: Partial<DocumentFile>) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
   };
 
   const deleteFile = (id: string) => {
@@ -2813,6 +2818,7 @@ How would you like me to assist you with your studies right now?`;
         deleteInboxItem,
         files,
         addFile,
+        updateFile,
         deleteFile,
         toggleFavoriteFile,
         reindexFile,
