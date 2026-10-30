@@ -26,6 +26,9 @@ import {
   Moon,
   Sun,
   Timer,
+  X,
+  Smartphone,
+  LogOut,
   Bot
 } from 'lucide-react';
 
@@ -47,7 +50,11 @@ export const Sidebar: React.FC = () => {
     focusState,
     startFocusTimer,
     user,
-    setIsAiDrawerOpen
+    setIsAiDrawerOpen,
+    isMobileNavOpen,
+    setIsMobileNavOpen,
+    setIsSyncModalOpen,
+    logout
   } = useApp();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -83,11 +90,140 @@ export const Sidebar: React.FC = () => {
   ];
 
   return (
-    <aside
-      className={`relative flex flex-col border-r bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 transition-all duration-200 select-none z-30 ${
-        isCollapsed ? 'w-16' : 'w-64'
-      }`}
-    >
+    <>
+      {/* Mobile Drawer Overlay */}
+      {isMobileNavOpen && (
+        <div className="fixed inset-0 z-50 flex md:hidden animate-in fade-in duration-200">
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            onClick={() => setIsMobileNavOpen(false)}
+          />
+          <div className="relative w-72 max-w-[85vw] h-full bg-white dark:bg-slate-900 shadow-2xl flex flex-col z-10 animate-in slide-in-from-left duration-200 border-r border-slate-200 dark:border-slate-800">
+            {/* Mobile Header */}
+            <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 flex items-center justify-center font-bold text-sm">
+                  N
+                </div>
+                <div className="flex flex-col">
+                  <span className="font-bold text-sm text-slate-900 dark:text-slate-100 leading-none">
+                    Nook Workspace
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Academic Intelligence
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsMobileNavOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick Actions Bar */}
+            <div className="p-3 border-b border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  setIsMobileNavOpen(false);
+                  openQuickCreate('task');
+                }}
+                className="py-1.5 px-2 text-xs font-semibold rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 flex items-center justify-center gap-1.5 shadow-2xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Create</span>
+              </button>
+              <button
+                onClick={() => {
+                  setIsMobileNavOpen(false);
+                  setIsSyncModalOpen(true);
+                }}
+                className="py-1.5 px-2 text-xs font-semibold rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900 flex items-center justify-center gap-1.5"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Sync</span>
+              </button>
+            </div>
+
+            {/* Navigation Links Scrollable */}
+            <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
+              {navItems.map(item => {
+                const isActive = activeView === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveView(item.id);
+                      setIsMobileNavOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                      isActive
+                        ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold shadow-2xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      {item.icon}
+                      <span>{item.label}</span>
+                    </div>
+                    {item.badge !== undefined && item.badge > 0 && (
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                        isActive
+                          ? 'bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                      }`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Mobile Footer */}
+            <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-xs shrink-0">
+                  {user?.name?.slice(0, 2).toUpperCase() || 'ST'}
+                </div>
+                <div className="truncate text-left">
+                  <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                    {user?.name || 'Student'}
+                  </div>
+                  <div className="text-[10px] text-slate-500 truncate">
+                    {user?.email}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700"
+                  title="Toggle theme"
+                >
+                  {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={logout}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60"
+                  title="Sign out"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Desktop Persistent Sidebar */}
+      <aside
+        className={`hidden md:flex relative flex-col border-r bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 transition-all duration-200 select-none z-30 shrink-0 ${
+          isCollapsed ? 'w-16' : 'w-64'
+        }`}
+      >
       {/* Brand Header */}
       <div className="flex items-center justify-between px-3.5 py-4 border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center gap-2.5 overflow-hidden">
@@ -319,5 +455,6 @@ export const Sidebar: React.FC = () => {
         )}
       </div>
     </aside>
+  </>
   );
 };

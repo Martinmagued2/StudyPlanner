@@ -141,6 +141,7 @@ export interface DocumentFile {
   isFavorite: boolean;
   chunks: DocumentChunk[];
   summary?: string;
+  rawText?: string;
 }
 
 export interface Flashcard {

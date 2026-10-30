@@ -17,9 +17,11 @@ import {
   X,
   ShieldCheck,
   Check,
-  FolderGit2
+  FolderGit2,
+  KeyRound
 } from 'lucide-react';
 import { IntegrationConnector } from '../../../types';
+import { getGitHubToken, setGitHubToken, fetchUserRepos } from '../../../services/githubService';
 
 export const IntegrationsView: React.FC = () => {
   const {
@@ -41,7 +43,7 @@ export const IntegrationsView: React.FC = () => {
   const [activeModalProvider, setActiveModalProvider] = useState<IntegrationConnector['provider'] | null>(null);
   const [accountEmail, setAccountEmail] = useState('');
   const [portalUrl, setPortalUrl] = useState('https://moodle.university.ac.uk');
-  const [apiToken, setApiToken] = useState('');
+  const [apiToken, setApiToken] = useState(getGitHubToken());
 
   // Add GitHub Repo Modal
   const [addRepoModalOpen, setAddRepoModalOpen] = useState(false);
@@ -49,18 +51,50 @@ export const IntegrationsView: React.FC = () => {
   const [repoName, setRepoName] = useState('');
   const [repoCourseId, setRepoCourseId] = useState(courses[0]?.id || '');
   const [repoBranch, setRepoBranch] = useState('main');
+  const [githubToken, setGithubTokenState] = useState(getGitHubToken());
+  const [myRepos, setMyRepos] = useState<Array<{ id: number; name: string; full_name: string; owner: string; description: string; default_branch: string }>>([]);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [repoErrorMsg, setRepoErrorMsg] = useState('');
 
   const handleOpenConnect = (provider: IntegrationConnector['provider']) => {
     setActiveModalProvider(provider);
     if (provider === 'google') setAccountEmail('student@gmail.com');
     else if (provider === 'outlook') setAccountEmail('student@uel.ac.uk');
     else if (provider === 'moodle') setPortalUrl('https://moodle.uel.ac.uk');
-    else if (provider === 'github') setAccountEmail('student-developer');
+    else if (provider === 'github') {
+      setAccountEmail('GitHub Account');
+      setApiToken(getGitHubToken());
+    }
+  };
+
+  const handleFetchMyRepos = async (tokenToUse?: string) => {
+    setIsLoadingRepos(true);
+    setRepoErrorMsg('');
+    try {
+      const token = tokenToUse || githubToken;
+      const repos = await fetchUserRepos(token);
+      setMyRepos(repos);
+      if (repos.length > 0) {
+        setRepoOwner(repos[0].owner);
+        setRepoName(repos[0].name);
+        setRepoBranch(repos[0].default_branch || 'main');
+      }
+    } catch (err: any) {
+      setRepoErrorMsg(err?.message || 'Could not fetch repositories. Please check your GitHub token.');
+    } finally {
+      setIsLoadingRepos(false);
+    }
   };
 
   const handleConfirmConnect = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeModalProvider) return;
+
+    if (activeModalProvider === 'github' && apiToken.trim()) {
+      setGitHubToken(apiToken.trim());
+      setGithubTokenState(apiToken.trim());
+      handleFetchMyRepos(apiToken.trim());
+    }
 
     // Trigger connection toggle
     toggleIntegrationConnection(activeModalProvider);
@@ -82,6 +116,10 @@ export const IntegrationsView: React.FC = () => {
   const handleCreateGitHubRepo = (e: React.FormEvent) => {
     e.preventDefault();
     if (!repoOwner.trim() || !repoName.trim()) return;
+
+    if (githubToken.trim()) {
+      setGitHubToken(githubToken.trim());
+    }
 
     addGitHubRepo(
       repoCourseId || (courses[0]?.id ?? 'course_default'),
@@ -277,7 +315,16 @@ export const IntegrationsView: React.FC = () => {
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-blue-600 font-bold">{commit.shortHash}</span>
+                          <a
+                            href={`https://github.com/${repo.owner}/${repo.repo}/commit/${commit.hash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-blue-600 dark:text-blue-400 font-bold hover:underline flex items-center gap-1"
+                            title="Open commit on GitHub"
+                          >
+                            <span>{commit.shortHash}</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                          </a>
                           <span className="font-semibold text-slate-900 dark:text-slate-100">{commit.message}</span>
                         </div>
                         <div className="font-mono text-[11px] text-slate-400">
@@ -391,17 +438,42 @@ export const IntegrationsView: React.FC = () => {
                     />
                   </div>
                 </>
+              ) : activeModalProvider === 'github' ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-slate-500 font-medium mb-1">GitHub Personal Access Token (PAT)</label>
+                    <input
+                      type="password"
+                      value={apiToken}
+                      onChange={e => setApiToken(e.target.value)}
+                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                      className="w-full p-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-mono"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Required by GitHub to pull your projects and commits. Generate one at{' '}
+                      <a
+                        href="https://github.com/settings/tokens"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 underline"
+                      >
+                        github.com/settings/tokens
+                      </a>{' '}
+                      with <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">repo</code> scope.
+                    </p>
+                  </div>
+                </div>
               ) : (
                 <div>
                   <label className="block text-slate-500 font-medium mb-1">
-                    {activeModalProvider === 'github' ? 'GitHub Username' : 'Account Email'}
+                    Account Email
                   </label>
                   <input
                     type="text"
                     required
                     value={accountEmail}
                     onChange={e => setAccountEmail(e.target.value)}
-                    placeholder={activeModalProvider === 'github' ? 'student-developer' : 'student@university.edu'}
+                    placeholder="student@university.edu"
                     className="w-full p-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
@@ -457,7 +529,77 @@ export const IntegrationsView: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateGitHubRepo} className="space-y-3">
+            <form onSubmit={handleCreateGitHubRepo} className="space-y-3.5">
+              {/* GitHub Token section */}
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-slate-700 dark:text-slate-300 font-semibold flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-blue-600" />
+                    <span>GitHub Personal Access Token (Key)</span>
+                  </label>
+                  {githubToken && (
+                    <span className="text-[10px] text-emerald-600 flex items-center gap-1 font-semibold">
+                      <Check className="w-3 h-3" /> Token Saved
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={githubToken}
+                    onChange={e => setGithubTokenState(e.target.value)}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx (optional for public repos)"
+                    className="flex-1 p-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-mono text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (githubToken.trim()) setGitHubToken(githubToken.trim());
+                      handleFetchMyRepos(githubToken);
+                    }}
+                    disabled={isLoadingRepos}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-md font-semibold text-xs flex items-center gap-1.5 shrink-0"
+                  >
+                    {isLoadingRepos ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <DownloadCloud className="w-3.5 h-3.5" />
+                    )}
+                    <span>Load My Repos</span>
+                  </button>
+                </div>
+                {repoErrorMsg && (
+                  <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">
+                    {repoErrorMsg}
+                  </p>
+                )}
+                {myRepos.length > 0 && (
+                  <div className="pt-1">
+                    <label className="block text-slate-500 font-medium mb-1">
+                      Select From Your GitHub Repositories ({myRepos.length} found):
+                    </label>
+                    <select
+                      onChange={e => {
+                        const selected = myRepos.find(r => r.full_name === e.target.value);
+                        if (selected) {
+                          setRepoOwner(selected.owner);
+                          setRepoName(selected.name);
+                          setRepoBranch(selected.default_branch || 'main');
+                        }
+                      }}
+                      className="w-full p-2 rounded-md border border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/30 text-slate-900 dark:text-slate-100 focus:outline-none font-semibold"
+                    >
+                      <option value="">-- Choose a repository to auto-fill --</option>
+                      {myRepos.map(r => (
+                        <option key={r.id} value={r.full_name}>
+                          {r.full_name} ({r.default_branch}) {r.description ? `— ${r.description.slice(0, 40)}...` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-slate-500 font-medium mb-1">Associated Course</label>
                 <select
@@ -481,7 +623,7 @@ export const IntegrationsView: React.FC = () => {
                     required
                     value={repoOwner}
                     onChange={e => setRepoOwner(e.target.value)}
-                    placeholder="e.g. uel-cs"
+                    placeholder="e.g. uel-cs or martin"
                     className="w-full p-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>

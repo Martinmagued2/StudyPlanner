@@ -32,9 +32,15 @@ import {
   Palette,
   X,
   FileCode,
-  CheckCheck
+  CheckCheck,
+  Sigma,
+  Eye,
+  Edit3
 } from 'lucide-react';
 import { Note } from '../../../types';
+import katex from 'katex';
+import { MarkdownRenderer } from '../../common/MarkdownRenderer';
+import { queryGemini } from '../../../services/fileAiService';
 
 // Import Prism and core programming languages
 import Prism from 'prismjs';
@@ -92,6 +98,12 @@ export const NotesView: React.FC = () => {
   const [tableHasHeader, setTableHasHeader] = useState(true);
   const [hoverGridRow, setHoverGridRow] = useState(0);
   const [hoverGridCol, setHoverGridCol] = useState(0);
+
+  // LaTeX Mathematical Equation Inserter State
+  const [latexModalOpen, setLatexModalOpen] = useState(false);
+  const [latexFormula, setLatexFormula] = useState('\\int_{a}^{b} f(x) \\, dx = F(b) - F(a)');
+  const [latexDisplayMode, setLatexDisplayMode] = useState(true);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
 
   // Generic Code Block Builder Modal
   const [codeModalOpen, setCodeModalOpen] = useState(false);
@@ -228,27 +240,145 @@ g++ -O2 -std=c++17 solution.cpp -o solution
     }
   }, [activeNotes, selectedNoteId]);
 
+  // Helper to safely render LaTeX formula with KaTeX
+  const renderFormulaWithKatex = (eq: string, displayMode: boolean) => {
+    try {
+      return katex.renderToString(eq.trim(), { displayMode, throwOnError: false });
+    } catch {
+      return eq;
+    }
+  };
+
+  // Convert raw pasted text / markdown / LaTeX into clean, styled academic HTML
+  const parseAcademicTextToHtml = (raw: string): string => {
+    if (!raw) return '<p><br></p>';
+    let text = raw;
+
+    // 1. Process display LaTeX math $$...$$
+    text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, eq) => {
+      const rendered = renderFormulaWithKatex(eq, true);
+      return `<div class="katex-display-block my-3 py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 overflow-x-auto text-center font-sans" contenteditable="false" data-latex="${encodeURIComponent(eq)}">${rendered}</div>`;
+    });
+
+    // 2. Process inline LaTeX math $...$
+    text = text.replace(/\$([^\$\n\r]+?)\$/g, (_, eq) => {
+      const rendered = renderFormulaWithKatex(eq, false);
+      return `<span class="katex-inline-formula px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 mx-0.5" contenteditable="false" data-latex="${encodeURIComponent(eq)}">${rendered}</span>`;
+    });
+
+    // 3. Process Markdown tables: | col 1 | col 2 |
+    const tableRegex = /((?:^|\n)\|[^\n]+\|\r?\n\|[-:\s|]+\|\r?\n(?:\|[^\n]+\|\r?\n?)+)/g;
+    text = text.replace(tableRegex, (match) => {
+      const lines = match.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) return match;
+      const headerCols = lines[0].split('|').slice(1, -1).map(c => c.trim());
+      const rowLines = lines.slice(2);
+
+      let tableHtml = `<table class="w-full border-collapse border border-slate-300 dark:border-slate-700 my-4 text-xs sm:text-sm"><thead><tr class="bg-slate-100 dark:bg-slate-800/80">`;
+      headerCols.forEach(col => {
+        tableHtml += `<th class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-left font-bold text-slate-900 dark:text-slate-100">${col}</th>`;
+      });
+      tableHtml += `</tr></thead><tbody>`;
+
+      rowLines.forEach(row => {
+        const cells = row.split('|').slice(1, -1).map(c => c.trim());
+        tableHtml += `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40">`;
+        cells.forEach(cell => {
+          tableHtml += `<td class="border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-slate-800 dark:text-slate-200">${cell}</td>`;
+        });
+        tableHtml += `</tr>`;
+      });
+      tableHtml += `</tbody></table><p><br></p>`;
+      return tableHtml;
+    });
+
+    // 4. Process Markdown bold and italics
+    text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
+
+    // 5. Process inline code
+    text = text.replace(/`([^`]+)`/g, '<code class="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-xs text-blue-600 dark:text-blue-400">$1</code>');
+
+    // 6. Process Headings
+    text = text.replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-3 mb-1 text-slate-900 dark:text-slate-100">$1</h3>');
+    text = text.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold mt-4 mb-1.5 text-slate-900 dark:text-slate-100">$1</h2>');
+    text = text.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-5 mb-2 text-slate-900 dark:text-slate-100">$1</h1>');
+
+    // 7. Process Blockquotes
+    text = text.replace(/^\> (.*$)/gim, '<blockquote class="border-l-4 border-blue-500 pl-3 py-1.5 my-2 bg-blue-50/60 dark:bg-blue-950/30 italic text-slate-700 dark:text-slate-300 rounded-r">$1</blockquote>');
+
+    // 8. Process bullet lists
+    text = text.replace(/^[-*] (.*$)/gim, '<li class="ml-4 list-disc">$1</li>');
+
+    // 9. Process numbered lists
+    text = text.replace(/^\d+\. (.*$)/gim, '<li class="ml-4 list-decimal">$1</li>');
+
+    // 10. Process paragraphs and linebreaks
+    text = text.replace(/\n\n+/g, '</p><p class="mb-2 leading-relaxed">');
+    text = text.replace(/\n/g, '<br/>');
+
+    if (!text.startsWith('<')) {
+      text = `<p class="mb-2 leading-relaxed">${text}</p>`;
+    }
+
+    return text;
+  };
+
   // Normalize initial content to clean HTML
   const normalizeToHtml = (content: string) => {
     if (!content) return '<p><br></p>';
+    // If it contains LaTeX equations or markdown tables, parse them into rich KaTeX/table elements
+    if (content.includes('$') || content.includes('| ---') || content.includes('|:--') || content.includes('**')) {
+      return parseAcademicTextToHtml(content);
+    }
     if (/<[a-z][\s\S]*>/i.test(content)) return content;
-    
-    return content
-      .split('\n\n')
-      .map(block => {
-        const trimmed = block.trim();
-        if (trimmed.startsWith('# ')) return `<h1 class="text-2xl font-bold mt-4 mb-2">${trimmed.slice(2)}</h1>`;
-        if (trimmed.startsWith('## ')) return `<h2 class="text-xl font-bold mt-3 mb-1.5">${trimmed.slice(3)}</h2>`;
-        if (trimmed.startsWith('### ')) return `<h3 class="text-lg font-semibold mt-2 mb-1">${trimmed.slice(4)}</h3>`;
-        if (trimmed.startsWith('> ')) return `<blockquote class="border-l-4 border-blue-500 pl-3 py-1 my-2 bg-blue-50/50 dark:bg-blue-950/20 italic">${trimmed.slice(2)}</blockquote>`;
-        if (trimmed.startsWith('- [ ] ')) return `<div class="flex items-center gap-2 my-1"><input type="checkbox" class="rounded accent-blue-600" /><span>${trimmed.slice(6)}</span></div>`;
-        if (trimmed.startsWith('- ')) {
-          const items = trimmed.split('\n- ').map(item => `<li>${item.replace(/^- /, '')}</li>`).join('');
-          return `<ul class="list-disc pl-5 my-2">${items}</ul>`;
-        }
-        return `<p class="mb-2 leading-relaxed">${trimmed.replace(/\n/g, '<br>')}</p>`;
-      })
-      .join('');
+    return parseAcademicTextToHtml(content);
+  };
+
+  // Smart Clipboard Paste Handler
+  const handleEditorPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData('text/html');
+    const plainText = e.clipboardData.getData('text/plain');
+
+    const hasMarkdownOrLatex = 
+      plainText.includes('|') ||
+      plainText.includes('$') ||
+      plainText.includes('**') ||
+      plainText.includes('###') ||
+      plainText.includes('##') ||
+      plainText.includes('#') ||
+      plainText.includes('```');
+
+    let toInsert = '';
+    if (hasMarkdownOrLatex || !html) {
+      toInsert = parseAcademicTextToHtml(plainText);
+    } else {
+      toInsert = parseAcademicTextToHtml(html);
+    }
+
+    restoreSelection();
+    document.execCommand('insertHTML', false, toInsert);
+    handleEditorInput();
+  };
+
+  // Insert LaTeX Equation into active note
+  const insertLatexEquation = (formula: string, displayMode: boolean) => {
+    restoreSelection();
+    try {
+      const renderedHtml = renderFormulaWithKatex(formula, displayMode);
+      const equationNodeHtml = displayMode
+        ? `<div class="katex-display-block my-3 py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 overflow-x-auto text-center font-sans" contenteditable="false" data-latex="${encodeURIComponent(formula)}">${renderedHtml}</div><p><br></p>`
+        : `<span class="katex-inline-formula px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 mx-0.5" contenteditable="false" data-latex="${encodeURIComponent(formula)}">${renderedHtml}</span>&nbsp;`;
+
+      document.execCommand('insertHTML', false, equationNodeHtml);
+      handleEditorInput();
+      setLatexModalOpen(false);
+    } catch (e) {
+      console.error('KaTeX equation insert error:', e);
+    }
   };
 
   useEffect(() => {
@@ -895,41 +1025,91 @@ g++ -O2 -std=c++17 solution.cpp -o solution
     setAiModalOpen(true);
   };
 
-  // AI Note Tools logic
-  const runAiNoteTool = (type: string) => {
+  // AI Note Tools logic - Connected to Gemini AI
+  const runAiNoteTool = async (type: string) => {
     if (!selectedNote) return;
     setAiToolType(type);
     setAiModalOpen(true);
+    setAiGeneratedText('⏳ Generating academic study analysis with Gemini AI...');
+
+    const noteBodyText = editorRef.current?.innerText || selectedNote.content.replace(/<[^>]+>/g, ' ');
+    const noteTitle = selectedNote.title;
+
+    let prompt = '';
+    if (type === 'summarize') {
+      prompt = `Provide an authoritative, clear Executive Summary of the following student lecture note:
+Note Title: "${noteTitle}"
+Note Content:
+${noteBodyText.slice(0, 8000)}
+
+Format with:
+- **Core Academic Focus**: What problem/concept this note addresses
+- **Key Concepts & Theoretical Frameworks**: Bullet points of key findings, terminology, and theorems
+- **Actionable Exam Takeaways**: 2-3 practical exam tips`;
+    } else if (type === 'study_guide') {
+      prompt = `Generate a comprehensive Academic Study Guide based strictly on this note:
+Note Title: "${noteTitle}"
+Content:
+${noteBodyText.slice(0, 8000)}
+
+Structure as:
+1. Core Definitions & Formal Invariants
+2. Operational Principles & Mechanisms (with LaTeX formulas where applicable, using $...$ or $$...$$)
+3. Diagnostic Self-Check Questions with Solutions`;
+    } else if (type === 'practice_questions') {
+      prompt = `Generate 3 rigorous university practice questions based on this lecture note:
+Note Title: "${noteTitle}"
+Content:
+${noteBodyText.slice(0, 8000)}
+
+Include:
+- Question 1: Multiple choice (with options A, B, C, D and marked correct answer with explanation)
+- Question 2: True/False (with detailed explanation)
+- Question 3: Conceptual short-answer question (with model solution)`;
+    }
+
+    try {
+      const geminiResult = await queryGemini(prompt, 'You are a distinguished university academic tutor.');
+      if (geminiResult && geminiResult.trim().length > 20) {
+        setAiGeneratedText(geminiResult.trim());
+        return;
+      }
+    } catch (err) {
+      console.warn('Gemini query failed, falling back to local analysis:', err);
+    }
+
+    // Local grounded fallback using note title and paragraphs
+    const paragraphs = noteBodyText.split(/\n+/).map(p => p.trim()).filter(p => p.length > 20);
+    const p1 = paragraphs[0] || 'Core theoretical principles and system models.';
+    const p2 = paragraphs[1] || 'Invariant validation and performance trade-offs.';
 
     if (type === 'summarize') {
       setAiGeneratedText(`### Executive Summary: ${selectedNote.title}
 
 - **Core Academic Focus:** ${selectedNote.title} covers essential theoretical frameworks and analytical methods.
 - **Key Concepts Identified:**
-  1. Systematic decomposition into measurable principles.
-  2. Bounded complexity equations and runtime implications.
-  3. Real-world coursework and examination scenarios.
+  1. ${p1}
+  2. ${p2}
 - **Recommended Action:** Review the highlighted terms and practice self-testing.`);
     } else if (type === 'study_guide') {
       setAiGeneratedText(`### Comprehensive Study Guide: ${selectedNote.title}
 
 #### 1. Terminology & Formal Definitions
-- **Foundational Thesis:** The core hypothesis established during this lecture block.
-- **Boundary Conditions:** The specific parameters where standard formulas hold vs. degenerate.
+- **Foundational Thesis:** ${p1}
+- **Operational Mechanisms:** ${p2}
 
 #### 2. Diagnostic Self-Assessment
-1. How does the primary mechanism behave when input size increases tenfold?
+1. How does ${selectedNote.title} behave under edge-case conditions?
 2. What are the major pitfalls to avoid on the final exam regarding this topic?`);
-    } else if (type === 'practice_questions') {
+    } else {
       setAiGeneratedText(`### Practice Questions: ${selectedNote.title}
 
-1. **[Multiple Choice]** Which of the following best characterizes the primary invariant?
-   - A) Constant variance under scaling (Incorrect)
-   - B) Bounded logarithmic recurrence relation (Correct)
-   - C) Arbitrary polynomial degradation (Incorrect)
+1. **[Multiple Choice]** Regarding "${selectedNote.title}", which of the following is accurate?
+   - A) ${p1} (Correct)
+   - B) Bypasses all standard invariant checks (Incorrect)
+   - C) Requires unbounded quadratic latency (Incorrect)
 
-2. **[Short Answer]** Explain why boundary value edge-cases must be checked before recursive calls.
-   Answer: To avoid stack overflow recursion and guarantee base-case termination.`);
+2. **[Short Answer]** Explain how the concepts in "${selectedNote.title}" relate to: "${p2.slice(0, 100)}..."`);
     }
   };
 
@@ -1107,6 +1287,20 @@ g++ -O2 -std=c++17 solution.cpp -o solution
               >
                 <Sparkles className="w-3 h-3" />
                 <span>AI Assist</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsPreviewMode(!isPreviewMode)}
+                className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                  isPreviewMode
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200'
+                }`}
+                title={isPreviewMode ? 'Switch to live editor' : 'Preview formatted note & LaTeX'}
+              >
+                {isPreviewMode ? <Edit3 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                <span>{isPreviewMode ? 'Edit' : 'Preview'}</span>
               </button>
 
               <button
@@ -1330,6 +1524,7 @@ g++ -O2 -std=c++17 solution.cpp -o solution
               >
                 💡
               </button>
+              {/* Dynamic Table Inserter */}
               <button
                 type="button"
                 onMouseDown={e => {
@@ -1342,6 +1537,22 @@ g++ -O2 -std=c++17 solution.cpp -o solution
               >
                 <TableIcon className="w-3.5 h-3.5" />
               </button>
+
+              {/* LaTeX Math Formula Inserter */}
+              <button
+                type="button"
+                onMouseDown={e => {
+                  e.preventDefault();
+                  saveSelection();
+                  setLatexModalOpen(true);
+                }}
+                className="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-purple-700 dark:text-purple-300 font-mono text-[11px] font-bold flex items-center gap-1 transition-colors"
+                title="Insert LaTeX Mathematical Equation (KaTeX Style)"
+              >
+                <Sigma className="w-3.5 h-3.5" />
+                <span>LaTeX</span>
+              </button>
+
               <button
                 type="button"
                 onMouseDown={e => e.preventDefault()}
@@ -1443,16 +1654,23 @@ g++ -O2 -std=c++17 solution.cpp -o solution
                 </div>
               </div>
 
-              {/* The Live Document Body (User writes normally here directly) */}
-              <div
-                ref={editorRef}
-                contentEditable
-                suppressContentEditableWarning
-                onInput={handleEditorInput}
-                onMouseUp={saveSelection}
-                onKeyUp={saveSelection}
-                className="note-content-editor flex-1 w-full outline-none text-slate-800 dark:text-slate-200 leading-relaxed font-sans text-sm sm:text-base selection:bg-blue-100 dark:selection:bg-blue-900/40 min-h-[500px]"
-              />
+              {/* The Live Document Body or Markdown/LaTeX Preview */}
+              {isPreviewMode ? (
+                <div className="flex-1 w-full min-h-[500px] text-slate-800 dark:text-slate-200 p-2">
+                  <MarkdownRenderer content={selectedNote.content} />
+                </div>
+              ) : (
+                <div
+                  ref={editorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={handleEditorInput}
+                  onPaste={handleEditorPaste}
+                  onMouseUp={saveSelection}
+                  onKeyUp={saveSelection}
+                  className="note-content-editor flex-1 w-full outline-none text-slate-800 dark:text-slate-200 leading-relaxed font-sans text-sm sm:text-base selection:bg-blue-100 dark:selection:bg-blue-900/40 min-h-[500px]"
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1950,6 +2168,130 @@ g++ -O2 -std=c++17 solution.cpp -o solution
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LaTeX Mathematical Equation Builder Modal */}
+      {latexModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
+                  <Sigma className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                    Insert LaTeX Equation
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Typeset mathematical formulas with KaTeX notation.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLatexModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Live KaTeX Preview Box */}
+            <div>
+              <label className="block text-slate-500 font-semibold mb-1">Live Formula Preview</label>
+              <div
+                className="p-4 rounded-lg bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 min-h-[70px] flex items-center justify-center text-slate-900 dark:text-slate-100 overflow-x-auto text-sm sm:text-base"
+                dangerouslySetInnerHTML={{
+                  __html: renderFormulaWithKatex(latexFormula || 'E = mc^2', latexDisplayMode)
+                }}
+              />
+            </div>
+
+            {/* Formula Input */}
+            <div>
+              <label className="block text-slate-500 font-semibold mb-1">LaTeX Expression</label>
+              <textarea
+                rows={3}
+                value={latexFormula}
+                onChange={e => setLatexFormula(e.target.value)}
+                placeholder="e.g. \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}"
+                className="w-full p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-xs focus:outline-none"
+              />
+            </div>
+
+            {/* Display Mode Toggle */}
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
+                <input
+                  type="radio"
+                  name="latex_mode"
+                  checked={latexDisplayMode}
+                  onChange={() => setLatexDisplayMode(true)}
+                  className="accent-purple-600"
+                />
+                <span>Block Equation (Centered $$...$$)</span>
+              </label>
+
+              <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
+                <input
+                  type="radio"
+                  name="latex_mode"
+                  checked={!latexDisplayMode}
+                  onChange={() => setLatexDisplayMode(false)}
+                  className="accent-purple-600"
+                />
+                <span>Inline Equation ($...$)</span>
+              </label>
+            </div>
+
+            {/* Quick Math Presets */}
+            <div>
+              <label className="block text-slate-500 font-semibold mb-1.5">Common Academic Formulas</label>
+              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
+                {[
+                  { label: 'Quadratic', code: 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}' },
+                  { label: 'Definite Integral', code: '\\int_{a}^{b} f(x) \\, dx = F(b) - F(a)' },
+                  { label: 'Derivative Limit', code: '\\frac{df}{dx} = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}' },
+                  { label: 'Summation', code: '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}' },
+                  { label: '2x2 Matrix', code: '\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}' },
+                  { label: 'Normal Dist.', code: 'f(x) = \\frac{1}{\\sigma \\sqrt{2\\pi}} e^{-\\frac{(x-\\mu)^2}{2\\sigma^2}}' },
+                  { label: 'Pythagorean', code: 'a^2 + b^2 = c^2' },
+                  { label: 'Euler Identity', code: 'e^{i\\pi} + 1 = 0' },
+                  { label: 'Big-O', code: 'T(n) = 2T(n/2) + O(n) \\implies O(n \\log n)' },
+                  { label: 'Partial Deriv.', code: '\\frac{\\partial^2 f}{\\partial x^2} + \\frac{\\partial^2 f}{\\partial y^2} = 0' }
+                ].map(preset => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => setLatexFormula(preset.code)}
+                    className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 hover:bg-purple-100 dark:hover:bg-purple-950/50 hover:text-purple-600 text-[11px] font-mono text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setLatexModalOpen(false)}
+                className="px-3 py-1.5 rounded text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => insertLatexEquation(latexFormula, latexDisplayMode)}
+                className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold flex items-center gap-1.5 shadow-sm"
+              >
+                <Sigma className="w-3.5 h-3.5" />
+                <span>Insert Equation</span>
+              </button>
             </div>
           </div>
         </div>

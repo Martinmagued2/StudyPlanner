@@ -16,7 +16,10 @@ import {
   FileCheck2,
   Award,
   Info,
-  X
+  X,
+  Menu,
+  Smartphone,
+  Sun
 } from 'lucide-react';
 
 export const NotificationCenter: React.FC<{ onClose: () => void }> = ({ onClose }) => {
@@ -116,7 +119,11 @@ export const TopNav: React.FC = () => {
     focusState,
     pauseFocusTimer,
     resumeFocusTimer,
-    stopFocusTimer
+    stopFocusTimer,
+    setIsMobileNavOpen,
+    setIsSyncModalOpen,
+    setIsBriefingOpen,
+    cloudSyncStatus
   } = useApp();
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -157,10 +164,20 @@ export const TopNav: React.FC = () => {
   };
 
   return (
-    <header className="h-13 px-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur flex items-center justify-between sticky top-0 z-20">
-      {/* History & Breadcrumbs */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1">
+    <header className="h-13 px-3 sm:px-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur flex items-center justify-between sticky top-0 z-20">
+      {/* Left: Mobile Menu Toggle + History & Breadcrumbs */}
+      <div className="flex items-center gap-1.5 sm:gap-3">
+        {/* Mobile Hamburger Drawer Trigger */}
+        <button
+          onClick={() => setIsMobileNavOpen(true)}
+          className="p-1.5 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 md:hidden"
+          title="Open Navigation Menu"
+          aria-label="Open Navigation Menu"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+
+        <div className="hidden xs:flex items-center gap-1">
           <button
             onClick={goBack}
             className="p-1.5 rounded text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -177,47 +194,86 @@ export const TopNav: React.FC = () => {
           </button>
         </div>
 
-        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 hidden sm:inline-block">
+        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 hidden lg:inline-block truncate max-w-xs">
           {getBreadcrumbs()}
         </span>
       </div>
 
-      {/* Center Search Pill */}
-      <div className="flex-1 max-w-md mx-4">
+      {/* Center Search Pill (Desktop) / Mobile Search Button */}
+      <div className="hidden sm:flex flex-1 max-w-md mx-3">
         <button
           onClick={() => setIsCommandPaletteOpen(true)}
           className="w-full flex items-center justify-between px-3 py-1.5 text-xs rounded-md bg-slate-100 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-300 dark:hover:border-slate-700"
         >
-          <div className="flex items-center gap-2">
-            <Search className="w-3.5 h-3.5" />
-            <span>Search courses, notes, tasks, files...</span>
+          <div className="flex items-center gap-2 truncate">
+            <Search className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Search courses, notes, tasks...</span>
           </div>
-          <kbd className="px-1.5 py-0.5 text-[10px] bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700 font-mono">
+          <kbd className="px-1.5 py-0.5 text-[10px] bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700 font-mono shrink-0 ml-1">
             Ctrl+K
           </kbd>
         </button>
       </div>
 
       {/* Right Actions */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1 sm:gap-2">
+        {/* Mobile Search Icon */}
+        <button
+          onClick={() => setIsCommandPaletteOpen(true)}
+          className="sm:hidden p-1.5 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+          title="Search (Ctrl+K)"
+        >
+          <Search className="w-4 h-4" />
+        </button>
+
+        {/* Daily Briefing Pop-up trigger */}
+        <button
+          onClick={() => setIsBriefingOpen(true)}
+          className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-md bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300 transition-colors border border-amber-200/60 dark:border-amber-800/60"
+          title="Daily Briefing (Classes & Upcoming Deadlines)"
+        >
+          <Sun className="w-3.5 h-3.5 text-amber-500" />
+          <span className="hidden md:inline">Briefing</span>
+        </button>
+
+        {/* Cross-Device Cloud Sync Button */}
+        <button
+          onClick={() => setIsSyncModalOpen(true)}
+          className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+          title="Sync Phone / Cross-Device Link"
+        >
+          <Smartphone className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+          <span className="hidden xl:inline">Sync Phone</span>
+          <span
+            className={`w-2 h-2 rounded-full ${
+              cloudSyncStatus === 'synced'
+                ? 'bg-emerald-500'
+                : cloudSyncStatus === 'syncing'
+                ? 'bg-amber-500 animate-pulse'
+                : 'bg-slate-400'
+            }`}
+            title={`Cloud Sync: ${cloudSyncStatus}`}
+          />
+        </button>
+
         {/* Active Focus Timer Pill */}
         {focusState.isRunning && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs">
+          <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs">
             <Timer className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
-            <span className="font-mono font-medium text-slate-800 dark:text-slate-200">
+            <span className="font-mono font-medium text-slate-800 dark:text-slate-200 text-[11px]">
               {formatTime(focusState.timeLeft)}
             </span>
             <button
               onClick={pauseFocusTimer}
-              className="p-1 hover:text-slate-900 dark:hover:text-white"
+              className="p-0.5 hover:text-slate-900 dark:hover:text-white"
               title="Pause timer"
             >
               <Pause className="w-3 h-3" />
             </button>
             <button
               onClick={stopFocusTimer}
-              className="p-1 text-slate-400 hover:text-rose-600"
-              title="Stop & log session"
+              className="p-0.5 text-slate-400 hover:text-rose-600"
+              title="Stop timer"
             >
               <Square className="w-3 h-3" />
             </button>
@@ -227,12 +283,11 @@ export const TopNav: React.FC = () => {
         {/* Global Ask AI button */}
         <button
           onClick={() => setIsAiDrawerOpen(true)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 text-xs font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
           title="Ask AI Assistant (Ctrl+J)"
         >
           <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
           <span className="hidden sm:inline">Ask AI</span>
-          <kbd className="hidden md:inline text-[10px] text-slate-400 font-mono ml-0.5">Ctrl+J</kbd>
         </button>
 
         {/* Quick Create Button */}

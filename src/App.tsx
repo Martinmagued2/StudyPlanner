@@ -7,6 +7,8 @@ import { CommandPalette } from './components/layout/CommandPalette';
 import { QuickCreateModal } from './components/layout/QuickCreateModal';
 import { GlobalAiDrawer } from './components/modules/ai/GlobalAiDrawer';
 import { AuthModal } from './components/modules/auth/AuthModal';
+import { DailyBriefingModal } from './components/modules/today/DailyBriefingModal';
+import { DeviceSyncModal } from './components/common/DeviceSyncModal';
 
 // Views
 import { TodayDashboard } from './components/modules/today/TodayDashboard';
@@ -31,7 +33,14 @@ import { TrashView } from './components/modules/trash/TrashView';
 import { SettingsView } from './components/modules/settings/SettingsView';
 
 const WorkspaceContent: React.FC = () => {
-  const { user, activeView } = useApp();
+  const {
+    user,
+    activeView,
+    isBriefingOpen,
+    setIsBriefingOpen,
+    isSyncModalOpen,
+    setIsSyncModalOpen
+  } = useApp();
 
   // If not logged in, show dedicated full-screen Register / Sign-in page
   if (!user) {
@@ -91,7 +100,7 @@ const WorkspaceContent: React.FC = () => {
 
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         <TopNav />
-        <main className="flex-1 overflow-y-auto pb-16 md:pb-6">
+        <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
           {renderActiveView()}
         </main>
       </div>
@@ -100,6 +109,14 @@ const WorkspaceContent: React.FC = () => {
       <CommandPalette />
       <QuickCreateModal />
       <GlobalAiDrawer />
+      <DailyBriefingModal
+        isOpen={isBriefingOpen}
+        onClose={() => setIsBriefingOpen(false)}
+      />
+      <DeviceSyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+      />
     </div>
   );
 };

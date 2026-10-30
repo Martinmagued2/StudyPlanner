@@ -11,18 +11,43 @@ import {
   ChevronRight,
   BookOpen,
   Award,
-  AlertTriangle
+  AlertTriangle,
+  FileText,
+  Layers,
+  Settings2,
+  Loader2,
+  X,
+  GraduationCap
 } from 'lucide-react';
-import { Quiz, QuizQuestion, QuizAttempt } from '../../../types';
+import { Quiz, QuizQuestion, QuizAttempt, DocumentFile } from '../../../types';
+import { generateQuizFromFiles } from '../../../services/fileAiService';
 
 export const QuizzesView: React.FC = () => {
-  const { quizzes, courses, createQuizFromCourse, submitQuizAttempt, createFlashcardsFromQuizErrors } = useApp();
+  const {
+    quizzes,
+    courses,
+    notes,
+    files,
+    addQuiz,
+    submitQuizAttempt,
+    createFlashcardsFromQuizErrors
+  } = useApp();
 
   const [selectedQuizId, setSelectedQuizId] = useState<string>(quizzes[0]?.id || '');
   const [activeQuizRunning, setActiveQuizRunning] = useState<Quiz | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
   const [activeAttemptResult, setActiveAttemptResult] = useState<QuizAttempt | null>(null);
+
+  // New Quiz Builder Modal State
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedCourseId, setSelectedCourseId] = useState(courses[0]?.id || '');
+  const [sourceType, setSourceType] = useState<'all' | 'files' | 'notes' | 'curriculum'>('all');
+  const [quizDifficulty, setQuizDifficulty] = useState<Quiz['difficulty']>('medium');
+  const [questionCount, setQuestionCount] = useState<number>(5);
+  const [focusTopic, setFocusTopic] = useState<string>('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState('');
 
   const selectedQuiz = quizzes.find(q => q.id === selectedQuizId) || quizzes[0];
 
@@ -68,6 +93,95 @@ export const QuizzesView: React.FC = () => {
     alert(`Converted ${errors.length} missed questions into target flashcards in Study Hub!`);
   };
 
+  const handleGenerateQuiz = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsGenerating(true);
+    setGenerationError('');
+
+    try {
+      const course = courses.find(c => c.id === selectedCourseId) || courses[0];
+      const courseFiles = files.filter(f => f.courseId === selectedCourseId);
+      const courseNotes = notes.filter(n => n.courseId === selectedCourseId);
+
+      const docFiles: DocumentFile[] = [];
+
+      // 1. Files
+      if (sourceType === 'all' || sourceType === 'files') {
+        if (courseFiles.length > 0) {
+          docFiles.push(...courseFiles);
+        } else if (files.length > 0) {
+          docFiles.push(...files);
+        }
+      }
+
+      // 2. Notes
+      if (sourceType === 'all' || sourceType === 'notes') {
+        const notesToUse = courseNotes.length > 0 ? courseNotes : notes;
+        notesToUse.forEach(n => {
+          docFiles.push({
+            id: `doc_note_${n.id}`,
+            name: `${n.title}.md`,
+            fileType: 'md',
+            sizeBytes: n.content.length,
+            status: 'fully_read',
+            isFavorite: false,
+            uploadedAt: n.updatedAt,
+            courseId: n.courseId,
+            chunks: [{ id: `chunk_note_${n.id}`, content: n.content, page: 1, hasVisuals: false }],
+            pageCount: 1,
+            rawText: n.content
+          });
+        });
+      }
+
+      // 3. Curriculum / Syllabus Fallback
+      if (sourceType === 'all' || sourceType === 'curriculum' || docFiles.length === 0) {
+        const curriculumText = `Course: ${course?.name || 'Academic Studies'} (${course?.code || 'GEN'})\nInstructor: ${course?.instructor || 'Faculty'}\nFocus Topic: ${focusTopic || 'Course Curriculum & Fundamentals'}`;
+        docFiles.push({
+          id: `doc_curriculum_${Date.now()}`,
+          name: `${course?.code || 'Course'}_Curriculum.txt`,
+          fileType: 'txt',
+          sizeBytes: curriculumText.length,
+          status: 'fully_read',
+          isFavorite: false,
+          uploadedAt: new Date().toISOString(),
+          courseId: course?.id,
+          chunks: [{ id: `chunk_curr_1`, content: curriculumText, page: 1, hasVisuals: false }],
+          pageCount: 1,
+          rawText: curriculumText
+        });
+      }
+
+      const generatedTitle = focusTopic.trim()
+        ? `${course?.code || 'Course'}: ${focusTopic.trim()} Practice Quiz`
+        : `${course?.code || 'Course'} AI Practice Quiz (${quizDifficulty.toUpperCase()})`;
+
+      const generated = await generateQuizFromFiles(docFiles, {
+        difficulty: (quizDifficulty === 'exam' ? 'hard' : quizDifficulty) as 'easy' | 'medium' | 'hard',
+        questionCount,
+        courseId: course?.id,
+        title: generatedTitle
+      });
+
+      const savedQuiz = addQuiz({
+        title: generated.title,
+        courseId: generated.courseId,
+        fileId: generated.fileId,
+        difficulty: generated.difficulty,
+        questions: generated.questions
+      });
+
+      setIsCreateModalOpen(false);
+      setFocusTopic('');
+      startQuiz(savedQuiz);
+    } catch (err: any) {
+      console.error('Quiz generation failed:', err);
+      setGenerationError(err?.message || 'Quiz generation failed. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -77,16 +191,16 @@ export const QuizzesView: React.FC = () => {
             AI Quizzes & Diagnostic Practice Tests
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Objective and short-answer diagnostic tests with weak-topic extraction and one-click flashcard conversion.
+            Grounded diagnostic quizzes built directly from your lecture slides, notes, and course curriculum.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => createQuizFromCourse(courses[0]?.id || 'course_cs302', 'medium')}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1.5 shadow-sm"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="px-3.5 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1.5 shadow-sm transition-colors"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
             <span>Generate New Quiz</span>
           </button>
         </div>
@@ -331,6 +445,221 @@ export const QuizzesView: React.FC = () => {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* AI Quiz Generator Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 text-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                    Generate Grounded AI Quiz
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Based on your actual lecture files, course notes, and syllabus.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleGenerateQuiz} className="space-y-4">
+              {/* Course Selection */}
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
+                  Target Course
+                </label>
+                <select
+                  value={selectedCourseId}
+                  onChange={e => setSelectedCourseId(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                >
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} — {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Source Selection */}
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1.5">
+                  Knowledge Source Material
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSourceType('all')}
+                    className={`p-2.5 rounded-lg border text-left transition-all ${
+                      sourceType === 'all'
+                        ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-200'
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-semibold flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>All Materials</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">Files + Notes + Syllabus</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSourceType('files')}
+                    className={`p-2.5 rounded-lg border text-left transition-all ${
+                      sourceType === 'files'
+                        ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-200'
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-semibold flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Uploaded Files</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">
+                      {files.filter(f => f.courseId === selectedCourseId).length} course slide(s)/PDFs
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSourceType('notes')}
+                    className={`p-2.5 rounded-lg border text-left transition-all ${
+                      sourceType === 'notes'
+                        ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-200'
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-semibold flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Student Notes</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">
+                      {notes.filter(n => n.courseId === selectedCourseId).length} saved study note(s)
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSourceType('curriculum')}
+                    className={`p-2.5 rounded-lg border text-left transition-all ${
+                      sourceType === 'curriculum'
+                        ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-200'
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-semibold flex items-center gap-1.5">
+                      <GraduationCap className="w-3.5 h-3.5 text-purple-600" />
+                      <span>Curriculum Core</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">Syllabus & Course Objectives</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Topic Focus */}
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
+                  Specific Topic Focus (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={focusTopic}
+                  onChange={e => setFocusTopic(e.target.value)}
+                  placeholder="e.g. Dynamic Programming, Midterm Review, Lecture 4"
+                  className="w-full p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              {/* Difficulty & Question Count */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
+                    Difficulty Level
+                  </label>
+                  <select
+                    value={quizDifficulty}
+                    onChange={e => setQuizDifficulty(e.target.value as Quiz['difficulty'])}
+                    className="w-full p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none capitalize"
+                  >
+                    <option value="easy">Easy (Definitions & Recall)</option>
+                    <option value="medium">Medium (Application & Concepts)</option>
+                    <option value="hard">Hard (Analysis & Edge Cases)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
+                    Number of Questions
+                  </label>
+                  <div className="grid grid-cols-5 gap-1">
+                    {[3, 5, 10, 15, 20].map(cnt => (
+                      <button
+                        key={cnt}
+                        type="button"
+                        onClick={() => setQuestionCount(cnt)}
+                        className={`py-2 rounded font-semibold text-center transition-colors ${
+                          questionCount === cnt
+                            ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                        }`}
+                      >
+                        {cnt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {generationError && (
+                <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-[11px] flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{generationError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  disabled={isGenerating}
+                  className="px-3.5 py-2 rounded text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isGenerating}
+                  className="px-5 py-2 rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold hover:bg-slate-800 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Generating with Gemini AI...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 text-amber-400" />
+                      <span>Generate Quiz</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

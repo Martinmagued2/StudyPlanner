@@ -8,10 +8,12 @@ import {
   CalendarEvent,
   InboxItem,
   DocumentFile,
+  DocumentChunk,
   Flashcard,
   FlashcardDeck,
   FocusSession,
   Quiz,
+  QuizQuestion,
   QuizAttempt,
   Exam,
   GradeItem,
@@ -27,8 +29,11 @@ import {
   AssignmentStatus,
   DailyPlanBlock,
   RevisionSession,
-  ChatSession
+  ChatSession,
+  MeetingSlot
 } from '../types';
+import { uploadToCloud, fetchFromCloud, CloudWorkspacePayload } from '../services/cloudSync';
+import { fetchRepoCommits } from '../services/githubService';
 import {
   initialUser,
   initialCourses,
@@ -194,6 +199,7 @@ interface AppContextType {
   quizzes: Quiz[];
   submitQuizAttempt: (quizId: string, userAnswers: Record<string, string>) => QuizAttempt;
   createQuizFromCourse: (courseId: string, difficulty: Quiz['difficulty']) => Quiz;
+  addQuiz: (quiz: Omit<Quiz, 'id' | 'attempts'>) => Quiz;
 
   exams: Exam[];
   addExam: (exam: Omit<Exam, 'id' | 'revisionSessions' | 'readinessPercent'>) => Exam;
@@ -238,6 +244,23 @@ interface AppContextType {
   importWorkspaceJson: (jsonString: string) => boolean;
   resetAllDemoData: () => void;
   clearAllWorkspaceData: () => void;
+
+  // Cloud Sync & Cross-Device Access
+  cloudSyncId: string | null;
+  cloudSyncStatus: 'synced' | 'syncing' | 'offline' | 'error';
+  lastSyncedAt: string | null;
+  saveToCloud: () => Promise<string>;
+  loadFromCloud: (syncId: string) => Promise<boolean>;
+  isSyncModalOpen: boolean;
+  setIsSyncModalOpen: (open: boolean) => void;
+
+  // Daily Briefing Pop-Up
+  isBriefingOpen: boolean;
+  setIsBriefingOpen: (open: boolean) => void;
+
+  // Mobile Navigation Drawer
+  isMobileNavOpen: boolean;
+  setIsMobileNavOpen: (open: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -317,6 +340,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setQuickCreateType(type);
     setIsQuickCreateOpen(true);
   };
+
+  // Cloud Sync & Cross-Device State
+  const [cloudSyncId, setCloudSyncId] = useState<string | null>(() => {
+    return localStorage.getItem('nook_cloud_sync_id') || null;
+  });
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => {
+    return localStorage.getItem('nook_last_cloud_sync_at') || null;
+  });
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+
+  // Daily Briefing Pop-Up State
+  const [isBriefingOpen, setIsBriefingOpen] = useState(false);
+
+  // Mobile Navigation Drawer State
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   // User Isolation Key
   const storageKey = user ? `nook_workspace_${user.id}` : 'nook_workspace_demo';
@@ -616,36 +655,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Auth Operations
   const login = (email: string, name?: string) => {
+    const sanitizedEmail = email.toLowerCase().trim();
+    const userId = 'usr_' + encodeURIComponent(sanitizedEmail).replace(/[^a-zA-Z0-9]/g, '_');
+
     const newUser: UserAccount = {
-      id: `usr_${Date.now()}`,
-      name: name || email.split('@')[0],
-      email: email,
+      id: userId,
+      name: name || sanitizedEmail.split('@')[0],
+      email: sanitizedEmail,
       avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
       isDemo: false
     };
     setUser(newUser);
     localStorage.setItem('nook_current_user', JSON.stringify(newUser));
 
-    // Welcome Note for new user account
-    const welcomeNote: Note = {
-      id: `note_welcome_${Date.now()}`,
-      title: 'Welcome to your Nook Workspace!',
-      content: `<h2>Welcome to Nook, ${newUser.name}!</h2>
-<p>Your academic workspace has been created with secure account isolation. Here are a few ways to get started:</p>
-<ul>
-  <li><strong>Courses:</strong> Add your classes and meeting times to populate your timetable and calendar.</li>
-  <li><strong>Assignments:</strong> Use AI to break large problem sets into 4–7 actionable steps.</li>
-  <li><strong>File Library:</strong> Upload lecture PDFs and slides for full document indexing, citations, and instant flashcard generation.</li>
-  <li><strong>Knowledge Graph:</strong> Discover key concepts connecting your courses together.</li>
-</ul>`,
-      tags: ['welcome', 'guide'],
-      pinned: true,
-      inTrash: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      highlightedTerms: ['Courses', 'Assignments', 'Ask AI']
-    };
-    // Ensure new account workspace is completely empty - 0 courses, 0 assignments, 0 tasks, 0 notes
+    // Check if user already has saved workspace in this browser
+    const userStorageKey = `nook_workspace_${userId}`;
+    const savedCoursesStr = localStorage.getItem(`${userStorageKey}_courses`);
+    if (savedCoursesStr) {
+      try {
+        const parsedCourses = JSON.parse(savedCoursesStr);
+        if (Array.isArray(parsedCourses) && parsedCourses.length > 0) {
+          setCourses(parsedCourses);
+          const a = localStorage.getItem(`${userStorageKey}_assignments`);
+          if (a) setAssignments(JSON.parse(a));
+          const t = localStorage.getItem(`${userStorageKey}_tasks`);
+          if (t) setTasks(JSON.parse(t));
+          const n = localStorage.getItem(`${userStorageKey}_notes`);
+          if (n) setNotes(JSON.parse(n));
+          const ev = localStorage.getItem(`${userStorageKey}_events`);
+          if (ev) setEvents(JSON.parse(ev));
+          const ex = localStorage.getItem(`${userStorageKey}_exams`);
+          if (ex) setExams(JSON.parse(ex));
+          const g = localStorage.getItem(`${userStorageKey}_grade_items`);
+          if (g) setGradeItems(JSON.parse(g));
+          const p = localStorage.getItem(`${userStorageKey}_previous_term_courses`);
+          if (p) setPreviousTermCourses(JSON.parse(p));
+          return;
+        }
+      } catch (err) {
+        console.warn('Failed restoring user local workspace:', err);
+      }
+    }
+
+    // Fresh registration
     setCourses([]);
     setAssignments([]);
     setTasks([]);
@@ -670,26 +722,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications([
       {
         id: `notif_${Date.now()}`,
-        title: 'Account Registered & Clean Workspace Ready',
-        message: 'Your workspace is 100% empty and ready. Click "Ask AI" in the top bar to set up your courses, or click "+ Add Course".',
+        title: 'Account Ready',
+        message: 'Your workspace is 100% clean and ready. Add courses manually or chat with Ask AI to set up your subjects and timetable.',
         type: 'system',
         timestamp: 'Just now',
         read: false
-      }
-    ]);
-    setAiMessages([
-      {
-        id: `msg_welcome_${Date.now()}`,
-        sender: 'assistant',
-        content: `Welcome ${newUser.name}! Your workspace is brand new and completely empty.
-        
-Here is how you can use the **Ask AI** button:
-1. 🏫 **Setup Courses:** Tell me which courses you are taking (e.g. *"I am taking Computer Science and Discrete Math"*), and I will create them with timetable slots!
-2. 📝 **Create Coursework:** Tell me your deadlines (e.g. *"Research paper due next Friday"*), and I'll create the assignment and break it down into steps.
-3. 🧠 **Ask Anything:** Ask me to explain any academic concept or theory!
-
-What would you like to start with?`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
   };
@@ -976,25 +1013,34 @@ What would you like to start with?`,
 
   // Files
   const addFile = (fileData: Omit<DocumentFile, 'id' | 'uploadedAt' | 'chunks'>, sampleContent?: string) => {
+    const fullText = fileData.rawText || sampleContent || `Introduction and overview of ${fileData.name}. Core concepts, algorithmic formulations, and analytical breakdown.`;
+    
+    // Chunk real text into ~1200 character slices representing pages or slides
+    const chunkSize = 1200;
+    const textChunks: string[] = [];
+    if (fullText.length > chunkSize) {
+      for (let i = 0; i < fullText.length; i += chunkSize) {
+        textChunks.push(fullText.slice(i, i + chunkSize));
+      }
+    } else {
+      textChunks.push(fullText);
+    }
+
+    const chunks: DocumentChunk[] = textChunks.map((content, idx) => ({
+      id: `chunk_${Date.now()}_${idx + 1}`,
+      page: idx + 1,
+      content,
+      hasVisuals: idx === 1 || (idx % 3 === 0 && idx > 0),
+      visualDescription: idx === 1 ? `Key visual or conceptual diagram from ${fileData.name}` : undefined
+    }));
+
     const newFile: DocumentFile = {
       ...fileData,
+      rawText: fullText,
+      pageCount: Math.max(fileData.pageCount || 1, chunks.length),
       id: `file_${Date.now()}`,
       uploadedAt: new Date().toISOString(),
-      chunks: [
-        {
-          id: `chunk_${Date.now()}_1`,
-          page: 1,
-          content: sampleContent || `Introduction and overview of ${fileData.name}. Core concepts, algorithmic formulations, and analytical breakdown.`,
-          hasVisuals: false
-        },
-        {
-          id: `chunk_${Date.now()}_2`,
-          page: 2,
-          content: `Formal theorem and computational evaluation parameters for ${fileData.name}.`,
-          hasVisuals: true,
-          visualDescription: `Architectural flow diagram illustrating key entities and execution pipeline.`
-        }
-      ]
+      chunks
     };
     setFiles(prev => [newFile, ...prev]);
     return newFile;
@@ -1142,41 +1188,103 @@ What would you like to start with?`,
 
   const createQuizFromCourse = (courseId: string, difficulty: Quiz['difficulty']): Quiz => {
     const course = courses.find(c => c.id === courseId);
+    const courseNotes = notes.filter(n => n.courseId === courseId);
+    const courseAssignments = assignments.filter(a => a.courseId === courseId);
+    const courseExams = exams.filter(e => e.courseId === courseId);
+    const courseFiles = files.filter(f => f.courseId === courseId);
+
+    // Collect real academic topics and contents from the course
+    const realTopics: string[] = [];
+    if (courseNotes.length > 0) {
+      courseNotes.forEach(n => realTopics.push(n.title));
+    }
+    if (courseAssignments.length > 0) {
+      courseAssignments.forEach(a => realTopics.push(a.title));
+    }
+    if (courseExams.length > 0) {
+      courseExams.forEach(e => realTopics.push(e.name));
+    }
+    if (courseFiles.length > 0) {
+      courseFiles.forEach(f => realTopics.push(f.name.replace(/\.[^/.]+$/, '')));
+    }
+
+    const primaryTopic = realTopics[0] || `${course?.code || 'Course'} Fundamentals`;
+    const secondaryTopic = realTopics[1] || `${course?.name || 'Academic'} Core Concepts`;
+    const advancedTopic = realTopics[2] || `${course?.code || 'Course'} Practical Applications`;
+
+    const generatedQuestions: QuizQuestion[] = [
+      {
+        id: `q_gen_${Date.now()}_1`,
+        type: 'mcq',
+        prompt: `In the context of ${course?.code || 'this course'} (${course?.name || 'Lectures'}), what is the primary significance of ${primaryTopic}?`,
+        options: [
+          `Establishes the fundamental theoretical mechanism and system constraints`,
+          `Serves merely as legacy background without operational utility`,
+          `Bypasses all core validation rules to increase raw speed`,
+          `Replaces all higher-level architecture with arbitrary constants`
+        ],
+        correctAnswer: `Establishes the fundamental theoretical mechanism and system constraints`,
+        explanation: `In ${course?.code || 'this curriculum'}, understanding ${primaryTopic} forms the foundation for all subsequent problem-solving and assessments.`,
+        topic: primaryTopic
+      },
+      {
+        id: `q_gen_${Date.now()}_2`,
+        type: 'tf',
+        prompt: `True or False: According to ${course?.code || 'course'} principles, mastery of ${secondaryTopic} requires strictly adhering to standard analytical frameworks rather than ad-hoc heuristics.`,
+        correctAnswer: 'True',
+        explanation: `Rigorous analysis in ${secondaryTopic} mandates structured problem decomposition as emphasized in lectures.`,
+        topic: secondaryTopic
+      },
+      {
+        id: `q_gen_${Date.now()}_3`,
+        type: 'mcq',
+        prompt: `When preparing coursework or exams regarding ${advancedTopic}, which technique yields the highest operational reliability?`,
+        options: [
+          `Systematic validation against known boundary cases and edge conditions`,
+          `Skipping intermediate proofs to finalize output early`,
+          `Assuming constant-time performance across unconstrained unbounded data`,
+          `Relying exclusively on non-deterministic approximation`
+        ],
+        correctAnswer: `Systematic validation against known boundary cases and edge conditions`,
+        explanation: `Addressing boundary conditions is critical for high academic performance and technical accuracy in ${advancedTopic}.`,
+        topic: advancedTopic
+      }
+    ];
+
+    if (courseNotes.length > 0 && courseNotes[0].content) {
+      // Extract a sentence from the actual student note
+      const noteExcerpt = courseNotes[0].content.replace(/<[^>]+>/g, '').split(/[.?!]/).filter(s => s.trim().length > 25)[0];
+      if (noteExcerpt) {
+        generatedQuestions.push({
+          id: `q_gen_${Date.now()}_4`,
+          type: 'short',
+          prompt: `Based on your course notes for "${courseNotes[0].title}": Briefly explain the application of: "${noteExcerpt.trim()}..."`,
+          correctAnswer: `${courseNotes[0].title} Concept Synthesis`,
+          explanation: `Extracted directly from your personal study notes in ${course?.code || 'the course'}.`,
+          topic: courseNotes[0].title
+        });
+      }
+    }
+
     const newQuiz: Quiz = {
       id: `quiz_${Date.now()}`,
-      title: `${course?.code || 'Course'} Diagnostic Practice Test`,
+      title: `${course?.code || 'Course'} Diagnostic Practice Test (${difficulty.toUpperCase()})`,
       courseId,
       difficulty,
-      questions: [
-        {
-          id: 'q_gen_1',
-          type: 'mcq',
-          prompt: `Which of the following best characterizes the primary structural advantage in ${course?.name || 'this domain'}?`,
-          options: ['Logarithmic search and update guarantees', 'Linear unconstrained memory growth', 'Constant quadratic overhead', 'Zero-overhead cache bypassing'],
-          correctAnswer: 'Logarithmic search and update guarantees',
-          explanation: 'Core invariant maintenance delivers strict O(log n) performance.',
-          topic: 'Foundations'
-        },
-        {
-          id: 'q_gen_2',
-          type: 'tf',
-          prompt: 'True or False: Under bounded input variations, worst-case complexity collapses to amortized constant time.',
-          correctAnswer: 'False',
-          explanation: 'Worst-case bounds hold regardless of average amortized behaviors.',
-          topic: 'Invariant Proofs'
-        },
-        {
-          id: 'q_gen_3',
-          type: 'short',
-          prompt: 'Name the fundamental mathematical matrix or tree rotation formula used to restore system balance.',
-          correctAnswer: 'Rotation',
-          explanation: 'Tree rotations or matrix eigenvalues restore canonical orientation.',
-          topic: 'Balance Restorations'
-        }
-      ],
+      questions: generatedQuestions,
       attempts: []
     };
 
+    setQuizzes(prev => [newQuiz, ...prev]);
+    return newQuiz;
+  };
+
+  const addQuiz = (quizData: Omit<Quiz, 'id' | 'attempts'>): Quiz => {
+    const newQuiz: Quiz = {
+      ...quizData,
+      id: `quiz_${Date.now()}`,
+      attempts: []
+    };
     setQuizzes(prev => [newQuiz, ...prev]);
     return newQuiz;
   };
@@ -1512,23 +1620,150 @@ What would you like to start with?`,
     return { neededScore, status, currentGrade };
   }, [gradeItems]);
 
-  // Daily Plan Operations
+  // Daily Plan Operations: Intelligent, Realistic & Sensible Academic Scheduling
   const regenerateDailyPlan = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const openTasks = tasks.filter(t => !t.completed).slice(0, 4);
+    const today = new Date();
+    const todayIsoDate = today.toISOString().slice(0, 10);
+    const currentDay = today.getDay(); // 0 = Sunday, 1 = Monday, ...
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const currentDayName = dayNames[currentDay];
 
-    const blocks: DailyPlanBlock[] = [
-      { id: `b_${Date.now()}_1`, time: '09:00 - 10:30', title: 'CS 302 Lecture: Turing Hall 101', type: 'class', completed: false, courseId: 'course_cs302' },
-      { id: `b_${Date.now()}_2`, time: '11:00 - 12:30', title: openTasks[0] ? openTasks[0].title : 'Deep Study Focus Block', type: 'study', completed: false, taskId: openTasks[0]?.id },
-      { id: `b_${Date.now()}_3`, time: '12:30 - 13:30', title: 'Lunch & Break', type: 'break', completed: false },
-      { id: `b_${Date.now()}_4`, time: '13:30 - 15:00', title: openTasks[1] ? openTasks[1].title : 'Active Flashcard Recall Session', type: 'study', completed: false, taskId: openTasks[1]?.id },
-      { id: `b_${Date.now()}_5`, time: '15:30 - 16:30', title: 'Problem Set & Quiz Weak Topics Review', type: 'study', completed: false },
-      { id: `b_${Date.now()}_6`, time: '17:00 - 17:30', title: 'Daily Review & Slipped Task Rebalancing', type: 'review', completed: false }
-    ];
+    // 1. Find actual classes scheduled for today across all enrolled courses
+    const todayClasses: Array<{ course: Course; slot: MeetingSlot }> = [];
+    courses.forEach(c => {
+      (c.meetingSlots || []).forEach(slot => {
+        if (slot.day === currentDay) {
+          todayClasses.push({ course: c, slot });
+        }
+      });
+    });
+    todayClasses.sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime));
+
+    // 2. Identify urgent assignments due soon or overdue
+    const urgentAssignments = assignments
+      .filter(a => a.status !== 'completed' && a.dueDate)
+      .map(a => {
+        const dueTime = new Date(a.dueDate).getTime();
+        const diffDays = Math.round((dueTime - today.getTime()) / (86400 * 1000));
+        return { ...a, diffDays };
+      })
+      .filter(a => a.diffDays <= 4)
+      .sort((a, b) => a.diffDays - b.diffDays);
+
+    // 3. Identify near exams within 14 days
+    const upcomingExamsList = exams
+      .map(e => {
+        const diffDays = Math.round((new Date(e.date).getTime() - today.getTime()) / (86400 * 1000));
+        return { ...e, diffDays };
+      })
+      .filter(e => e.diffDays >= 0 && e.diffDays <= 14)
+      .sort((a, b) => a.diffDays - b.diffDays);
+
+    // 4. Open tasks sorted by priority
+    const priorityTasks = tasks
+      .filter(t => !t.completed)
+      .sort((a, b) => {
+        const pOrder: Record<string, number> = { high: 3, medium: 2, low: 1 };
+        return (pOrder[b.priority] || 1) - (pOrder[a.priority] || 1);
+      });
+
+    const blocks: DailyPlanBlock[] = [];
+    let bIdx = 1;
+
+    // A. Morning Foundation Block (08:30 - 09:30 or before first class)
+    if (todayClasses.length > 0 && todayClasses[0].slot.startTime >= '10:00') {
+      const urgentAsg = urgentAssignments[0];
+      blocks.push({
+        id: `b_${Date.now()}_${bIdx++}`,
+        time: '08:45 - 09:45',
+        title: urgentAsg
+          ? `Priority Deep Work: ${urgentAsg.title} (${urgentAsg.diffDays <= 0 ? 'Overdue!' : `Due in ${urgentAsg.diffDays}d`})`
+          : priorityTasks[0]
+          ? `Focus Block: ${priorityTasks[0].title}`
+          : 'Morning Lecture Prep & Concept Warm-up',
+        type: 'study',
+        completed: false,
+        taskId: priorityTasks[0]?.id
+      });
+    }
+
+    // B. Insert Real Scheduled Classes for Today
+    todayClasses.forEach(item => {
+      blocks.push({
+        id: `b_${Date.now()}_${bIdx++}`,
+        time: `${item.slot.startTime} - ${item.slot.endTime}`,
+        title: `${item.course.code}: ${item.course.name} (${item.slot.location || item.course.location || 'Main Campus'})`,
+        type: 'class',
+        completed: false,
+        courseId: item.course.id
+      });
+    });
+
+    // C. Dedicated Lunch & Energy Break (12:30 - 13:30 or appropriate gap)
+    const hasClassAtNoon = todayClasses.some(c => c.slot.startTime <= '13:00' && c.slot.endTime >= '12:30');
+    blocks.push({
+      id: `b_${Date.now()}_${bIdx++}`,
+      time: hasClassAtNoon ? '13:30 - 14:15' : '12:30 - 13:30',
+      title: '🍱 Lunch & Mental Rest Interval',
+      type: 'break',
+      completed: false
+    });
+
+    // D. Afternoon Focus / Urgent Deadline Block
+    const targetTask = priorityTasks[1] || priorityTasks[0];
+    const topUrgentAsg = urgentAssignments.length > 1 ? urgentAssignments[1] : urgentAssignments[0];
+
+    blocks.push({
+      id: `b_${Date.now()}_${bIdx++}`,
+      time: hasClassAtNoon ? '14:30 - 16:00' : '14:00 - 15:30',
+      title: topUrgentAsg
+        ? `Coursework Push: ${topUrgentAsg.title}`
+        : targetTask
+        ? `Task Execution: ${targetTask.title}`
+        : 'Deep Academic Reading & Problem Sets',
+      type: 'study',
+      completed: false,
+      taskId: targetTask?.id
+    });
+
+    // E. Exam Revision Block (if student has upcoming exams)
+    if (upcomingExamsList.length > 0) {
+      const nearExam = upcomingExamsList[0];
+      blocks.push({
+        id: `b_${Date.now()}_${bIdx++}`,
+        time: '16:00 - 17:00',
+        title: `⚡ Exam Prep: ${nearExam.name} (In ${nearExam.diffDays} days - Flashcards & Formula Sheets)`,
+        type: 'study',
+        completed: false,
+        courseId: nearExam.courseId
+      });
+    } else {
+      // General flashcard spaced repetition block
+      blocks.push({
+        id: `b_${Date.now()}_${bIdx++}`,
+        time: '16:00 - 17:00',
+        title: 'Active Recall Flashcards (SM-2 Spaced Repetition)',
+        type: 'study',
+        completed: false
+      });
+    }
+
+    // F. End of Day Review & Slipped Task Rebalancing
+    blocks.push({
+      id: `b_${Date.now()}_${bIdx++}`,
+      time: '17:30 - 18:00',
+      title: 'Daily Review, Inbox Capture & Tomorrow Plan',
+      type: 'review',
+      completed: false
+    });
+
+    // Sort all blocks chronologically
+    blocks.sort((a, b) => a.time.localeCompare(b.time));
 
     setDailyPlan({
-      date: today,
+      date: todayIsoDate,
       generatedBy: 'ai',
+      fallbackReason: `Custom plan optimized for ${currentDayName}: Includes ${todayClasses.length} lecture(s), ${urgentAssignments.length} urgent deadline(s), and targeted exam preparation.`,
       blocks
     });
   };
@@ -2076,31 +2311,28 @@ How would you like me to assist you with your studies right now?`;
   };
 
   const addGitHubRepo = (courseId: string, owner: string, repo: string, branch: string = 'main') => {
-    const newRepo: GitHubRepo = {
-      id: `repo_${Date.now()}`,
+    const tempId = `repo_${Date.now()}`;
+    const initialRepo: GitHubRepo = {
+      id: tempId,
       courseId,
       owner,
       repo,
       branch,
       notes: `Coursework repository for ${owner}/${repo}. Automated commit briefs enabled.`,
-      commits: [
-        {
-          hash: 'c4e92a1',
-          shortHash: 'c4e92a1',
-          author: user?.name || 'Student',
-          authorAvatar: user?.avatarUrl || '',
-          message: 'chore: initial project boilerplate and test harness setup',
-          date: new Date().toISOString(),
-          additions: 120,
-          deletions: 0,
-          changedFiles: 4,
-          isOwnCommit: true,
-          seen: true,
-          aiSummary: 'Repository initialized with build scripts and unit test harness.'
-        }
-      ]
+      commits: []
     };
-    setGithubRepos(prev => [newRepo, ...prev]);
+    setGithubRepos(prev => [initialRepo, ...prev]);
+
+    // Fetch real commits from GitHub API
+    fetchRepoCommits(owner, repo, branch)
+      .then(realCommits => {
+        if (realCommits && realCommits.length > 0) {
+          setGithubRepos(prev => prev.map(r => r.id === tempId ? { ...r, commits: realCommits } : r));
+        }
+      })
+      .catch(err => {
+        console.warn(`Could not fetch remote commits for ${owner}/${repo}:`, err);
+      });
   };
 
   const addCommitBriefAsTask = (commit: any, courseId: string) => {
@@ -2215,6 +2447,123 @@ How would you like me to assist you with your studies right now?`;
       return false;
     }
   };
+
+  // Cloud Synchronization Implementation
+  const saveToCloud = async (): Promise<string> => {
+    setCloudSyncStatus('syncing');
+    try {
+      const payload: CloudWorkspacePayload = {
+        version: '1.0.0',
+        syncedAt: new Date().toISOString(),
+        user,
+        courses,
+        assignments,
+        tasks,
+        notes,
+        events,
+        inboxItems,
+        files,
+        flashcards,
+        flashcardDecks,
+        focusSessions,
+        quizzes,
+        exams,
+        gradeItems,
+        previousTermCourses,
+        aiMemories,
+        dailyPlan,
+        integrations,
+        githubRepos,
+        notifications,
+        reminderLogs
+      };
+
+      const { syncId, syncedAt } = await uploadToCloud(payload, cloudSyncId);
+      setCloudSyncId(syncId);
+      setLastSyncedAt(syncedAt);
+      setCloudSyncStatus('synced');
+      localStorage.setItem('nook_cloud_sync_id', syncId);
+      localStorage.setItem('nook_last_cloud_sync_at', syncedAt);
+      return syncId;
+    } catch (e) {
+      setCloudSyncStatus('error');
+      throw e;
+    }
+  };
+
+  const loadFromCloud = async (syncId: string): Promise<boolean> => {
+    setCloudSyncStatus('syncing');
+    try {
+      const data = await fetchFromCloud(syncId);
+      if (data.user && !user) {
+        setUser(data.user);
+        localStorage.setItem('nook_current_user', JSON.stringify(data.user));
+      }
+      if (Array.isArray(data.courses)) setCourses(data.courses);
+      if (Array.isArray(data.assignments)) setAssignments(data.assignments);
+      if (Array.isArray(data.tasks)) setTasks(data.tasks);
+      if (Array.isArray(data.notes)) setNotes(data.notes);
+      if (Array.isArray(data.events)) setEvents(data.events);
+      if (Array.isArray(data.inboxItems)) setInboxItems(data.inboxItems);
+      if (Array.isArray(data.files)) setFiles(data.files);
+      if (Array.isArray(data.flashcards)) setFlashcards(data.flashcards);
+      if (Array.isArray(data.flashcardDecks)) setFlashcardDecks(data.flashcardDecks);
+      if (Array.isArray(data.focusSessions)) setFocusSessions(data.focusSessions);
+      if (Array.isArray(data.quizzes)) setQuizzes(data.quizzes);
+      if (Array.isArray(data.exams)) setExams(data.exams);
+      if (Array.isArray(data.gradeItems)) setGradeItems(data.gradeItems);
+      if (Array.isArray(data.previousTermCourses)) setPreviousTermCourses(data.previousTermCourses);
+      if (Array.isArray(data.aiMemories)) setAiMemories(data.aiMemories);
+      if (data.dailyPlan) setDailyPlan(data.dailyPlan);
+      if (Array.isArray(data.integrations)) setIntegrations(data.integrations);
+      if (Array.isArray(data.githubRepos)) setGithubRepos(data.githubRepos);
+
+      setCloudSyncId(syncId);
+      setLastSyncedAt(data.syncedAt || new Date().toISOString());
+      setCloudSyncStatus('synced');
+      localStorage.setItem('nook_cloud_sync_id', syncId);
+      localStorage.setItem('nook_last_cloud_sync_at', data.syncedAt || new Date().toISOString());
+      return true;
+    } catch (e) {
+      setCloudSyncStatus('error');
+      console.error('Failed to load from cloud:', e);
+      return false;
+    }
+  };
+
+  // Check URL query for ?sync=... parameter on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const syncParam = urlParams.get('sync');
+    if (syncParam && syncParam.trim().length > 5) {
+      loadFromCloud(syncParam.trim()).then(ok => {
+        if (ok) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      });
+    }
+  }, []);
+
+  // Check on mount if daily briefing should pop up
+  useEffect(() => {
+    const todayIsoDate = new Date().toISOString().slice(0, 10);
+    const dismissed = localStorage.getItem(`nook_briefing_dismissed_${todayIsoDate}`);
+    if (!dismissed && user) {
+      const timer = setTimeout(() => {
+        setIsBriefingOpen(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [user]);
+
+  // Debounced auto-save to cloud when user has cloudSyncId
+  useEffect(() => {
+    if (!cloudSyncId || !user) return;
+    const timer = setTimeout(() => {
+      saveToCloud().catch(err => console.warn('Auto cloud sync failed:', err));
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [courses, assignments, tasks, notes, exams, gradeItems, cloudSyncId]);
 
   const clearAllWorkspaceData = () => {
     setCourses([]);
@@ -2361,6 +2710,7 @@ How would you like me to assist you with your studies right now?`;
         quizzes,
         submitQuizAttempt,
         createQuizFromCourse,
+        addQuiz,
         exams,
         addExam,
         generateRevisionPlanForExam,
@@ -2393,7 +2743,18 @@ How would you like me to assist you with your studies right now?`;
         exportWorkspaceJson,
         importWorkspaceJson,
         resetAllDemoData,
-        clearAllWorkspaceData
+        clearAllWorkspaceData,
+        cloudSyncId,
+        cloudSyncStatus,
+        lastSyncedAt,
+        saveToCloud,
+        loadFromCloud,
+        isSyncModalOpen,
+        setIsSyncModalOpen,
+        isBriefingOpen,
+        setIsBriefingOpen,
+        isMobileNavOpen,
+        setIsMobileNavOpen
       }}
     >
       {children}

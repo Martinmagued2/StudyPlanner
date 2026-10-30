@@ -18,7 +18,12 @@ import {
   Plus,
   BookOpen,
   ArrowRight,
-  HelpCircle
+  HelpCircle,
+  Sun,
+  Smartphone,
+  Flame,
+  ShieldAlert,
+  ListChecks
 } from 'lucide-react';
 
 export const TodayDashboard: React.FC = () => {
@@ -38,7 +43,11 @@ export const TodayDashboard: React.FC = () => {
     setActiveView,
     navigateToCourse,
     setIsAiDrawerOpen,
-    openQuickCreate
+    openQuickCreate,
+    setIsBriefingOpen,
+    setIsSyncModalOpen,
+    updateAssignment,
+    generateRevisionPlanForExam
   } = useApp();
 
   const [timeWindow, setTimeWindow] = useState<number>(45);
@@ -49,6 +58,48 @@ export const TodayDashboard: React.FC = () => {
   const todayStr = new Date().toISOString().slice(0, 10);
   const dueFlashcards = flashcards.filter(f => f.dueDate <= todayStr);
   const upcomingExams = exams;
+
+  // Academic Radar: Impending Deadlines & Exam Alert calculations
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+
+  const radarAssignments = assignments
+    .filter(a => a.status !== 'completed' && a.dueDate)
+    .map(a => {
+      const due = new Date(a.dueDate);
+      const dueMidnight = new Date(due);
+      dueMidnight.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((dueMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
+      const course = courses.find(c => c.id === a.courseId);
+      return {
+        ...a,
+        diffDays,
+        courseCode: course?.code || 'Coursework',
+        courseName: course?.name || '',
+        courseColor: course?.color || '#3b82f6',
+        formattedTime: due.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+    })
+    .filter(a => a.diffDays <= 7)
+    .sort((a, b) => a.diffDays - b.diffDays);
+
+  const radarExams = exams
+    .map(e => {
+      const exDate = new Date(e.date);
+      const exMidnight = new Date(exDate);
+      exMidnight.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((exMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
+      const course = courses.find(c => c.id === e.courseId);
+      return {
+        ...e,
+        diffDays,
+        courseCode: course?.code || 'Exam',
+        courseName: course?.name || '',
+        courseColor: course?.color || '#d97706'
+      };
+    })
+    .filter(e => e.diffDays >= 0 && e.diffDays <= 14)
+    .sort((a, b) => a.diffDays - b.diffDays);
 
   // Next Class Logic dynamically derived from courses
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -91,17 +142,33 @@ export const TodayDashboard: React.FC = () => {
         </div>
 
         {/* Quick Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setIsBriefingOpen(true)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1.5 transition-colors shadow-2xs"
+            title="Open Morning Academic Briefing"
+          >
+            <Sun className="w-3.5 h-3.5 text-amber-500" />
+            <span>Today's Briefing</span>
+          </button>
+          <button
+            onClick={() => setIsSyncModalOpen(true)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-2xs"
+            title="Sync with Phone or Tablet"
+          >
+            <Smartphone className="w-3.5 h-3.5 text-blue-500" />
+            <span>Sync to Phone</span>
+          </button>
           <button
             onClick={() => setIsAiDrawerOpen(true)}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-xs"
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-2xs"
           >
             <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
             <span>Ask AI (Ctrl+J)</span>
           </button>
           <button
             onClick={() => startFocusTimer(25)}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 shadow-xs"
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 shadow-2xs"
           >
             <Play className="w-3.5 h-3.5" />
             <span>Start 25m Focus</span>
@@ -259,6 +326,263 @@ export const TodayDashboard: React.FC = () => {
             {upcomingExams.length === 0 ? '0 upcoming exams' : `${upcomingExams.length} scheduled`}
           </span>
         </div>
+      </div>
+
+      {/* ACADEMIC RADAR: Near Exams & Deadline Assignments Alert Section */}
+      <div className="p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
+              <ShieldAlert className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                  Academic Radar: Imminent Deadlines & Exam Alert
+                </h2>
+                {radarAssignments.length + radarExams.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 text-[10px] font-bold">
+                    {radarAssignments.length + radarExams.length} urgent
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Active alerts for assignments due in the next 7 days and exams approaching in the next 14 days.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 self-start sm:self-auto">
+            <button
+              onClick={() => openQuickCreate('assignment')}
+              className="px-2.5 py-1 text-[11px] font-semibold rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 transition-colors"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Assignment</span>
+            </button>
+            <button
+              onClick={() => openQuickCreate('exam')}
+              className="px-2.5 py-1 text-[11px] font-semibold rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 transition-colors"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Exam</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Radar Content Grid */}
+        {radarAssignments.length === 0 && radarExams.length === 0 ? (
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  All Clear! No urgent deadlines or near exams.
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  You have 0 coursework items due in the next 7 days and 0 exams in the next 2 weeks. Great pacing!
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => openQuickCreate('assignment')}
+              className="hidden sm:inline-flex px-3 py-1.5 text-xs font-semibold rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 shrink-0"
+            >
+              + Log New Deadline
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Column 1: Impending Deadlines */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 px-1">
+                <span className="flex items-center gap-1.5">
+                  <FileCheck2 className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Assignments Due Soon ({radarAssignments.length})</span>
+                </span>
+                <button
+                  onClick={() => setActiveView('assignments')}
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                >
+                  View All
+                </button>
+              </div>
+
+              {radarAssignments.length === 0 ? (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>No assignment deadlines in the next 7 days.</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {radarAssignments.map(asg => {
+                    const isOverdue = asg.diffDays < 0;
+                    const isToday = asg.diffDays === 0;
+                    const isTomorrow = asg.diffDays === 1;
+
+                    const countdownClass = isOverdue
+                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-200 dark:border-rose-900 font-bold'
+                      : isToday
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-200 dark:border-amber-900 font-bold'
+                      : isTomorrow
+                      ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-900/60 font-semibold'
+                      : 'bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-900/60';
+
+                    const countdownText = isOverdue
+                      ? `Overdue by ${Math.abs(asg.diffDays)}d`
+                      : isToday
+                      ? 'Due Today!'
+                      : isTomorrow
+                      ? 'Due Tomorrow'
+                      : `Due in ${asg.diffDays} days`;
+
+                    return (
+                      <div
+                        key={asg.id}
+                        className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-700 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                      >
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className="px-1.5 py-0.2 rounded text-[10px] font-bold text-white shrink-0"
+                              style={{ backgroundColor: asg.courseColor }}
+                            >
+                              {asg.courseCode}
+                            </span>
+                            <span className="font-semibold text-xs text-slate-900 dark:text-slate-100 truncate">
+                              {asg.title}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] border shrink-0 ${countdownClass}`}>
+                              {countdownText}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Due {new Date(asg.dueDate).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} at {asg.formattedTime}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                          <button
+                            onClick={() => startFocusTimer(25, undefined, asg.courseId, 'Work on ' + asg.title)}
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1 shadow-2xs"
+                            title="Start 25m Focus Session"
+                          >
+                            <Play className="w-3 h-3 text-emerald-600" />
+                            <span>Focus</span>
+                          </button>
+                          <button
+                            onClick={() => updateAssignment(asg.id, { status: 'completed' })}
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1 shadow-2xs"
+                            title="Mark Assignment Complete"
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Done</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Column 2: Approaching Exams */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 px-1">
+                <span className="flex items-center gap-1.5">
+                  <Award className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Approaching Exams (Next 14 Days) ({radarExams.length})</span>
+                </span>
+                <button
+                  onClick={() => setActiveView('exams')}
+                  className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline font-medium"
+                >
+                  View Revision
+                </button>
+              </div>
+
+              {radarExams.length === 0 ? (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>No exams scheduled in the next 14 days.</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {radarExams.map(ex => {
+                    const isUrgent = ex.diffDays <= 3;
+                    const countdownBadgeClass = ex.diffDays === 0
+                      ? 'bg-rose-500 text-white animate-pulse'
+                      : ex.diffDays <= 3
+                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-900 font-bold'
+                      : ex.diffDays <= 7
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-900 font-semibold'
+                      : 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700';
+
+                    const countdownLabel = ex.diffDays === 0
+                      ? 'Exam Today!'
+                      : ex.diffDays === 1
+                      ? 'Exam Tomorrow!'
+                      : `In ${ex.diffDays} days`;
+
+                    return (
+                      <div
+                        key={ex.id}
+                        className={`p-3 rounded-xl border transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
+                          isUrgent
+                            ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800/60'
+                            : 'bg-slate-50/60 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800'
+                        }`}
+                      >
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                              {ex.name}
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200">
+                              {ex.courseCode}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] shrink-0 ${countdownBadgeClass}`}>
+                              {countdownLabel}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-amber-900 dark:text-amber-300 font-medium flex items-center gap-1">
+                            <span>⚠️ Study Reminder: Exam date {new Date(ex.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                            {ex.room && <span>• Room: {ex.room}</span>}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                          <button
+                            onClick={() => startFocusTimer(25, undefined, ex.courseId, 'Revision for ' + ex.name)}
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1 shadow-2xs"
+                            title="Start 25m Exam Revision"
+                          >
+                            <Play className="w-3 h-3 text-emerald-600" />
+                            <span>Revise</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              generateRevisionPlanForExam(ex.id);
+                              setActiveView('exams');
+                            }}
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-amber-600 text-white hover:bg-amber-700 flex items-center gap-1 shadow-2xs"
+                            title="Open AI Revision Plan"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            <span>Plan</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Grid: What Should I Do Now & Today's Schedule */}
