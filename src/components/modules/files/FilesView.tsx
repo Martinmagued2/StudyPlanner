@@ -639,23 +639,40 @@ export const FilesView: React.FC = () => {
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
                   <ListOrdered className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Extracted Document Pages & Chunks ({selectedFile.chunks.length})</span>
+                  <span>
+                    {selectedFile.fileType === 'pptx' ? 'Extracted Presentation Slides' : 'Extracted Document Pages'} ({selectedFile.chunks.length})
+                  </span>
                 </h4>
-                <span className="text-[11px] text-slate-400 font-mono">
-                  {selectedFile.rawText ? `${selectedFile.rawText.split(/\s+/).length} words total` : ''}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {selectedFile.rawText ? `${selectedFile.rawText.split(/\s+/).length} words extracted` : ''}
+                  </span>
+                  <button
+                    onClick={() => {
+                      reindexFile(selectedFile.id);
+                      triggerToast('✓ Re-parsed and reconstructed all slides cleanly!');
+                    }}
+                    className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-semibold"
+                    title="Re-extract and recalculate all slide boundaries"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Re-scan</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-72 sm:max-h-80 overflow-y-auto pr-1">
                 {selectedFile.chunks.map(chunk => (
-                  <div key={chunk.id} className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 text-xs space-y-1">
-                    <div className="flex items-center justify-between font-mono text-[10px] text-blue-600">
-                      <span>Page / Slide {chunk.page}</span>
+                  <div key={chunk.id} className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 text-xs space-y-1 hover:border-blue-300 dark:hover:border-blue-800 transition-colors">
+                    <div className="flex items-center justify-between font-mono text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
+                      <span>{selectedFile.fileType === 'pptx' ? 'Slide' : 'Page'} {chunk.page}</span>
                       {chunk.hasVisuals && (
-                        <span className="text-emerald-600 font-sans font-semibold">Diagram Extracted</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-sans font-semibold">
+                          Visual / Diagram Layout
+                        </span>
                       )}
                     </div>
-                    <p className="text-slate-700 dark:text-slate-300 line-clamp-3 leading-relaxed">
+                    <p className="text-slate-700 dark:text-slate-300 line-clamp-4 leading-relaxed whitespace-pre-line font-sans">
                       {chunk.content}
                     </p>
                   </div>

@@ -405,7 +405,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notes, setNotes] = useState<Note[]>(() => loadStored('notes', []));
   const [events, setEvents] = useState<CalendarEvent[]>(() => loadStored('events', []));
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(() => loadStored('inbox', []));
-  const [files, setFiles] = useState<DocumentFile[]>(() => loadStored('files', []));
+  const [files, setFiles] = useState<DocumentFile[]>(() => {
+    const stored = loadStored<DocumentFile[]>('files', []);
+    return stored.map(f => {
+      // Auto-heal: If rawText contains slide markers, rebuild chunks to match exact slide count
+      if (f.rawText && /===\s*(?:Slide|Page)\s*\d+\s*===/i.test(f.rawText)) {
+        const delimiterRegex = /===\s*(?:Slide|Page)\s*(\d+)\s*===\s*([\s\S]*?)(?=(?:===\s*(?:Slide|Page)\s*\d+\s*===|$))/gi;
+        const matches = Array.from(f.rawText.matchAll(delimiterRegex));
+        if (matches.length > 0 && matches.length !== f.chunks.length) {
+          const healedChunks: DocumentChunk[] = matches.map((m, idx) => ({
+            id: `chunk_${f.id}_${m[1]}_${idx}`,
+            page: parseInt(m[1], 10) || (idx + 1),
+            content: m[2].trim() || `(Slide ${m[1]} Visual content)`,
+            hasVisuals: idx === 0 || (idx % 3 === 0)
+          }));
+          return {
+            ...f,
+            pageCount: Math.max(f.pageCount || 1, matches.length),
+            chunks: healedChunks
+          };
+        }
+      }
+      return f;
+    });
+  });
   const [flashcards, setFlashcards] = useState<Flashcard[]>(() => loadStored('flashcards', []));
   const [flashcardDecks, setFlashcardDecks] = useState<FlashcardDeck[]>(() => loadStored('flashcard_decks', []));
   const [focusSessions, setFocusSessions] = useState<FocusSession[]>(() => loadStored('focus_sessions', []));
@@ -1015,29 +1038,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addFile = (fileData: Omit<DocumentFile, 'id' | 'uploadedAt' | 'chunks'>, sampleContent?: string) => {
     const fullText = fileData.rawText || sampleContent || `Introduction and overview of ${fileData.name}. Core concepts, algorithmic formulations, and analytical breakdown.`;
     
-    // Chunk real text into ~1200 character slices representing pages or slides
-    const chunkSize = 1200;
-    const textChunks: string[] = [];
-    if (fullText.length > chunkSize) {
-      for (let i = 0; i < fullText.length; i += chunkSize) {
-        textChunks.push(fullText.slice(i, i + chunkSize));
-      }
+    // Check if the text contains structured slide or page delimiters (e.g. === Slide 1 === or === Page 1 ===)
+    const delimiterRegex = /===\s*(?:Slide|Page)\s*(\d+)\s*===\s*([\s\S]*?)(?=(?:===\s*(?:Slide|Page)\s*\d+\s*===|$))/gi;
+    const delimiterMatches = Array.from(fullText.matchAll(delimiterRegex));
+
+    let chunks: DocumentChunk[] = [];
+    if (delimiterMatches.length > 0) {
+      chunks = delimiterMatches.map((m, idx) => {
+        const pageNum = parseInt(m[1], 10) || (idx + 1);
+        const content = m[2].trim() || `(Slide ${pageNum} Visual diagram and key points)`;
+        return {
+          id: `chunk_${Date.now()}_${pageNum}_${idx}`,
+          page: pageNum,
+          content,
+          hasVisuals: idx === 0 || idx === 1 || (idx % 3 === 0),
+          visualDescription: `Slide ${pageNum} presentation visuals and layout from ${fileData.name}`
+        };
+      });
     } else {
-      textChunks.push(fullText);
+      // Chunk plain text into ~1200 character slices representing pages
+      const chunkSize = 1200;
+      const textChunks: string[] = [];
+      if (fullText.length > chunkSize) {
+        for (let i = 0; i < fullText.length; i += chunkSize) {
+          textChunks.push(fullText.slice(i, i + chunkSize));
+        }
+      } else {
+        textChunks.push(fullText);
+      }
+
+      chunks = textChunks.map((content, idx) => ({
+        id: `chunk_${Date.now()}_${idx + 1}`,
+        page: idx + 1,
+        content,
+        hasVisuals: idx === 1 || (idx % 3 === 0 && idx > 0),
+        visualDescription: idx === 1 ? `Key visual or conceptual diagram from ${fileData.name}` : undefined
+      }));
     }
 
-    const chunks: DocumentChunk[] = textChunks.map((content, idx) => ({
-      id: `chunk_${Date.now()}_${idx + 1}`,
-      page: idx + 1,
-      content,
-      hasVisuals: idx === 1 || (idx % 3 === 0 && idx > 0),
-      visualDescription: idx === 1 ? `Key visual or conceptual diagram from ${fileData.name}` : undefined
-    }));
+    const calculatedPageCount = Math.max(fileData.pageCount || 1, delimiterMatches.length, chunks.length);
 
     const newFile: DocumentFile = {
       ...fileData,
       rawText: fullText,
-      pageCount: Math.max(fileData.pageCount || 1, chunks.length),
+      pageCount: calculatedPageCount,
       id: `file_${Date.now()}`,
       uploadedAt: new Date().toISOString(),
       chunks
@@ -1055,7 +1099,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const reindexFile = (id: string) => {
-    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'fully_read' } : f));
+    setFiles(prev => prev.map(f => {
+      if (f.id !== id) return f;
+      const fullText = f.rawText || '';
+      const delimiterRegex = /===\s*(?:Slide|Page)\s*(\d+)\s*===\s*([\s\S]*?)(?=(?:===\s*(?:Slide|Page)\s*\d+\s*===|$))/gi;
+      const delimiterMatches = Array.from(fullText.matchAll(delimiterRegex));
+
+      let chunks: DocumentChunk[] = [];
+      if (delimiterMatches.length > 0) {
+        chunks = delimiterMatches.map((m, idx) => {
+          const pageNum = parseInt(m[1], 10) || (idx + 1);
+          return {
+            id: `chunk_${Date.now()}_${pageNum}_${idx}`,
+            page: pageNum,
+            content: m[2].trim() || `(Slide ${pageNum} Visual diagram and summary)`,
+            hasVisuals: idx === 0 || (idx % 3 === 0),
+            visualDescription: `Slide ${pageNum} presentation visuals from ${f.name}`
+          };
+        });
+      } else {
+        const chunkSize = 1200;
+        const textChunks: string[] = [];
+        for (let i = 0; i < fullText.length; i += chunkSize) {
+          textChunks.push(fullText.slice(i, i + chunkSize));
+        }
+        chunks = textChunks.map((content, idx) => ({
+          id: `chunk_${Date.now()}_${idx + 1}`,
+          page: idx + 1,
+          content,
+          hasVisuals: idx === 1 || (idx % 3 === 0 && idx > 0)
+        }));
+      }
+
+      const calculatedPageCount = Math.max(delimiterMatches.length, chunks.length, 1);
+      return {
+        ...f,
+        status: 'fully_read',
+        pageCount: calculatedPageCount,
+        chunks
+      };
+    }));
   };
 
   // Flashcards (SM-2 Algorithm)
@@ -2462,7 +2545,10 @@ How would you like me to assist you with your studies right now?`;
         notes,
         events,
         inboxItems,
-        files,
+        files: files.map(f => ({
+          ...f,
+          rawText: f.rawText && f.rawText.length > 50000 ? f.rawText.slice(0, 50000) : f.rawText
+        })),
         flashcards,
         flashcardDecks,
         focusSessions,

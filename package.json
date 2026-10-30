@@ -11,15 +11,20 @@
   "dependencies": {
     "@types/katex": "^0.16.8",
     "@types/prismjs": "^1.26.6",
+    "@types/qrcode": "^1.5.6",
     "clsx": "^2.1.1",
+    "jszip": "^3.10.2",
     "katex": "^0.19.1",
     "lucide-react": "^1.16.0",
+    "pdfjs-dist": "^6.4.299",
     "prismjs": "^1.30.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
+    "@types/jszip": "^3.4.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
