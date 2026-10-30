@@ -36,21 +36,19 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
   const [restoreStatus, setRestoreStatus] = useState<{ msg: string; error?: boolean } | null>(null);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
 
-  const syncUrl = cloudSyncId ? getShareableSyncUrl(cloudSyncId) : '';
+  const effectiveSyncId = cloudSyncId || localStorage.getItem('nook_cloud_sync_id') || 'nook_' + (user?.id ? user.id.replace(/[^a-zA-Z0-9]/g, '') : 'sync');
+  const syncUrl = getShareableSyncUrl(effectiveSyncId);
 
-  // Auto-sync on modal open if no sync ID exists yet
+  // Auto-sync on modal open in the background without blocking the UI
   useEffect(() => {
-    if (isOpen && !cloudSyncId && !isManualSyncing) {
+    if (isOpen) {
       handleManualSyncNow();
     }
-  }, [isOpen, cloudSyncId]);
+  }, [isOpen]);
 
-  // Generate 100% offline & instantaneous QR Code data URL
+  // Generate 100% offline & instantaneous QR Code data URL immediately
   useEffect(() => {
-    if (!syncUrl) {
-      setQrCodeDataUrl('');
-      return;
-    }
+    let isCurrent = true;
     QRCode.toDataURL(syncUrl, {
       width: 256,
       margin: 1,
@@ -59,11 +57,19 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
         light: '#ffffff'
       }
     })
-      .then(url => setQrCodeDataUrl(url))
+      .then(url => {
+        if (isCurrent) setQrCodeDataUrl(url);
+      })
       .catch(err => {
         console.warn('Local QRCode generator fallback:', err);
-        setQrCodeDataUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=${encodeURIComponent(syncUrl)}`);
+        if (isCurrent) {
+          setQrCodeDataUrl(`https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=10&data=${encodeURIComponent(syncUrl)}`);
+        }
       });
+
+    return () => {
+      isCurrent = false;
+    };
   }, [syncUrl]);
 
   const handleCopyLink = async () => {
@@ -78,9 +84,9 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
   };
 
   const handleCopyCode = async () => {
-    if (!cloudSyncId) return;
+    if (!effectiveSyncId) return;
     try {
-      await navigator.clipboard.writeText(cloudSyncId);
+      await navigator.clipboard.writeText(effectiveSyncId);
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 2500);
     } catch {
@@ -214,27 +220,19 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row items-center gap-4">
-              {/* QR Code Container - Always rendered with either the offline QR code or animated spinner */}
+              {/* QR Code Container - Always rendered with offline QR code or immediate fast fallback */}
               <div className="p-2.5 bg-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs shrink-0 flex flex-col items-center justify-center min-w-[136px] min-h-[136px]">
-                {qrCodeDataUrl ? (
-                  <>
-                    <img
-                      src={qrCodeDataUrl}
-                      alt="Scan with phone camera"
-                      className="w-28 h-28 sm:w-32 sm:h-32 object-contain rounded"
-                    />
-                    <span className="text-[10px] text-slate-500 font-mono mt-1 font-medium">
-                      Scan with camera
-                    </span>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-3 text-center space-y-2">
-                    <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
-                    <span className="text-[10px] font-semibold text-slate-600">
-                      Generating QR...
-                    </span>
-                  </div>
-                )}
+                <img
+                  src={
+                    qrCodeDataUrl ||
+                    `https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=10&data=${encodeURIComponent(syncUrl)}`
+                  }
+                  alt="Scan with phone camera"
+                  className="w-28 h-28 sm:w-32 sm:h-32 object-contain rounded"
+                />
+                <span className="text-[10px] text-slate-500 font-mono mt-1 font-medium">
+                  Scan with camera
+                </span>
               </div>
 
               {/* Instructions & Link */}
@@ -247,7 +245,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
                   <input
                     type="text"
                     readOnly
-                    value={syncUrl || (isManualSyncing ? 'Connecting to cloud...' : 'Generating live sync link...')}
+                    value={syncUrl}
                     className="flex-1 px-2.5 py-1.5 text-[11px] font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md select-all text-slate-700 dark:text-slate-300 overflow-hidden text-ellipsis"
                   />
                   <button
@@ -271,20 +269,18 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
                   )}
                 </div>
 
-                {cloudSyncId && (
-                  <div className="pt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                    <span>Sync Code:</span>
-                    <code className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono font-semibold text-slate-800 dark:text-slate-200 select-all">
-                      {cloudSyncId}
-                    </code>
-                    <button
-                      onClick={handleCopyCode}
-                      className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 text-[10px]"
-                    >
-                      {copiedCode ? 'Copied code!' : 'Copy'}
-                    </button>
-                  </div>
-                )}
+                <div className="pt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                  <span>Sync Code:</span>
+                  <code className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono font-semibold text-slate-800 dark:text-slate-200 select-all">
+                    {effectiveSyncId}
+                  </code>
+                  <button
+                    onClick={handleCopyCode}
+                    className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 text-[10px]"
+                  >
+                    {copiedCode ? 'Copied code!' : 'Copy'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

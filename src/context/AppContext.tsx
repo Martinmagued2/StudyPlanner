@@ -342,8 +342,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Cloud Sync & Cross-Device State
-  const [cloudSyncId, setCloudSyncId] = useState<string | null>(() => {
-    return localStorage.getItem('nook_cloud_sync_id') || null;
+  const [cloudSyncId, setCloudSyncId] = useState<string>(() => {
+    const saved = localStorage.getItem('nook_cloud_sync_id');
+    if (saved && saved.trim().length > 3) return saved.trim();
+    const newId = 'nook_' + Math.random().toString(36).slice(2, 9);
+    localStorage.setItem('nook_cloud_sync_id', newId);
+    return newId;
   });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => {
