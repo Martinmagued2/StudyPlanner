@@ -35,6 +35,12 @@ import {
 import { uploadToCloud, fetchFromCloud, CloudWorkspacePayload } from '../services/cloudSync';
 import { fetchRepoCommits } from '../services/githubService';
 import {
+  getAcademicScheduleContext,
+  isScheduleOrDateQuery,
+  generateScheduleAnswer,
+  buildGeminiAcademicPrompt
+} from '../services/academicScheduleService';
+import {
   initialUser,
   initialCourses,
   initialAssignments,
@@ -1948,6 +1954,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const geminiKey = ((import.meta as any).env?.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '';
     const lower = text.toLowerCase();
+    const scheduleCtx = getAcademicScheduleContext(courses, assignments, tasks, events, exams);
 
     // If student has connected their free Google Gemini API key and is asking study/concept questions
     if (
@@ -1965,6 +1972,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           'gemini-3.8-flash'
         ];
 
+        const academicPrompt = buildGeminiAcademicPrompt(scheduleCtx, courses, text);
+
         for (const model of candidateModels) {
           try {
             const resp = await fetch(
@@ -1978,13 +1987,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                       role: 'user',
                       parts: [
                         {
-                          text: `You are an elite academic tutor and study planner in Nook Academic Workspace.
-Student Context:
-Enrolled courses: ${courses.map(c => `${c.code}: ${c.name}`).join(', ') || 'None currently'}.
-Open tasks: ${tasks.filter(t => !t.completed).map(t => t.title).join(', ') || 'All caught up'}.
-
-Please help this university student with their study inquiry clearly, with helpful markdown headings, bullet points, and code/formulas if relevant:
-${text}`
+                          text: academicPrompt
                         }
                       ]
                     }
@@ -1995,12 +1998,20 @@ ${text}`
             const data = await resp.json();
             const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (geminiText) {
+              // Guard against evasive hallucination where model claims it doesn't have access to calendar
+              const isEvasive =
+                geminiText.toLowerCase().includes('does not currently have access') ||
+                geminiText.toLowerCase().includes('do not currently have access') ||
+                geminiText.toLowerCase().includes('reply with the specific day of the week');
+
+              const finalText = isEvasive ? generateScheduleAnswer(text, scheduleCtx, courses) : geminiText;
+
               setAiMessages(prev => [
                 ...prev,
                 {
                   id: `msg_${Date.now() + 1}`,
                   sender: 'assistant',
-                  content: geminiText,
+                  content: finalText,
                   timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 }
               ]);
@@ -2027,8 +2038,11 @@ ${text}`
       let replyContent = '';
       let proposals: AiActionProposal[] = [];
 
-      // Check if user is asking how to use the AI or needs onboarding
-      if (
+      // Check if user is asking about schedule, tomorrow, today, timetable, or upcoming classes
+      if (isScheduleOrDateQuery(text)) {
+        const scheduleCtx = getAcademicScheduleContext(courses, assignments, tasks, events, exams);
+        replyContent = generateScheduleAnswer(text, scheduleCtx, courses);
+      } else if (
         lower.includes('how to use') ||
         lower.includes('how do i use') ||
         lower.includes('what can you do') ||
@@ -2076,12 +2090,13 @@ Try it right now! Click **Confirm & Create** on the sample course card below, or
           status: 'pending'
         });
       } else if (
-        lower.includes('add course') ||
-        lower.includes('create course') ||
-        lower.includes('taking') ||
-        lower.includes('enrolled') ||
-        lower.includes('course') ||
-        lower.includes('class')
+        (lower.startsWith('add course') ||
+         lower.startsWith('create course') ||
+         lower.startsWith('new course') ||
+         lower.includes('i am taking') ||
+         lower.includes("i'm taking") ||
+         lower.includes('enrolled in')) &&
+        !isScheduleOrDateQuery(text)
       ) {
         // Natural language course creation
         let courseName = 'New Academic Course';

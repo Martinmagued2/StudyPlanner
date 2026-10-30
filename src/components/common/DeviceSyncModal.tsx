@@ -237,16 +237,32 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
                       alt="Scan with phone camera"
                       className="w-28 h-28 sm:w-32 sm:h-32 object-contain rounded"
                     />
-                    <span className="text-[10px] text-slate-500 font-mono mt-1 font-medium">
-                      Scan with camera
-                    </span>
+                    <div className="flex items-center gap-1 mt-1">
+                      {isManualSyncing && <RefreshCw className="w-2.5 h-2.5 text-blue-600 animate-spin" />}
+                      <span className="text-[10px] text-slate-500 font-mono font-medium">
+                        {isManualSyncing ? 'Updating cloud...' : 'Scan with camera'}
+                      </span>
+                    </div>
                   </>
-                ) : (
+                ) : isManualSyncing ? (
                   <div className="flex flex-col items-center justify-center p-3 text-center space-y-2">
                     <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
                     <span className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
                       Syncing to cloud...
                     </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-3 text-center space-y-2">
+                    <AlertCircle className="w-6 h-6 text-amber-500" />
+                    <span className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                      Sync not generated
+                    </span>
+                    <button
+                      onClick={handleManualSyncNow}
+                      className="px-2.5 py-1 text-xs font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-2xs transition-colors"
+                    >
+                      Generate QR
+                    </button>
                   </div>
                 )}
               </div>
