@@ -27,7 +27,7 @@ export interface CloudWorkspacePayload {
   reminderLogs: any[];
 }
 
-const CLOUD_API_URL = 'https://api.restful-api.dev/objects';
+const BYTEBIN_API_URL = 'https://bytebin.lucko.me';
 
 /**
  * Strips huge redundant binary strings so cloud payload is lightweight (<100KB) and lightning-fast.
@@ -75,50 +75,26 @@ function sanitizePayload(payload: CloudWorkspacePayload): any {
 }
 
 /**
- * Uploads workspace snapshot to free cloud storage and returns the cloud object ID (Sync ID).
- * If an existing syncId is provided, it updates the existing cloud record (PUT).
- * If no syncId is provided, it creates a new cloud record (POST).
+ * Uploads workspace snapshot to free, high-performance cloud storage (Bytebin) with full CORS.
+ * Returns the short cloud object key (Sync ID).
  */
 export async function uploadToCloud(
   payload: CloudWorkspacePayload,
-  existingSyncId?: string | null
+  _existingSyncId?: string | null
 ): Promise<{ syncId: string; syncedAt: string }> {
   const syncedAt = new Date().toISOString();
   const cleanData = sanitizePayload(payload);
 
-  const bodyData = {
-    name: 'nook_studyplanner_workspace',
-    data: cleanData
-  };
-
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 6500);
+  const timeoutId = setTimeout(() => controller.abort(), 7000);
 
   try {
-    // 1. Try updating existing sync record if available
-    if (existingSyncId && existingSyncId.trim().length > 5) {
-      try {
-        const putRes = await fetch(`${CLOUD_API_URL}/${existingSyncId.trim()}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bodyData),
-          signal: controller.signal
-        });
-
-        if (putRes.ok) {
-          clearTimeout(timeoutId);
-          return { syncId: existingSyncId.trim(), syncedAt };
-        }
-      } catch (e) {
-        console.warn('Failed to update existing cloud sync object, falling back to create new:', e);
-      }
-    }
-
-    // 2. Create new cloud sync record
-    const postRes = await fetch(CLOUD_API_URL, {
+    const postRes = await fetch(`${BYTEBIN_API_URL}/post`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bodyData),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(cleanData),
       signal: controller.signal
     });
 
@@ -129,7 +105,11 @@ export async function uploadToCloud(
     }
 
     const result = await postRes.json();
-    return { syncId: result.id, syncedAt };
+    if (!result?.key) {
+      throw new Error('Cloud did not return a valid sync key');
+    }
+
+    return { syncId: result.key, syncedAt };
   } catch (err: any) {
     clearTimeout(timeoutId);
     console.error('Cloud upload error:', err);
@@ -143,35 +123,31 @@ export async function uploadToCloud(
 export async function fetchFromCloud(syncId: string): Promise<CloudWorkspacePayload> {
   const cleanId = syncId.trim();
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 6500);
+  const timeoutId = setTimeout(() => controller.abort(), 7000);
 
   try {
-    const res = await fetch(`${CLOUD_API_URL}/${cleanId}`, {
+    const res = await fetch(`${BYTEBIN_API_URL}/${cleanId}`, {
       signal: controller.signal
     });
     clearTimeout(timeoutId);
 
     if (!res.ok) {
+      // Legacy fallback for old 32-char IDs
+      if (cleanId.length > 20) {
+        try {
+          const oldRes = await fetch(`https://api.restful-api.dev/objects/${cleanId}`);
+          if (oldRes.ok) {
+            const oldJson = await oldRes.json();
+            return (oldJson.data?.payload ? JSON.parse(oldJson.data.payload) : oldJson.data) as CloudWorkspacePayload;
+          }
+        } catch {}
+      }
       throw new Error(`Could not find cloud workspace with Sync ID "${cleanId}". (Status ${res.status})`);
     }
 
-    const json = await res.json();
-    const data = json?.data;
+    const data = await res.json();
     if (!data) {
       throw new Error('Cloud workspace data is empty or invalid.');
-    }
-
-    // Support both direct native object and legacy stringified payload
-    if (typeof data.payload === 'string') {
-      try {
-        return JSON.parse(data.payload) as CloudWorkspacePayload;
-      } catch {
-        return data as CloudWorkspacePayload;
-      }
-    }
-
-    if (data.payload && typeof data.payload === 'object') {
-      return data.payload as CloudWorkspacePayload;
     }
 
     return data as CloudWorkspacePayload;

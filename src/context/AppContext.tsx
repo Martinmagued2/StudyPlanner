@@ -342,12 +342,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Cloud Sync & Cross-Device State
-  const [cloudSyncId, setCloudSyncId] = useState<string>(() => {
+  const [cloudSyncId, setCloudSyncId] = useState<string | null>(() => {
     const saved = localStorage.getItem('nook_cloud_sync_id');
-    if (saved && saved.trim().length > 3) return saved.trim();
-    const newId = 'nook_' + Math.random().toString(36).slice(2, 9);
-    localStorage.setItem('nook_cloud_sync_id', newId);
-    return newId;
+    if (saved && saved.trim().length > 3 && !saved.startsWith('nook_') && !saved.startsWith('sync_')) {
+      return saved.trim();
+    }
+    return null;
   });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => {
@@ -2625,10 +2625,21 @@ How would you like me to assist you with your studies right now?`;
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const syncParam = urlParams.get('sync');
-    if (syncParam && syncParam.trim().length > 5) {
+    if (syncParam && syncParam.trim().length >= 4) {
       loadFromCloud(syncParam.trim()).then(ok => {
         if (ok) {
           window.history.replaceState({}, document.title, window.location.pathname);
+          setNotifications(prev => [
+            {
+              id: `notif_sync_${Date.now()}`,
+              title: 'Workspace Synced Successfully',
+              message: 'Your courses, tasks, notes, and study plans have been loaded from your other device!',
+              type: 'system',
+              timestamp: 'Just now',
+              read: false
+            },
+            ...prev
+          ]);
         }
       });
     }
