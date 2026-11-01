@@ -183,6 +183,37 @@ export const Sidebar: React.FC = () => {
                   </button>
                 );
               })}
+              {/* Courses in Mobile Navigation */}
+              {courses.length > 0 && (
+                <div className="pt-2 pb-1 border-t border-slate-100 dark:border-slate-800">
+                  <div className="px-3 py-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500 tracking-wider uppercase">
+                    My Courses
+                  </div>
+                  {courses.map(course => {
+                    const isSelected = activeView === 'course-detail' && selectedCourseId === course.id;
+                    return (
+                      <button
+                        key={course.id}
+                        onClick={() => {
+                          navigateToCourse(course.id);
+                          setIsMobileNavOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                          isSelected
+                            ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white font-semibold'
+                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                        }`}
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: course.color }}
+                        />
+                        <span className="truncate text-left font-medium">{course.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </nav>
 
             {/* Mobile Footer */}
@@ -343,7 +374,9 @@ export const Sidebar: React.FC = () => {
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: course.color }}
                     />
-                    <span className="truncate">{course.code}</span>
+                    <span className="truncate text-left font-medium" title={`${course.name} (${course.code})`}>
+                      {course.name}
+                    </span>
                   </button>
                 );
               })}
@@ -420,11 +453,11 @@ export const Sidebar: React.FC = () => {
                 </span>
                 <span className="text-[10px] font-mono text-slate-400 group-hover:text-blue-500">Details →</span>
               </div>
-              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                {selectedCourse.code} — {selectedCourse.name}
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate" title={`${selectedCourse.name} (${selectedCourse.code})`}>
+                {selectedCourse.name}
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                {selectedCourse.instructor} • {selectedCourse.location || 'Campus'}
+                {selectedCourse.code} • {selectedCourse.instructor} • {selectedCourse.location || 'Campus'}
               </div>
             </button>
           ) : liveSchedule.activeOrNextClass.status === 'happening_now' && liveSchedule.currentClass ? (
@@ -445,11 +478,11 @@ export const Sidebar: React.FC = () => {
                   {liveSchedule.currentClass.remainingMinutes}m left
                 </span>
               </div>
-              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                {liveSchedule.currentClass.courseCode} — {liveSchedule.currentClass.courseName}
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate" title={`${liveSchedule.currentClass.courseName} (${liveSchedule.currentClass.courseCode})`}>
+                {liveSchedule.currentClass.courseName}
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                {liveSchedule.currentClass.time} • {liveSchedule.currentClass.location}
+                {liveSchedule.currentClass.courseCode} • {liveSchedule.currentClass.time} • {liveSchedule.currentClass.location}
               </div>
             </button>
           ) : liveSchedule.activeOrNextClass.classItem ? (
@@ -467,11 +500,11 @@ export const Sidebar: React.FC = () => {
                   {liveSchedule.activeOrNextClass.badgeLabel}
                 </span>
               </div>
-              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                {liveSchedule.activeOrNextClass.classItem.courseCode} — {liveSchedule.activeOrNextClass.classItem.courseName}
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate" title={`${liveSchedule.activeOrNextClass.classItem.courseName} (${liveSchedule.activeOrNextClass.classItem.courseCode})`}>
+                {liveSchedule.activeOrNextClass.classItem.courseName}
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                {liveSchedule.activeOrNextClass.subLabel} • {liveSchedule.activeOrNextClass.classItem.location}
+                {liveSchedule.activeOrNextClass.classItem.courseCode} • {liveSchedule.activeOrNextClass.subLabel} • {liveSchedule.activeOrNextClass.classItem.location}
               </div>
             </button>
           ) : (

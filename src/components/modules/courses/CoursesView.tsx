@@ -16,12 +16,13 @@ import {
   Trash2,
   Calendar,
   Pencil,
-  X
+  X,
+  Bot
 } from 'lucide-react';
 import { Course, MeetingSlot, ClassType } from '../../../types';
 
 export const CoursesView: React.FC = () => {
-  const { courses, addCourse, updateCourse, archiveCourse, deleteCourse, navigateToCourse, assignments, notes } = useApp();
+  const { courses, addCourse, updateCourse, archiveCourse, deleteCourse, navigateToCourse, setActiveCourseTab, assignments, notes } = useApp();
   const [showArchived, setShowArchived] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -376,13 +377,24 @@ export const CoursesView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Enter Course Button */}
-              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+              {/* Enter Course / Ask AI Buttons */}
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
                 <button
                   onClick={() => navigateToCourse(course.id)}
-                  className="w-full py-1.5 text-xs font-medium rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition-colors"
+                  className="flex-1 py-1.5 px-3 text-xs font-medium rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition-colors text-center"
                 >
-                  Open Course Hub (7 Tabs) →
+                  Open Hub →
+                </button>
+                <button
+                  onClick={() => {
+                    navigateToCourse(course.id);
+                    setActiveCourseTab('agent');
+                  }}
+                  className="py-1.5 px-3 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 shadow-2xs transition-colors shrink-0"
+                  title={`Chat with ${course.code} Dedicated Study Agent`}
+                >
+                  <Bot className="w-3.5 h-3.5 text-blue-400 dark:text-blue-600" />
+                  <span>Ask AI</span>
                 </button>
               </div>
             </div>

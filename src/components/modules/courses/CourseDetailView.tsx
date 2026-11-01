@@ -23,10 +23,14 @@ import {
   Trash2,
   Pencil,
   X,
-  UploadCloud
+  UploadCloud,
+  Award,
+  Target,
+  Flame
 } from 'lucide-react';
 import { ClassType, MeetingSlot } from '../../../types';
 import { extractTextFromFile } from '../../../services/fileAiService';
+import { CourseStudyAgent } from './CourseStudyAgent';
 
 export const CourseDetailView: React.FC = () => {
   const {
@@ -40,6 +44,8 @@ export const CourseDetailView: React.FC = () => {
     files,
     quizzes,
     githubRepos,
+    exams,
+    openQuickCreate,
     addNote,
     addAssignment,
     addFile,
@@ -103,14 +109,6 @@ export const CourseDetailView: React.FC = () => {
     );
   }
 
-  // Study Agent local chat state
-  const [agentMessages, setAgentMessages] = useState<Array<{ sender: 'user' | 'agent'; text: string; citations?: string[] }>>([
-    {
-      sender: 'agent',
-      text: `Hello! I am your dedicated course Study Agent for ${course.code}: ${course.name}. I have indexed your syllabus, lecture slides, notes, and assignments. How would you like to prepare today?`
-    }
-  ]);
-  const [agentInput, setAgentInput] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
@@ -191,6 +189,24 @@ export const CourseDetailView: React.FC = () => {
   const courseFiles = files.filter(f => f.courseId === course.id);
   const courseQuizzes = quizzes.filter(q => q.courseId === course.id);
   const courseRepos = githubRepos.filter(r => r.courseId === course.id);
+  const courseExams = exams.filter(e => e.courseId === course.id);
+
+  // Next upcoming exam
+  const upcomingExam = courseExams
+    .filter(e => new Date(e.date).getTime() >= Date.now() - 24 * 60 * 60 * 1000)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+
+  const examDaysLeft = upcomingExam
+    ? Math.ceil((new Date(upcomingExam.date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
+
+  // Calculate Course Readiness Score (0-100)
+  const completedAssignmentsCount = courseAssignments.filter(a => a.status === 'completed').length;
+  const assignmentFactor = courseAssignments.length > 0 ? (completedAssignmentsCount / courseAssignments.length) * 35 : 20;
+  const filesFactor = (Math.min(courseFiles.length, 3) / 3) * 25;
+  const notesFactor = (Math.min(courseNotes.length, 4) / 4) * 20;
+  const quizzesFactor = (Math.min(courseQuizzes.length, 2) / 2) * 20;
+  const readinessScore = Math.min(100, Math.round(assignmentFactor + filesFactor + notesFactor + quizzesFactor));
 
   const tabs = [
     { id: 'overview', label: '1. Overview', icon: <BookOpen className="w-3.5 h-3.5" /> },
@@ -201,32 +217,6 @@ export const CourseDetailView: React.FC = () => {
     { id: 'projects', label: `6. Projects (${courseRepos.length})`, icon: <GitBranch className="w-3.5 h-3.5" /> },
     { id: 'agent', label: '7. Study Agent', icon: <Bot className="w-3.5 h-3.5" /> },
   ];
-
-  const handleAgentSend = (promptText?: string) => {
-    const textToSend = promptText || agentInput;
-    if (!textToSend.trim()) return;
-
-    const userMsg = { sender: 'user' as const, text: textToSend };
-    setAgentMessages(prev => [...prev, userMsg]);
-    if (!promptText) setAgentInput('');
-
-    setTimeout(() => {
-      let reply = '';
-      let citations: string[] = [];
-
-      if (textToSend.includes('lecture') || textToSend.includes('prepare')) {
-        reply = `For the upcoming ${course.code} lecture on Self-Balancing Trees in Turing Hall 101, review the AVL invariant balance factor condition: |height(left) - height(right)| <= 1. Remember that zigzag Left-Right insertions demand a double rotation rather than a single pivot.`;
-        citations = ['CS302_Lecture12_SelfBalancingTrees.pdf • Page 14'];
-      } else if (textToSend.includes('quiz') || textToSend.includes('test')) {
-        reply = `Quick check: Why does an AVL tree's worst-case height never exceed 1.44 log₂(n)? Answer: Because the minimum number of nodes follows a Fibonacci progression.`;
-        citations = ['CS302_Lecture12_SelfBalancingTrees.pdf • Page 29'];
-      } else {
-        reply = `I have cross-referenced your course notes and indexed lecture slides for ${course.name}. The next deadline is "${courseAssignments[0]?.title || 'upcoming coursework'}".`;
-      }
-
-      setAgentMessages(prev => [...prev, { sender: 'agent', text: reply, citations }]);
-    }, 600);
-  };
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
@@ -391,8 +381,107 @@ export const CourseDetailView: React.FC = () => {
               )}
             </div>
 
-            {/* Quick Actions & Upcoming Deadline */}
+            {/* Quick Actions, Exam Countdown & Readiness */}
             <div className="space-y-4">
+              {/* Exam Countdown Card */}
+              {upcomingExam ? (
+                <div className="p-4 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 uppercase tracking-wider flex items-center gap-1">
+                      <Flame className="w-3 h-3 text-amber-600" />
+                      <span>Exam In {examDaysLeft} Days</span>
+                    </span>
+                    <span className="text-[11px] text-amber-700 dark:text-amber-400 font-mono font-semibold">
+                      Weight: {upcomingExam.weightPercentage}%
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">{upcomingExam.name}</h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {new Date(upcomingExam.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} • {upcomingExam.room || course.location || 'Exam Hall'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveCourseTab('agent')}
+                    className="w-full py-1.5 px-3 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white flex items-center justify-center gap-1.5 shadow-2xs transition-colors"
+                  >
+                    <Bot className="w-3.5 h-3.5" />
+                    <span>Prepare with AI Agent</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <Award className="w-3.5 h-3.5 text-blue-500" />
+                      <span>Exams & Revision</span>
+                    </span>
+                    <button
+                      onClick={() => setActiveView('exams')}
+                      className="text-[11px] text-blue-600 hover:underline"
+                    >
+                      Manage Exams →
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    No upcoming exam registered for {course.code}. Add your midterm or final date to track countdowns and auto-revision schedules.
+                  </p>
+                </div>
+              )}
+
+              {/* Course Mastery & Readiness Meter */}
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Target className="w-4 h-4 text-emerald-500" />
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">Course Mastery & Readiness</h4>
+                  </div>
+                  <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-full ${
+                    readinessScore >= 75
+                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                      : readinessScore >= 45
+                      ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                      : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                  }`}>
+                    {readinessScore}%
+                  </span>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-500 rounded-full ${
+                      readinessScore >= 75
+                        ? 'bg-emerald-500'
+                        : readinessScore >= 45
+                        ? 'bg-amber-500'
+                        : 'bg-blue-500'
+                    }`}
+                    style={{ width: `${readinessScore}%` }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                    <span>{completedAssignmentsCount}/{courseAssignments.length} Tasks Done</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <span>{courseFiles.length} Slide Decks</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                    <span>{courseNotes.length} Lecture Notes</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    <span>{courseQuizzes.length} Quizzes Mastered</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Next Deadline */}
               <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
                 <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Next Deadline</h4>
                 {courseAssignments[0] ? (
@@ -413,6 +502,39 @@ export const CourseDetailView: React.FC = () => {
                 ) : (
                   <p className="text-xs text-slate-500">No pending assignments.</p>
                 )}
+              </div>
+
+              {/* Quick AI Launchpad */}
+              <div className="p-3.5 rounded-xl border border-blue-100 dark:border-blue-900/60 bg-blue-50/30 dark:bg-blue-950/20 space-y-2">
+                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" />
+                  <span>AI Study Launchpad</span>
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setActiveCourseTab('agent')}
+                    className="p-2 text-left rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-700 text-xs transition-colors group"
+                  >
+                    <div className="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 flex items-center gap-1">
+                      <Bot className="w-3.5 h-3.5 text-blue-500" />
+                      <span>Study Agent</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Trained on {courseFiles.length} files</p>
+                  </button>
+                  <button
+                    onClick={() => {
+                      createQuizFromCourse(course.id, 'medium');
+                      setActiveCourseTab('quizzes');
+                    }}
+                    className="p-2 text-left rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-700 text-xs transition-colors group"
+                  >
+                    <div className="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 flex items-center gap-1">
+                      <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
+                      <span>AI Quiz</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Auto-generate 5 questions</p>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -674,89 +796,13 @@ export const CourseDetailView: React.FC = () => {
 
         {/* TAB 7: STUDY AGENT */}
         {activeCourseTab === 'agent' && (
-          <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded bg-blue-600 text-white flex items-center justify-center">
-                  <Bot className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                    {course.code} Dedicated Study Agent
-                  </h4>
-                  <p className="text-[11px] text-slate-500">
-                    Trained strictly on {course.name} syllabus, indexed lecture slides, and notes.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Prompts */}
-            <div className="flex items-center gap-2 overflow-x-auto text-xs pb-1">
-              <button
-                onClick={() => handleAgentSend('Prepare me for the next lecture')}
-                className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 shrink-0 font-medium"
-              >
-                Prepare for next lecture
-              </button>
-              <button
-                onClick={() => handleAgentSend('Quiz me on recent notes')}
-                className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 shrink-0 font-medium"
-              >
-                Quiz me on notes
-              </button>
-              <button
-                onClick={() => handleAgentSend('Plan exam revision for midterm')}
-                className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 shrink-0 font-medium"
-              >
-                Plan exam revision
-              </button>
-              <button
-                onClick={() => handleAgentSend('Summarize course files')}
-                className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 shrink-0 font-medium"
-              >
-                Summarize course files
-              </button>
-            </div>
-
-            {/* Chat Messages */}
-            <div className="max-h-80 overflow-y-auto space-y-3 p-2 bg-slate-50 dark:bg-slate-950/40 rounded-lg border border-slate-200 dark:border-slate-800">
-              {agentMessages.map((msg, i) => (
-                <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                  <div className={`p-3 rounded-lg text-xs max-w-[85%] leading-relaxed ${
-                    msg.sender === 'user'
-                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                      : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
-                  }`}>
-                    <p>{msg.text}</p>
-                    {msg.citations && msg.citations.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[10px] text-blue-600 dark:text-blue-400 font-mono">
-                        Source: {msg.citations.join(', ')}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Input Bar */}
-            <form onSubmit={e => { e.preventDefault(); handleAgentSend(); }} className="flex gap-2">
-              <input
-                type="text"
-                value={agentInput}
-                onChange={e => setAgentInput(e.target.value)}
-                placeholder={`Ask ${course.code} study agent anything...`}
-                className="flex-1 px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:outline-none"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1.5"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Send</span>
-              </button>
-            </form>
-          </div>
+          <CourseStudyAgent
+            course={course}
+            assignments={courseAssignments}
+            notes={courseNotes}
+            files={courseFiles}
+            quizzes={courseQuizzes}
+          />
         )}
       </div>
 
