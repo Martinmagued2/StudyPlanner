@@ -254,6 +254,7 @@ interface AppContextType {
 
   // Cloud Sync & Cross-Device Access
   cloudSyncId: string | null;
+  directSyncPayload: string | null;
   cloudSyncStatus: 'synced' | 'syncing' | 'offline' | 'error';
   lastSyncedAt: string | null;
   saveToCloud: () => Promise<string>;
@@ -351,10 +352,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Cloud Sync & Cross-Device State
   const [cloudSyncId, setCloudSyncId] = useState<string | null>(() => {
     const saved = localStorage.getItem('nook_cloud_sync_id');
-    if (saved && saved.trim().length > 3 && !saved.startsWith('nook_') && !saved.startsWith('sync_')) {
+    if (saved && saved.trim().length > 3 && !saved.startsWith('nook_')) {
       return saved.trim();
     }
     return null;
+  });
+  const [directSyncPayload, setDirectSyncPayload] = useState<string | null>(() => {
+    return localStorage.getItem('nook_direct_sync_payload') || null;
   });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => {
@@ -2591,11 +2595,13 @@ How would you like me to assist you with your studies right now?`;
         reminderLogs
       };
 
-      const { syncId, syncedAt } = await uploadToCloud(payload, cloudSyncId);
+      const { syncId, syncedAt, directPayload } = await uploadToCloud(payload, cloudSyncId);
       setCloudSyncId(syncId);
+      setDirectSyncPayload(directPayload);
       setLastSyncedAt(syncedAt);
       setCloudSyncStatus('synced');
       localStorage.setItem('nook_cloud_sync_id', syncId);
+      localStorage.setItem('nook_direct_sync_payload', directPayload);
       localStorage.setItem('nook_last_cloud_sync_at', syncedAt);
       return syncId;
     } catch (e) {
@@ -2604,10 +2610,10 @@ How would you like me to assist you with your studies right now?`;
     }
   };
 
-  const loadFromCloud = async (syncId: string): Promise<boolean> => {
+  const loadFromCloud = async (syncIdOrPayload: string): Promise<boolean> => {
     setCloudSyncStatus('syncing');
     try {
-      const data = await fetchFromCloud(syncId);
+      const data = await fetchFromCloud(syncIdOrPayload);
       if (data.user && !user) {
         setUser(data.user);
         localStorage.setItem('nook_current_user', JSON.stringify(data.user));
@@ -2631,10 +2637,16 @@ How would you like me to assist you with your studies right now?`;
       if (Array.isArray(data.integrations)) setIntegrations(data.integrations);
       if (Array.isArray(data.githubRepos)) setGithubRepos(data.githubRepos);
 
-      setCloudSyncId(syncId);
+      const isDirectPayload = syncIdOrPayload.length > 50 || syncIdOrPayload.startsWith('UEsDB') || syncIdOrPayload.includes('%');
+      const cleanSyncId = isDirectPayload ? (localStorage.getItem('nook_cloud_sync_id') || `sync_${Date.now()}`) : syncIdOrPayload;
+      setCloudSyncId(cleanSyncId);
+      if (isDirectPayload) {
+        setDirectSyncPayload(syncIdOrPayload);
+        localStorage.setItem('nook_direct_sync_payload', syncIdOrPayload);
+      }
       setLastSyncedAt(data.syncedAt || new Date().toISOString());
       setCloudSyncStatus('synced');
-      localStorage.setItem('nook_cloud_sync_id', syncId);
+      localStorage.setItem('nook_cloud_sync_id', cleanSyncId);
       localStorage.setItem('nook_last_cloud_sync_at', data.syncedAt || new Date().toISOString());
       return true;
     } catch (e) {
@@ -2644,12 +2656,34 @@ How would you like me to assist you with your studies right now?`;
     }
   };
 
-  // Check URL query for ?sync=... parameter on mount
+  // Check URL hash (#sync_data=...) or query (?sync=... / ?sync_data=...) on mount
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const syncParam = urlParams.get('sync');
-    if (syncParam && syncParam.trim().length >= 4) {
-      loadFromCloud(syncParam.trim()).then(ok => {
+    const handleUrlSync = async () => {
+      let syncTarget: string | null = null;
+
+      // 1. Check window.location.hash for #sync_data=...
+      const hash = window.location.hash;
+      if (hash && hash.includes('sync_data=')) {
+        const match = hash.match(/sync_data=([^&]+)/);
+        if (match && match[1]) {
+          syncTarget = decodeURIComponent(match[1]);
+        }
+      }
+
+      // 2. Check search params for ?sync_data=... or ?sync=...
+      if (!syncTarget) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const syncDataParam = urlParams.get('sync_data');
+        const syncParam = urlParams.get('sync');
+        if (syncDataParam && syncDataParam.trim().length > 10) {
+          syncTarget = syncDataParam.trim();
+        } else if (syncParam && syncParam.trim().length >= 4) {
+          syncTarget = syncParam.trim();
+        }
+      }
+
+      if (syncTarget) {
+        const ok = await loadFromCloud(syncTarget);
         if (ok) {
           window.history.replaceState({}, document.title, window.location.pathname);
           setNotifications(prev => [
@@ -2664,8 +2698,10 @@ How would you like me to assist you with your studies right now?`;
             ...prev
           ]);
         }
-      });
-    }
+      }
+    };
+
+    handleUrlSync();
   }, []);
 
   // Check on mount if daily briefing should pop up
@@ -2870,6 +2906,7 @@ How would you like me to assist you with your studies right now?`;
         resetAllDemoData,
         clearAllWorkspaceData,
         cloudSyncId,
+        directSyncPayload,
         cloudSyncStatus,
         lastSyncedAt,
         saveToCloud,
