@@ -252,76 +252,191 @@ g++ -O2 -std=c++17 solution.cpp -o solution
   // Convert raw pasted text / markdown / LaTeX into clean, styled academic HTML
   const parseAcademicTextToHtml = (raw: string): string => {
     if (!raw) return '<p><br></p>';
-    let text = raw;
+    let text = raw.replace(/\r\n/g, '\n');
+
+    // 0. Protect & format Fenced Code Blocks & ASCII Diagrams (``` or ``)
+    const codeBlocks: string[] = [];
+    text = text.replace(/(?:```|``)([a-zA-Z0-9_-]*)\n([\s\S]*?)(?:```|``)/g, (_, lang, code) => {
+      const isDiagram =
+        code.includes('^') ||
+        code.includes('| \\') ||
+        code.includes('+---') ||
+        code.includes('-->') ||
+        code.includes('<---');
+      const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+      const badge = isDiagram
+        ? `<div class="text-[10px] uppercase font-bold tracking-wider text-emerald-400 mb-1 flex items-center gap-1 font-mono">📐 Conceptual Diagram / Architecture</div>`
+        : lang
+        ? `<div class="text-[10px] uppercase font-bold tracking-wider text-blue-400 mb-1 font-mono">${lang}</div>`
+        : '';
+      const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const html = `<div class="my-4 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 shadow-sm" contenteditable="false">${badge}<pre class="font-mono text-xs leading-snug ${
+        isDiagram ? 'text-emerald-300' : 'text-slate-200'
+      } overflow-x-auto whitespace-pre select-all"><code>${escaped}</code></pre></div>`;
+      codeBlocks.push(html);
+      return placeholder;
+    });
 
     // 1. Process display LaTeX math $$...$$
+    const mathBlocks: string[] = [];
     text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, eq) => {
       const rendered = renderFormulaWithKatex(eq, true);
-      return `<div class="katex-display-block my-3 py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 overflow-x-auto text-center font-sans" contenteditable="false" data-latex="${encodeURIComponent(eq)}">${rendered}</div>`;
+      const placeholder = `__MATH_BLOCK_${mathBlocks.length}__`;
+      mathBlocks.push(
+        `<div class="katex-display-block my-3 py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 overflow-x-auto text-center font-sans" contenteditable="false" data-latex="${encodeURIComponent(
+          eq
+        )}">${rendered}</div>`
+      );
+      return placeholder;
     });
 
     // 2. Process inline LaTeX math $...$
     text = text.replace(/\$([^\$\n\r]+?)\$/g, (_, eq) => {
       const rendered = renderFormulaWithKatex(eq, false);
-      return `<span class="katex-inline-formula px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 mx-0.5" contenteditable="false" data-latex="${encodeURIComponent(eq)}">${rendered}</span>`;
+      return `<span class="katex-inline-formula px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 mx-0.5" contenteditable="false" data-latex="${encodeURIComponent(
+        eq
+      )}">${rendered}</span>`;
     });
 
-    // 3. Process Markdown tables: | col 1 | col 2 |
-    const tableRegex = /((?:^|\n)\|[^\n]+\|\r?\n\|[-:\s|]+\|\r?\n(?:\|[^\n]+\|\r?\n?)+)/g;
-    text = text.replace(tableRegex, (match) => {
-      const lines = match.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    // 3. Process Markdown tables
+    const tableRegex = /((?:^|\n)\|[^\n]+\|\n\|[-:\s|]+\|\n(?:\|[^\n]+\|\n?)+)/g;
+    text = text.replace(tableRegex, match => {
+      const lines = match
+        .trim()
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean);
       if (lines.length < 2) return match;
-      const headerCols = lines[0].split('|').slice(1, -1).map(c => c.trim());
+      const headerCols = lines[0]
+        .split('|')
+        .slice(1, -1)
+        .map(c => c.trim());
       const rowLines = lines.slice(2);
 
-      let tableHtml = `<table class="w-full border-collapse border border-slate-300 dark:border-slate-700 my-4 text-xs sm:text-sm"><thead><tr class="bg-slate-100 dark:bg-slate-800/80">`;
+      let tableHtml = `<div class="overflow-x-auto my-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs"><table class="w-full text-xs sm:text-sm text-left border-collapse"><thead class="bg-slate-100 dark:bg-slate-800/90 text-slate-900 dark:text-slate-100 font-bold border-b border-slate-200 dark:border-slate-700"><tr>`;
       headerCols.forEach(col => {
-        tableHtml += `<th class="border border-slate-300 dark:border-slate-700 px-3 py-2 text-left font-bold text-slate-900 dark:text-slate-100">${col}</th>`;
+        tableHtml += `<th class="px-3.5 py-2.5">${col}</th>`;
       });
-      tableHtml += `</tr></thead><tbody>`;
+      tableHtml += `</tr></thead><tbody class="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900">`;
 
-      rowLines.forEach(row => {
-        const cells = row.split('|').slice(1, -1).map(c => c.trim());
-        tableHtml += `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40">`;
+      rowLines.forEach((row, rIdx) => {
+        const cells = row
+          .split('|')
+          .slice(1, -1)
+          .map(c => c.trim());
+        tableHtml += `<tr class="${rIdx % 2 === 1 ? 'bg-slate-50/50 dark:bg-slate-800/20' : ''}">`;
         cells.forEach(cell => {
-          tableHtml += `<td class="border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-slate-800 dark:text-slate-200">${cell}</td>`;
+          tableHtml += `<td class="px-3.5 py-2 text-slate-800 dark:text-slate-200">${cell}</td>`;
         });
         tableHtml += `</tr>`;
       });
-      tableHtml += `</tbody></table><p><br></p>`;
+      tableHtml += `</tbody></table></div>`;
       return tableHtml;
     });
 
-    // 4. Process Markdown bold and italics
-    text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    // 4. Horizontal Dividers: --- or ***
+    text = text.replace(
+      /^(?:---|---|\*\*\*|___)$/gm,
+      '<div class="my-6 flex items-center gap-3"><div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div><div class="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700"></div><div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div></div>'
+    );
+
+    // 5. Exam Traps & Common Pitfalls
+    text = text.replace(
+      /^(?:>\s*)?(?:⚠️\s*)?(Trap\s*\d*|Exam Trap|Common Pitfall|Pitfall)\s*:\s*(.*)$/gim,
+      '<div class="my-3 p-3.5 rounded-xl border border-amber-300 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 text-xs sm:text-sm leading-relaxed"><div class="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-200 uppercase tracking-wide text-xs mb-1">⚠️ $1</div><div class="text-slate-800 dark:text-slate-200 pl-4">$2</div></div>'
+    );
+    text = text.replace(
+      /^(?:>\s*)?(?:✅\s*)?(Correction|Reality)\s*:\s*(.*)$/gim,
+      '<div class="my-2 p-2.5 rounded-lg border border-emerald-300 dark:border-emerald-900/50 bg-emerald-50/60 dark:bg-emerald-950/20 text-xs sm:text-sm pl-4"><strong class="text-emerald-700 dark:text-emerald-300 font-bold uppercase tracking-wide text-[10px] block mb-0.5">$1</strong><span class="text-slate-800 dark:text-slate-200">$2</span></div>'
+    );
+
+    // 6. Practical Scenarios & Illustrations
+    text = text.replace(
+      /^(?:>\s*)?(?:💡\s*)?(Scenario|Worked Example|Case Study)\s*:\s*(.*)$/gim,
+      '<div class="my-3 p-3.5 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/25 text-xs sm:text-sm leading-relaxed"><div class="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-200 uppercase tracking-wide text-xs mb-1">💡 $1</div><div class="text-slate-800 dark:text-slate-200 pl-4">$2</div></div>'
+    );
+
+    // 7. Checklists: [ ] and [x]
+    text = text.replace(
+      /^(?:[-*]\s*)?\[ \]\s*(.*)$/gim,
+      '<div class="flex items-start gap-2.5 my-1.5 pl-2 text-xs sm:text-sm text-slate-800 dark:text-slate-200"><span class="w-4 h-4 mt-0.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 shrink-0 inline-block"></span><span class="flex-1 leading-relaxed">$1</span></div>'
+    );
+    text = text.replace(
+      /^(?:[-*]\s*)?\[[xX]\]\s*(.*)$/gim,
+      '<div class="flex items-start gap-2.5 my-1.5 pl-2 text-xs sm:text-sm text-slate-400 dark:text-slate-500 line-through"><span class="w-4 h-4 mt-0.5 rounded bg-blue-600 text-white shrink-0 flex items-center justify-center text-[10px]">✓</span><span class="flex-1 leading-relaxed">$1</span></div>'
+    );
+
+    // 8. Numbered Major Sections: 1. Executive Summary...
+    text = text.replace(
+      /^(?:##\s*)?(\d+)\.\s+([A-Z][^\n]{3,70})$/gm,
+      '<div class="mt-6 mb-2.5 flex items-center gap-2.5 pt-1"><span class="w-6 h-6 rounded-md bg-blue-600 text-white font-extrabold text-xs flex items-center justify-center shadow-2xs shrink-0">$1</span><h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">$2</h2></div>'
+    );
+
+    // 9. Lettered Subsections: A. The Three Basic...
+    text = text.replace(
+      /^(?:###\s*)?([A-Z])\.\s+([A-Z][^\n]{3,80})$/gm,
+      '<div class="mt-4 mb-2 flex items-center gap-2"><span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">$1</span><h3 class="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">$2</h3></div>'
+    );
+
+    // 10. Process Markdown bold and italics
+    text = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-900 dark:text-slate-100">$1</strong>');
+    text = text.replace(/__([^_]+)__/g, '<strong class="font-bold text-slate-900 dark:text-slate-100">$1</strong>');
     text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
 
-    // 5. Process inline code
-    text = text.replace(/`([^`]+)`/g, '<code class="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-xs text-blue-600 dark:text-blue-400">$1</code>');
+    // 11. Process inline code
+    text = text.replace(
+      /`([^`]+)`/g,
+      '<code class="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-xs text-blue-600 dark:text-blue-400 font-semibold">$1</code>'
+    );
 
-    // 6. Process Headings
-    text = text.replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-3 mb-1 text-slate-900 dark:text-slate-100">$1</h3>');
-    text = text.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold mt-4 mb-1.5 text-slate-900 dark:text-slate-100">$1</h2>');
-    text = text.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-5 mb-2 text-slate-900 dark:text-slate-100">$1</h1>');
+    // 12. Headings
+    text = text.replace(
+      /^### (.*$)/gim,
+      '<h3 class="text-base font-bold mt-4 mb-1 text-slate-900 dark:text-slate-100">$1</h3>'
+    );
+    text = text.replace(
+      /^## (.*$)/gim,
+      '<h2 class="text-lg font-bold mt-5 mb-2 text-slate-900 dark:text-slate-100">$1</h2>'
+    );
+    text = text.replace(
+      /^# (.*$)/gim,
+      '<h1 class="text-xl sm:text-2xl font-black mt-4 mb-3 pb-2 border-b border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100">$1</h1>'
+    );
 
-    // 7. Process Blockquotes
-    text = text.replace(/^\> (.*$)/gim, '<blockquote class="border-l-4 border-blue-500 pl-3 py-1.5 my-2 bg-blue-50/60 dark:bg-blue-950/30 italic text-slate-700 dark:text-slate-300 rounded-r">$1</blockquote>');
+    // 13. Blockquotes
+    text = text.replace(
+      /^\> (.*$)/gim,
+      '<blockquote class="border-l-4 border-blue-500 pl-3.5 py-1.5 my-2.5 bg-blue-50/50 dark:bg-blue-950/25 italic text-slate-700 dark:text-slate-300 rounded-r text-xs sm:text-sm leading-relaxed">$1</blockquote>'
+    );
 
-    // 8. Process bullet lists
-    text = text.replace(/^[-*] (.*$)/gim, '<li class="ml-4 list-disc">$1</li>');
+    // 14. Bullet lists
+    text = text.replace(
+      /^[-*] (.*$)/gim,
+      '<li class="ml-4 list-disc text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 my-1">$1</li>'
+    );
 
-    // 9. Process numbered lists
-    text = text.replace(/^\d+\. (.*$)/gim, '<li class="ml-4 list-decimal">$1</li>');
+    // 15. Numbered lists
+    text = text.replace(
+      /^\d+\. (.*$)/gim,
+      '<li class="ml-4 list-decimal text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 my-1">$1</li>'
+    );
 
-    // 10. Process paragraphs and linebreaks
-    text = text.replace(/\n\n+/g, '</p><p class="mb-2 leading-relaxed">');
+    // 16. Paragraphs and linebreaks
+    text = text.replace(/\n\n+/g, '</p><p class="mb-2 leading-relaxed text-xs sm:text-sm text-slate-800 dark:text-slate-200">');
     text = text.replace(/\n/g, '<br/>');
 
     if (!text.startsWith('<')) {
-      text = `<p class="mb-2 leading-relaxed">${text}</p>`;
+      text = `<p class="mb-2 leading-relaxed text-xs sm:text-sm text-slate-800 dark:text-slate-200">${text}</p>`;
     }
+
+    // 17. Restore protected Code and Math blocks
+    codeBlocks.forEach((bHtml, idx) => {
+      text = text.replace(`__CODE_BLOCK_${idx}__`, bHtml);
+    });
+    mathBlocks.forEach((mHtml, idx) => {
+      text = text.replace(`__MATH_BLOCK_${idx}__`, mHtml);
+    });
 
     return text;
   };
@@ -382,9 +497,22 @@ g++ -O2 -std=c++17 solution.cpp -o solution
   };
 
   useEffect(() => {
-    if (selectedNote && editorRef.current) {
+    if (selectedNote) {
       if (lastLoadedNoteId.current !== selectedNote.id) {
-        editorRef.current.innerHTML = normalizeToHtml(selectedNote.content);
+        const isAcademicGuide =
+          selectedNote.content.includes('# ') ||
+          selectedNote.content.includes('---') ||
+          selectedNote.content.includes('🎓') ||
+          selectedNote.content.includes('``') ||
+          selectedNote.content.includes('[ ]') ||
+          selectedNote.content.includes('Executive Summary') ||
+          selectedNote.content.includes('1. ');
+        if (isAcademicGuide) {
+          setIsPreviewMode(true);
+        }
+        if (editorRef.current) {
+          editorRef.current.innerHTML = normalizeToHtml(selectedNote.content);
+        }
         lastLoadedNoteId.current = selectedNote.id;
       }
     }

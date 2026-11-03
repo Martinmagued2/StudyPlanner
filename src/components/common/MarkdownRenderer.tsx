@@ -1,5 +1,17 @@
 import React, { useState } from 'react';
-import { Check, Copy, Code2 } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Code2,
+  AlertTriangle,
+  Lightbulb,
+  CheckSquare,
+  Square,
+  Sparkles,
+  Layers,
+  BookOpen,
+  ArrowRight
+} from 'lucide-react';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-python';
 import 'prismjs/components/prism-java';
@@ -17,6 +29,13 @@ interface MarkdownRendererProps {
 }
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
+  // Checkbox toggle state for interactive revision checklists
+  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+
+  const toggleCheck = (id: string) => {
+    setCheckedItems(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
   // Helper to safely render LaTeX math formula
   const renderLatex = (formula: string, displayMode: boolean = false, key: string) => {
     try {
@@ -48,19 +67,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
 
   // Helper to render inline elements (bold, italic, code, math, links)
   const renderInline = (text: string): React.ReactNode[] => {
-    // Regex matching inline code, bold, italic, links, and LaTeX math ($...$ or $$...$$)
-    // 1: `code`
-    // 2: **bold** or __bold__
-    // 3: *italic* or _italic_
-    // 4: [link](url)
-    // 5: $$math$$
-    // 6: $math$
-    const tokenRegex = /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*]+\*|_[^_]+_)|(\[[^\]]+\]\([^)]+\))|(\$\$[^\$]+\$\$)|(\$[^\$\n]+?\$)/g;
+    const tokenRegex =
+      /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*]+\*|_[^_]+_)|(\[[^\]]+\]\([^)]+\))|(\$\$[^\$]+\$\$)|(\$[^\$\n]+?\$)/g;
     const elements: React.ReactNode[] = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;
-
     let keyIdx = 0;
+
     while ((match = tokenRegex.exec(text)) !== null) {
       if (match.index > lastIndex) {
         elements.push(text.slice(lastIndex, match.index));
@@ -72,7 +85,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         elements.push(
           <code
             key={`inline_code_${keyIdx++}`}
-            className="px-1.5 py-0.5 rounded font-mono text-[11.5px] bg-slate-100 dark:bg-slate-800 text-pink-600 dark:text-pink-400 border border-slate-200 dark:border-slate-700 select-all"
+            className="px-1.5 py-0.5 rounded font-mono text-[12px] bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 border border-slate-200 dark:border-slate-700/60 font-semibold select-all"
           >
             {matchStr.slice(1, -1)}
           </code>
@@ -93,7 +106,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
       ) {
         // Italic
         elements.push(
-          <em key={`italic_${keyIdx++}`} className="italic">
+          <em key={`italic_${keyIdx++}`} className="italic text-slate-800 dark:text-slate-200">
             {matchStr.slice(1, -1)}
           </em>
         );
@@ -108,7 +121,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+            className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
           >
             {label}
           </a>
@@ -131,29 +144,37 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
     return elements;
   };
 
-  // Split lines into blocks (fenced code, display math, tables, headings, lists, blockquotes, paragraphs)
+  // Split lines into rich academic blocks
   const renderBlocks = () => {
-    const rawLines = content.split('\n');
+    // Normalize newlines
+    const rawLines = content.replace(/\r\n/g, '\n').split('\n');
     const blocks: React.ReactNode[] = [];
     let i = 0;
     let blockKey = 0;
 
     while (i < rawLines.length) {
       const line = rawLines[i];
+      const trimmed = line.trim();
 
-      // 1. Fenced Code Block: ```lang ... ```
-      if (line.trim().startsWith('```')) {
-        const lang = line.trim().slice(3).trim() || 'plaintext';
+      // 1. Fenced Code Block: ```lang ... ``` OR ``lang ... ``
+      const isTripleBacktick = trimmed.startsWith('```');
+      const isDoubleBacktick = !isTripleBacktick && trimmed.startsWith('``');
+
+      if (isTripleBacktick || isDoubleBacktick) {
+        const delimiter = isTripleBacktick ? '```' : '``';
+        const lang = trimmed.slice(delimiter.length).trim() || 'text';
         const codeLines: string[] = [];
         i++;
-        while (i < rawLines.length && !rawLines[i].trim().startsWith('```')) {
+        while (i < rawLines.length && !rawLines[i].trim().startsWith(delimiter)) {
           codeLines.push(rawLines[i]);
           i++;
         }
-        i++; // skip closing ```
+        if (i < rawLines.length && rawLines[i].trim().startsWith(delimiter)) {
+          i++; // skip closing delimiter
+        }
         const rawCode = codeLines.join('\n');
         blocks.push(
-          <CodeBlock
+          <AcademicCodeBlock
             key={`code_${blockKey++}`}
             code={rawCode}
             language={lang}
@@ -163,8 +184,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
       }
 
       // 2. Standalone Multi-line Display Math: $$ ... $$
-      if (line.trim().startsWith('$$')) {
-        let formula = line.trim().slice(2);
+      if (trimmed.startsWith('$$')) {
+        let formula = trimmed.slice(2);
         if (formula.endsWith('$$') && formula.length > 2) {
           formula = formula.slice(0, -2);
           blocks.push(renderLatex(formula, true, `block_math_${blockKey++}`));
@@ -188,46 +209,158 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
       }
 
       // 3. Standalone Single-line Math: $formula$ alone on its own line
-      if (line.trim().startsWith('$') && line.trim().endsWith('$') && line.trim().length > 2 && !line.trim().slice(1, -1).includes('$')) {
-        blocks.push(renderLatex(line.trim().slice(1, -1), true, `single_math_${blockKey++}`));
+      if (
+        trimmed.startsWith('$') &&
+        trimmed.endsWith('$') &&
+        trimmed.length > 2 &&
+        !trimmed.slice(1, -1).includes('$')
+      ) {
+        blocks.push(renderLatex(trimmed.slice(1, -1), true, `single_math_${blockKey++}`));
         i++;
         continue;
       }
 
-      // 4. Markdown Table Detection
+      // 4. Horizontal Rules: ---, ***, ___
+      if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
+        blocks.push(
+          <div key={`hr_${blockKey++}`} className="my-6 flex items-center gap-3">
+            <div className="h-px bg-slate-200 dark:bg-slate-800 flex-1" />
+            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700" />
+            <div className="h-px bg-slate-200 dark:bg-slate-800 flex-1" />
+          </div>
+        );
+        i++;
+        continue;
+      }
+
+      // 5. Exam Trap / Pitfall Alert Box
+      // Matches: "Trap 1: ...", "Exam Trap: ...", "Common Pitfall: ..."
+      const trapMatch = trimmed.match(/^(?:> \s*)?(?:⚠️\s*)?(Trap\s*\d*|Exam Trap|Common Pitfall|Edge Case|Pitfall)\s*:\s*(.*)$/i);
+      if (trapMatch) {
+        const trapTitle = trapMatch[1];
+        const trapDesc = trapMatch[2];
+        i++;
+
+        // Check if next line is a correction or explanation
+        let correctionText = '';
+        if (i < rawLines.length) {
+          const nextTrim = rawLines[i].trim();
+          const corrMatch = nextTrim.match(/^(?:> \s*)?(?:✅\s*)?(Correction|Reality|Resolution)\s*:\s*(.*)$/i);
+          if (corrMatch) {
+            correctionText = corrMatch[2];
+            i++;
+          }
+        }
+
+        blocks.push(
+          <div
+            key={`trap_${blockKey++}`}
+            className="my-4 rounded-xl border border-amber-300 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 p-4 shadow-2xs space-y-2"
+          >
+            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-bold text-xs uppercase tracking-wider">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>{trapTitle}</span>
+            </div>
+            <p className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed pl-6">
+              {renderInline(trapDesc)}
+            </p>
+            {correctionText && (
+              <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-900/50 flex items-start gap-2 pl-6">
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 uppercase tracking-wide shrink-0">
+                  Key Correction
+                </span>
+                <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                  {renderInline(correctionText)}
+                </p>
+              </div>
+            )}
+          </div>
+        );
+        continue;
+      }
+
+      // 6. Worked Scenario / Practical Illustration Callout
+      // Matches: "Scenario: ...", "Worked Example: ...", "Case Study: ..."
+      const scenarioMatch = trimmed.match(/^(?:> \s*)?(?:💡\s*)?(Scenario|Worked Example|Case Study|Practical Illustration)\s*:\s*(.*)$/i);
+      if (scenarioMatch) {
+        const scenarioTitle = scenarioMatch[1];
+        const scenarioFirstLine = scenarioMatch[2];
+        const scenarioBody: string[] = [scenarioFirstLine];
+        i++;
+
+        // Collect indented or following scenario lines until empty line or new section
+        while (
+          i < rawLines.length &&
+          rawLines[i].trim().length > 0 &&
+          !rawLines[i].trim().startsWith('---') &&
+          !rawLines[i].trim().startsWith('#') &&
+          !/^\d+\.\s+[A-Z]/.test(rawLines[i].trim())
+        ) {
+          scenarioBody.push(rawLines[i].trim());
+          i++;
+        }
+
+        blocks.push(
+          <div
+            key={`scenario_${blockKey++}`}
+            className="my-4 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/25 p-4 shadow-2xs space-y-2"
+          >
+            <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200 font-bold text-xs uppercase tracking-wider">
+              <Lightbulb className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+              <span>{scenarioTitle}</span>
+            </div>
+            <div className="space-y-1.5 pl-6 text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed">
+              {scenarioBody.map((l, sIdx) => {
+                // If it has bold labels like "The Conflict:", "The Matrix Dilemma:", "Resolution Strategy:"
+                const labelMatch = l.match(/^([^:]+):\s*(.*)$/);
+                if (labelMatch && labelMatch[1].length < 35 && !l.startsWith('http')) {
+                  return (
+                    <p key={sIdx}>
+                      <strong className="text-indigo-950 dark:text-indigo-300 font-semibold">{labelMatch[1]}: </strong>
+                      {renderInline(labelMatch[2])}
+                    </p>
+                  );
+                }
+                return <p key={sIdx}>{renderInline(l)}</p>;
+              })}
+            </div>
+          </div>
+        );
+        continue;
+      }
+
+      // 7. Markdown Tables: lines containing | with divider row
       if (
-        line.trim().startsWith('|') &&
-        line.trim().endsWith('|') &&
+        trimmed.includes('|') &&
         i + 1 < rawLines.length &&
-        rawLines[i + 1].trim().startsWith('|') &&
+        rawLines[i + 1].includes('|') &&
         rawLines[i + 1].includes('---')
       ) {
-        const headerRow = line
-          .trim()
-          .slice(1, -1)
+        const headerRow = trimmed
           .split('|')
-          .map(c => c.trim());
-        
-        i += 2; // skip header & separator
+          .map(c => c.trim())
+          .filter((_, idx, arr) => (idx > 0 && idx < arr.length - 1) || arr.length <= 2);
+
+        i += 2; // skip header and separator
         const bodyRows: string[][] = [];
 
-        while (i < rawLines.length && rawLines[i].trim().startsWith('|') && rawLines[i].trim().endsWith('|')) {
+        while (i < rawLines.length && rawLines[i].trim().includes('|') && rawLines[i].trim().length > 1) {
           const cells = rawLines[i]
             .trim()
-            .slice(1, -1)
             .split('|')
-            .map(c => c.trim());
+            .map(c => c.trim())
+            .filter((_, idx, arr) => (idx > 0 && idx < arr.length - 1) || arr.length <= 2);
           bodyRows.push(cells);
           i++;
         }
 
         blocks.push(
-          <div key={`table_${blockKey++}`} className="overflow-x-auto my-3 rounded-lg border border-slate-200 dark:border-slate-800 shadow-xs">
-            <table className="w-full text-xs text-left border-collapse">
-              <thead className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold border-b border-slate-200 dark:border-slate-700">
+          <div key={`table_${blockKey++}`} className="overflow-x-auto my-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            <table className="w-full text-xs sm:text-sm text-left border-collapse">
+              <thead className="bg-slate-100 dark:bg-slate-800/90 text-slate-900 dark:text-slate-100 font-bold border-b border-slate-200 dark:border-slate-700">
                 <tr>
                   {headerRow.map((head, hIdx) => (
-                    <th key={hIdx} className="px-3.5 py-2">
+                    <th key={hIdx} className="px-4 py-2.5">
                       {renderInline(head)}
                     </th>
                   ))}
@@ -235,9 +368,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 bg-white dark:bg-slate-900">
                 {bodyRows.map((row, rIdx) => (
-                  <tr key={rIdx} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                  <tr
+                    key={rIdx}
+                    className={`transition-colors ${
+                      rIdx % 2 === 1 ? 'bg-slate-50/50 dark:bg-slate-800/20' : ''
+                    } hover:bg-blue-50/40 dark:hover:bg-slate-800/50`}
+                  >
                     {row.map((cell, cIdx) => (
-                      <td key={cIdx} className="px-3.5 py-2 text-slate-700 dark:text-slate-300">
+                      <td key={cIdx} className="px-4 py-2.5 text-slate-700 dark:text-slate-300 leading-normal">
                         {renderInline(cell)}
                       </td>
                     ))}
@@ -250,70 +388,170 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         continue;
       }
 
-      // 5. Headings
-      if (line.startsWith('# ')) {
+      // 8. Revision Checklist Items: [ ] or [x] or - [ ] or - [x]
+      const checkMatch = trimmed.match(/^(?:[-*]\s*)?\[([ xX])\]\s*(.*)$/);
+      if (checkMatch) {
+        const isInitiallyChecked = checkMatch[1].toLowerCase() === 'x';
+        const checkItems: { id: string; checked: boolean; text: string }[] = [];
+
+        while (i < rawLines.length) {
+          const curTrim = rawLines[i].trim();
+          const curMatch = curTrim.match(/^(?:[-*]\s*)?\[([ xX])\]\s*(.*)$/);
+          if (!curMatch) break;
+          const itemId = `chk_${blockKey}_${checkItems.length}`;
+          checkItems.push({
+            id: itemId,
+            checked: checkedItems[itemId] !== undefined ? checkedItems[itemId] : curMatch[1].toLowerCase() === 'x',
+            text: curMatch[2]
+          });
+          i++;
+        }
+
         blocks.push(
-          <h1 key={`h1_${blockKey++}`} className="text-lg font-bold text-slate-900 dark:text-slate-100 mt-4 mb-2 first:mt-0">
-            {renderInline(line.slice(2))}
-          </h1>
+          <div
+            key={`checklist_${blockKey++}`}
+            className="my-4 p-4 rounded-xl border border-blue-200/80 dark:border-blue-900/50 bg-blue-50/30 dark:bg-blue-950/20 space-y-2.5"
+          >
+            <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 font-bold text-xs uppercase tracking-wider mb-2">
+              <CheckSquare className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <span>Revision Checklist</span>
+            </div>
+            {checkItems.map(item => (
+              <label
+                key={item.id}
+                onClick={() => toggleCheck(item.id)}
+                className="flex items-start gap-2.5 text-xs sm:text-sm text-slate-800 dark:text-slate-200 cursor-pointer group p-1.5 rounded-lg hover:bg-white/80 dark:hover:bg-slate-800/50 transition-colors select-none"
+              >
+                <button
+                  type="button"
+                  className={`w-4 h-4 mt-0.5 rounded flex items-center justify-center transition-colors shrink-0 ${
+                    item.checked
+                      ? 'bg-blue-600 text-white border border-blue-600'
+                      : 'border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 group-hover:border-blue-500'
+                  }`}
+                >
+                  {item.checked && <Check className="w-3 h-3 stroke-[3]" />}
+                </button>
+                <span className={`flex-1 leading-relaxed ${item.checked ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                  {renderInline(item.text)}
+                </span>
+              </label>
+            ))}
+          </div>
+        );
+        continue;
+      }
+
+      // 9. Document Main Title: # Title OR (🎓 Title
+      if (trimmed.startsWith('# ') || trimmed.startsWith('(🎓') || (trimmed.startsWith('🎓') && i === 0)) {
+        const cleanTitle = trimmed
+          .replace(/^#\s*/, '')
+          .replace(/^\(\s*/, '')
+          .replace(/\)\s*$/, '');
+        blocks.push(
+          <div key={`title_${blockKey++}`} className="mt-2 mb-4 pb-3 border-b border-slate-200 dark:border-slate-800">
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2">
+              <span>{cleanTitle}</span>
+            </h1>
+          </div>
         );
         i++;
         continue;
       }
-      if (line.startsWith('## ')) {
+
+      // 10. Major Numbered Chapter Sections: e.g. "1. Executive Summary & Big Picture" OR "## 1. ..."
+      const chapterMatch = trimmed.match(/^(?:##\s*)?(\d+)\.\s+([A-Z].*)$/);
+      if (chapterMatch && chapterMatch[2].length < 75) {
+        const num = chapterMatch[1];
+        const titleText = chapterMatch[2];
         blocks.push(
-          <h2 key={`h2_${blockKey++}`} className="text-base font-bold text-slate-900 dark:text-slate-100 mt-3 mb-1.5 first:mt-0">
-            {renderInline(line.slice(3))}
+          <div key={`chapter_${blockKey++}`} className="mt-7 mb-3 flex items-center gap-2.5 pt-2">
+            <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center shadow-xs shrink-0">
+              {num}
+            </span>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+              {renderInline(titleText)}
+            </h2>
+          </div>
+        );
+        i++;
+        continue;
+      }
+
+      // 11. Sub-sections: e.g. "A. The Three Basic Organizational Structures" OR "### A. ..."
+      const letterSubMatch = trimmed.match(/^(?:###\s*)?([A-Z])\.\s+([A-Z].*)$/);
+      if (letterSubMatch && letterSubMatch[2].length < 80) {
+        const letter = letterSubMatch[1];
+        const subTitle = letterSubMatch[2];
+        blocks.push(
+          <div key={`letter_sub_${blockKey++}`} className="mt-4 mb-2 flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+              {letter}
+            </span>
+            <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+              {renderInline(subTitle)}
+            </h3>
+          </div>
+        );
+        i++;
+        continue;
+      }
+
+      // 12. Standard Headings: ##, ###, ####
+      if (trimmed.startsWith('## ')) {
+        blocks.push(
+          <h2 key={`h2_${blockKey++}`} className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 mt-5 mb-2 first:mt-0">
+            {renderInline(trimmed.slice(3))}
           </h2>
         );
         i++;
         continue;
       }
-      if (line.startsWith('### ')) {
+      if (trimmed.startsWith('### ')) {
         blocks.push(
-          <h3 key={`h3_${blockKey++}`} className="text-sm font-semibold text-slate-900 dark:text-slate-100 mt-2.5 mb-1 first:mt-0">
-            {renderInline(line.slice(4))}
+          <h3 key={`h3_${blockKey++}`} className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 mt-4 mb-1.5 first:mt-0">
+            {renderInline(trimmed.slice(4))}
           </h3>
         );
         i++;
         continue;
       }
-      if (line.startsWith('#### ')) {
+      if (trimmed.startsWith('#### ')) {
         blocks.push(
-          <h4 key={`h4_${blockKey++}`} className="text-xs font-semibold text-slate-800 dark:text-slate-200 mt-2 mb-1 first:mt-0">
-            {renderInline(line.slice(5))}
+          <h4 key={`h4_${blockKey++}`} className="text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-200 mt-3 mb-1 first:mt-0">
+            {renderInline(trimmed.slice(5))}
           </h4>
         );
         i++;
         continue;
       }
 
-      // 6. Blockquotes
-      if (line.trim().startsWith('> ')) {
+      // 13. Blockquotes: > Quote
+      if (trimmed.startsWith('> ')) {
         blocks.push(
           <blockquote
             key={`quote_${blockKey++}`}
-            className="border-l-3 border-blue-500 pl-3 py-1 my-2 bg-blue-50/40 dark:bg-blue-950/20 text-slate-700 dark:text-slate-300 italic rounded-r text-xs leading-relaxed"
+            className="border-l-3 border-blue-500 pl-3.5 py-1.5 my-3 bg-blue-50/50 dark:bg-blue-950/25 text-slate-700 dark:text-slate-300 italic rounded-r text-xs sm:text-sm leading-relaxed"
           >
-            {renderInline(line.trim().slice(2))}
+            {renderInline(trimmed.slice(2))}
           </blockquote>
         );
         i++;
         continue;
       }
 
-      // 7. Unordered List Items
-      if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+      // 14. Unordered Lists: - item or * item
+      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
         const listItems: string[] = [];
         while (i < rawLines.length && (rawLines[i].trim().startsWith('- ') || rawLines[i].trim().startsWith('* '))) {
           listItems.push(rawLines[i].trim().slice(2));
           i++;
         }
         blocks.push(
-          <ul key={`ul_${blockKey++}`} className="space-y-1 my-2 pl-2">
+          <ul key={`ul_${blockKey++}`} className="space-y-1.5 my-2.5 pl-2">
             {listItems.map((item, lIdx) => (
-              <li key={lIdx} className="flex items-start gap-2 text-xs leading-relaxed text-slate-700 dark:text-slate-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 shrink-0" />
+              <li key={lIdx} className="flex items-start gap-2.5 text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-2 shrink-0" />
                 <span className="flex-1">{renderInline(item)}</span>
               </li>
             ))}
@@ -322,8 +560,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         continue;
       }
 
-      // 8. Ordered List Items
-      if (/^\d+\.\s/.test(line.trim())) {
+      // 15. Ordered Lists: 1. item, 2. item
+      if (/^\d+\.\s/.test(trimmed)) {
         const listItems: { num: string; text: string }[] = [];
         while (i < rawLines.length && /^\d+\.\s/.test(rawLines[i].trim())) {
           const matchNum = rawLines[i].trim().match(/^(\d+)\.\s(.*)$/);
@@ -333,10 +571,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
           i++;
         }
         blocks.push(
-          <ol key={`ol_${blockKey++}`} className="space-y-1 my-2 pl-2">
+          <ol key={`ol_${blockKey++}`} className="space-y-1.5 my-2.5 pl-2">
             {listItems.map((item, lIdx) => (
-              <li key={lIdx} className="flex items-start gap-2 text-xs leading-relaxed text-slate-700 dark:text-slate-300">
-                <span className="font-mono font-semibold text-blue-600 dark:text-blue-400 text-[11px] shrink-0 min-w-[16px]">
+              <li key={lIdx} className="flex items-start gap-2 text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200">
+                <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs shrink-0 min-w-[20px]">
                   {item.num}.
                 </span>
                 <span className="flex-1">{renderInline(item.text)}</span>
@@ -347,25 +585,37 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         continue;
       }
 
-      // 9. Horizontal Rule
-      if (line.trim() === '---' || line.trim() === '***' || line.trim() === '___') {
+      // 16. Term / Definition Pairs: e.g. "Definition: ...", "Structural Context: ...", "Deliverable: ..."
+      const termDefMatch = trimmed.match(/^([A-Za-z\s/]{3,35}):\s+(.*)$/);
+      if (
+        termDefMatch &&
+        !trimmed.startsWith('http') &&
+        !trimmed.startsWith('Note:') &&
+        termDefMatch[1].length < 35 &&
+        termDefMatch[2].length > 10
+      ) {
+        const termName = termDefMatch[1].trim();
+        const termDesc = termDefMatch[2].trim();
         blocks.push(
-          <hr key={`hr_${blockKey++}`} className="border-t border-slate-200 dark:border-slate-800 my-3" />
+          <div key={`term_${blockKey++}`} className="my-2 text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 pl-2 border-l-2 border-slate-200 dark:border-slate-800">
+            <strong className="text-slate-900 dark:text-slate-100 font-bold">{termName}: </strong>
+            <span>{renderInline(termDesc)}</span>
+          </div>
         );
         i++;
         continue;
       }
 
-      // 10. Regular paragraph
-      if (line.trim().length > 0) {
+      // 17. Regular Paragraph
+      if (trimmed.length > 0) {
         blocks.push(
-          <p key={`p_${blockKey++}`} className="text-xs leading-relaxed text-slate-800 dark:text-slate-200 my-1.5">
-            {renderInline(line)}
+          <p key={`p_${blockKey++}`} className="text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 my-2">
+            {renderInline(trimmed)}
           </p>
         );
       } else {
-        // Empty spacer
-        blocks.push(<div key={`empty_${blockKey++}`} className="h-1" />);
+        // Subtle vertical spacer
+        blocks.push(<div key={`empty_${blockKey++}`} className="h-1.5" />);
       }
 
       i++;
@@ -374,17 +624,32 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
     return blocks;
   };
 
-  return <div className={`markdown-content space-y-0.5 ${className}`}>{renderBlocks()}</div>;
+  return (
+    <div className={`markdown-content academic-document space-y-1 ${className}`}>
+      {renderBlocks()}
+    </div>
+  );
 };
 
-// Interactive Code Block with syntax highlighting & Copy Button
-interface CodeBlockProps {
+// Interactive Code & ASCII Architecture Diagram Block with Monospace Precision & Copy
+interface AcademicCodeBlockProps {
   code: string;
   language: string;
 }
 
-const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
+const AcademicCodeBlock: React.FC<AcademicCodeBlockProps> = ({ code, language }) => {
   const [copied, setCopied] = useState(false);
+
+  // Check if content is an ASCII diagram/flowchart (e.g. contains ^, |, \, /, +---, -->)
+  const isAsciiDiagram =
+    code.includes('^') ||
+    code.includes('| \\') ||
+    code.includes('| /') ||
+    code.includes('+----') ||
+    code.includes('---->') ||
+    code.includes('<----') ||
+    language.toLowerCase() === 'diagram' ||
+    language.toLowerCase() === 'ascii';
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
@@ -392,7 +657,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Map common aliases to Prism grammars
   const getGrammar = (lang: string) => {
     const l = lang.toLowerCase().trim();
     if (l === 'js' || l === 'javascript') return Prism.languages.javascript;
@@ -405,10 +669,11 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     if (l === 'bash' || l === 'sh' || l === 'shell') return Prism.languages.bash;
     if (l === 'html' || l === 'xml') return Prism.languages.markup;
     if (l === 'css') return Prism.languages.css;
-    return Prism.languages.clike || Prism.languages.plain;
+    return null;
   };
 
   const highlightedHtml = React.useMemo(() => {
+    if (isAsciiDiagram) return null;
     try {
       const grammar = getGrammar(language);
       if (grammar) {
@@ -417,47 +682,61 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     } catch {
       // Fallback
     }
-    return code
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-  }, [code, language]);
+    return null;
+  }, [code, language, isAsciiDiagram]);
 
   return (
-    <div className="my-3 rounded-lg overflow-hidden border border-slate-700/60 bg-slate-950 text-slate-100 shadow-sm">
-      {/* Code Header Bar */}
-      <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-900 border-b border-slate-800 text-[11px] text-slate-400">
+    <div className="my-4 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 text-slate-100 shadow-md">
+      {/* Code / Diagram Header */}
+      <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-[11px] text-slate-400">
         <div className="flex items-center gap-1.5 font-mono uppercase font-bold text-slate-300">
-          <Code2 className="w-3.5 h-3.5 text-blue-400" />
-          <span>{language || 'code'}</span>
-        </div>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
-          title="Copy code"
-        >
-          {copied ? (
+          {isAsciiDiagram ? (
             <>
-              <Check className="w-3 h-3 text-emerald-400" />
-              <span className="text-[10px] text-emerald-400 font-medium">Copied!</span>
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-emerald-400">Conceptual Diagram / Architecture Flow</span>
             </>
           ) : (
             <>
-              <Copy className="w-3 h-3" />
-              <span className="text-[10px]">Copy</span>
+              <Code2 className="w-3.5 h-3.5 text-blue-400" />
+              <span>{language || 'code'}</span>
+            </>
+          )}
+        </div>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition-colors text-xs"
+          title="Copy to clipboard"
+        >
+          {copied ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-emerald-400 font-medium">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy</span>
             </>
           )}
         </button>
       </div>
 
-      {/* Code Content */}
-      <div className="p-3.5 overflow-x-auto text-[11.5px] font-mono leading-relaxed select-all">
-        <pre className="m-0 p-0">
-          <code
+      {/* Monospace Canvas */}
+      <div className="p-4 overflow-x-auto">
+        {isAsciiDiagram ? (
+          <pre className="font-mono text-xs sm:text-[13px] leading-snug text-emerald-300 dark:text-emerald-300 whitespace-pre select-all">
+            {code}
+          </pre>
+        ) : highlightedHtml ? (
+          <pre
+            className="font-mono text-xs sm:text-[13px] leading-relaxed text-slate-100 overflow-x-auto whitespace-pre select-all"
             dangerouslySetInnerHTML={{ __html: highlightedHtml }}
-            className={`language-${language}`}
           />
-        </pre>
+        ) : (
+          <pre className="font-mono text-xs sm:text-[13px] leading-relaxed text-slate-200 overflow-x-auto whitespace-pre select-all">
+            {code}
+          </pre>
+        )}
       </div>
     </div>
   );

@@ -439,17 +439,23 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
                     )}
                   </div>
 
-                  {cloudSyncId && !cloudSyncId.startsWith('local_') && (
-                    <div className="pt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                      <span>Sync Code:</span>
-                      <code className="px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900 font-mono font-bold text-blue-700 dark:text-blue-300 select-all text-xs">
-                        {cloudSyncId}
-                      </code>
+                  {cloudSyncId && (
+                    <div className="pt-2 flex items-center justify-between p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60">
+                      <div>
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase tracking-wider block">
+                          6-Digit Mobile Sync Code
+                        </span>
+                        <span className="font-mono font-black text-slate-900 dark:text-slate-100 text-sm tracking-widest">
+                          {cloudSyncId}
+                        </span>
+                      </div>
                       <button
+                        type="button"
                         onClick={handleCopyCode}
-                        className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 text-[10px] font-semibold"
+                        className="px-2.5 py-1 text-xs font-semibold bg-white dark:bg-slate-800 rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors shadow-2xs flex items-center gap-1"
                       >
-                        {copiedCode ? 'Copied code!' : 'Copy'}
+                        {copiedCode ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
                       </button>
                     </div>
                   )}
@@ -512,27 +518,27 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
           {activeTab === 'code' && (
             <div className="space-y-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               <span className="font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider text-[11px]">
-                Connect via Sync Code or Payload
+                Connect via 6-Digit Sync Code
               </span>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Enter a Sync Code from your other device, or paste an exported workspace string:
+                Enter the 6-digit Sync Code from your other device (or paste direct payload data) to load all courses, notes, and tasks:
               </p>
 
               <form onSubmit={handleRestoreFromCode} className="space-y-2">
                 <input
                   type="text"
-                  placeholder="Enter Sync Code (e.g. mQ7L4VFMsa) or paste data..."
+                  placeholder="Enter 6-digit Sync Code (e.g. 582914)..."
                   value={inputCode}
                   onChange={e => setInputCode(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono"
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono tracking-wider font-bold"
                 />
                 <button
                   type="submit"
                   disabled={!inputCode.trim() || isManualSyncing}
-                  className="w-full px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+                  className="w-full px-4 py-2.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isManualSyncing ? 'Restoring...' : 'Connect & Restore Workspace'}</span>
+                  <span>{isManualSyncing ? 'Syncing...' : 'Connect & Restore Workspace'}</span>
                 </button>
               </form>
             </div>

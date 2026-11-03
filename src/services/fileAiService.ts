@@ -395,25 +395,64 @@ Write a thorough, structured, and detailed explanation of the lecture material f
 Document Text Excerpt:
 ${combinedText.slice(0, 12000)}
 
-Structure your explanation in GitHub-flavored Markdown with:
+Structure your explanation in clean, beautiful GitHub-Flavored Markdown according to this exact blueprint:
+
 # 🎓 Detailed Lecture Explanation & Comprehensive Study Guide: ${primaryTitle}
+
+---
+
 ## 1. Executive Summary & Big Picture
-(Provide a high-level overview explaining why this topic matters in the course, key problems it solves, and fundamental context).
+- High-level overview explaining why this topic matters in the course, core problems it solves, and enterprise or academic context.
+- Ground this directly in the provided lecture slides and course concepts.
+
+---
 
 ## 2. Core Concepts, Definitions & Formal Invariants
-(Define and explain all key terminology, theorems, rules, and mathematical / computational models introduced).
+- For every key concept, format definitions clearly as:
+  **Concept Name**: Clear, rigorous definition and its architectural or algorithmic invariant.
+- Format comparative concepts using a structured Markdown table:
+  | Concept / Topology | Core Definition | Key Advantages | Trade-offs & Risks |
+  | :--- | :--- | :--- | :--- |
+
+---
 
 ## 3. Deep-Dive Mechanisms & Step-by-Step Breakdown
-(Explain every process, algorithm, proof, or workflow step-by-step with clear reasoning).
+- Explain the underlying workflows, lifecycles, and state transitions step by step.
+- If presenting an ASCII curve, graph, or lifecycle diagram, ALWAYS enclose it inside standard triple-backtick fenced blocks with \`\`\`text or \`\`\`mermaid (NEVER unclosed backticks).
+Example:
+\`\`\`text
+High ^
+     | \\ (Risk / Uncertainty)
+     |  \\      / (Resource Needs)
+     |   \\    /
+Low  +-------------------------> Time
+     Phase 1    Phase 2    Phase 3
+\`\`\`
+
+---
 
 ## 4. Practical Illustrations & Worked Examples
-(Provide concrete scenarios, code snippets or mathematical illustrations showing how concepts operate in practice).
+- Format concrete real-world cases using the Scenario format:
+  Scenario: [Practical situation, e.g. Implementing a Balanced Matrix in a Fintech Startup]
+  The Conflict: [Specific operational tension]
+  Resolution Strategy: [How governance, histograms, or algorithms resolve it]
+
+---
 
 ## 5. Critical Exam Traps, Common Pitfalls & Edge Cases
-(Highlight what examiners test, subtle boundary conditions, and typical student mistakes).
+- Format high-yield exam traps as:
+  Trap 1: [Common student misconception or exam trick]
+  Correction: [Precise reality and why examiners penalize the misconception]
+  Trap 2: [Next trap...]
+  Correction: [Precise reality...]
+
+---
 
 ## 6. Key Takeaways & Revision Checklist
-(Provide high-yield bullet points for fast review).`;
+- Format revision checklist items with Markdown checkbox syntax:
+  [ ] **[Topic 1]**: [Actionable revision question or concept to master]
+  [ ] **[Topic 2]**: [Actionable revision question or concept to master]
+  [ ] **[Topic 3]**: [Actionable revision question or concept to master]`;
 
   const geminiResponse = await queryGemini(geminiPrompt, 'You write clear, comprehensive, university-level academic lecture notes and explanations.');
 

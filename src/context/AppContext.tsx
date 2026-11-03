@@ -2614,10 +2614,18 @@ How would you like me to assist you with your studies right now?`;
     setCloudSyncStatus('syncing');
     try {
       const data = await fetchFromCloud(syncIdOrPayload);
-      if (data.user && !user) {
+
+      // 1. Restore User Identity
+      if (data.user) {
         setUser(data.user);
         localStorage.setItem('nook_current_user', JSON.stringify(data.user));
       }
+
+      // 2. Determine target storage keys for immediate local persistence
+      const targetUserKey = data.user?.id ? `nook_workspace_${data.user.id}` : storageKey;
+      const keysToPersist = Array.from(new Set([targetUserKey, storageKey, 'nook_workspace_demo']));
+
+      // 3. Update React State
       if (Array.isArray(data.courses)) setCourses(data.courses);
       if (Array.isArray(data.assignments)) setAssignments(data.assignments);
       if (Array.isArray(data.tasks)) setTasks(data.tasks);
@@ -2637,17 +2645,44 @@ How would you like me to assist you with your studies right now?`;
       if (Array.isArray(data.integrations)) setIntegrations(data.integrations);
       if (Array.isArray(data.githubRepos)) setGithubRepos(data.githubRepos);
 
+      // 4. Force synchronous persistence across all relevant storage keys so refreshing or navigating preserves everything!
+      keysToPersist.forEach(k => {
+        try {
+          if (Array.isArray(data.courses)) localStorage.setItem(`${k}_courses`, JSON.stringify(data.courses));
+          if (Array.isArray(data.assignments)) localStorage.setItem(`${k}_assignments`, JSON.stringify(data.assignments));
+          if (Array.isArray(data.tasks)) localStorage.setItem(`${k}_tasks`, JSON.stringify(data.tasks));
+          if (Array.isArray(data.notes)) localStorage.setItem(`${k}_notes`, JSON.stringify(data.notes));
+          if (Array.isArray(data.events)) localStorage.setItem(`${k}_events`, JSON.stringify(data.events));
+          if (Array.isArray(data.inboxItems)) localStorage.setItem(`${k}_inbox`, JSON.stringify(data.inboxItems));
+          if (Array.isArray(data.files)) localStorage.setItem(`${k}_files`, JSON.stringify(data.files));
+          if (Array.isArray(data.flashcards)) localStorage.setItem(`${k}_flashcards`, JSON.stringify(data.flashcards));
+          if (Array.isArray(data.flashcardDecks)) localStorage.setItem(`${k}_flashcard_decks`, JSON.stringify(data.flashcardDecks));
+          if (Array.isArray(data.focusSessions)) localStorage.setItem(`${k}_focus_sessions`, JSON.stringify(data.focusSessions));
+          if (Array.isArray(data.quizzes)) localStorage.setItem(`${k}_quizzes`, JSON.stringify(data.quizzes));
+          if (Array.isArray(data.exams)) localStorage.setItem(`${k}_exams`, JSON.stringify(data.exams));
+          if (Array.isArray(data.gradeItems)) localStorage.setItem(`${k}_grade_items`, JSON.stringify(data.gradeItems));
+          if (Array.isArray(data.previousTermCourses)) localStorage.setItem(`${k}_previous_term_courses`, JSON.stringify(data.previousTermCourses));
+          if (Array.isArray(data.aiMemories)) localStorage.setItem(`${k}_ai_memories`, JSON.stringify(data.aiMemories));
+          if (data.dailyPlan) localStorage.setItem(`${k}_daily_plan`, JSON.stringify(data.dailyPlan));
+          if (Array.isArray(data.integrations)) localStorage.setItem(`${k}_integrations`, JSON.stringify(data.integrations));
+          if (Array.isArray(data.githubRepos)) localStorage.setItem(`${k}_repos`, JSON.stringify(data.githubRepos));
+        } catch (storageErr) {
+          console.warn('Storage sync persist warning:', storageErr);
+        }
+      });
+
       const isDirectPayload = syncIdOrPayload.length > 50 || syncIdOrPayload.startsWith('UEsDB') || syncIdOrPayload.includes('%');
-      const cleanSyncId = isDirectPayload ? (localStorage.getItem('nook_cloud_sync_id') || `sync_${Date.now()}`) : syncIdOrPayload;
+      const cleanSyncId = isDirectPayload ? (localStorage.getItem('nook_cloud_sync_id') || `sync_${Date.now()}`) : syncIdOrPayload.trim();
       setCloudSyncId(cleanSyncId);
       if (isDirectPayload) {
         setDirectSyncPayload(syncIdOrPayload);
         localStorage.setItem('nook_direct_sync_payload', syncIdOrPayload);
       }
-      setLastSyncedAt(data.syncedAt || new Date().toISOString());
+      const syncTime = data.syncedAt || new Date().toISOString();
+      setLastSyncedAt(syncTime);
       setCloudSyncStatus('synced');
       localStorage.setItem('nook_cloud_sync_id', cleanSyncId);
-      localStorage.setItem('nook_last_cloud_sync_at', data.syncedAt || new Date().toISOString());
+      localStorage.setItem('nook_last_cloud_sync_at', syncTime);
       return true;
     } catch (e) {
       setCloudSyncStatus('error');

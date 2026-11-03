@@ -1,8 +1,10 @@
 // Cloud & Multi-Device Synchronization Service for StudyPlanner
 // Provides:
-// 1. Zero-Network Direct QR Sync (via JSZip URL hash - 100% immune to network/CORS issues)
-// 2. Resilient Cloud Relay (via CORS-enabled JSON store with chunked payload support)
-// 3. One-Click File Export/Import (.nook)
+// 1. High-Reliability Cloud Relay via open, CORS-enabled pub/sub (ntfy.sh)
+// 2. Short 6-Digit Sync Codes (e.g. 582914) that are effortless to type on mobile
+// 3. Ultra-Crisp, Fast-Scanning QR Codes
+// 4. Zero-Network Direct QR Hash Fallback (#sync_data=...)
+// 5. One-Click Portable .nook Workspace File Backup
 
 import JSZip from 'jszip';
 
@@ -32,12 +34,12 @@ export interface CloudWorkspacePayload {
   reminderLogs: any[];
 }
 
-const RESTFUL_API_URL = 'https://api.restful-api.dev/objects';
-const CHUNK_SIZE = 200;
+const NTFY_BASE = 'https://ntfy.sh';
+const TOPIC_PREFIX = 'nook_sync_';
 
 /**
- * Strips huge binary blobs and raw slide texts so payload is ultra-compact (< 10KB)
- * while preserving 100% of courses, schedules, assignments, tasks, notes, and exams.
+ * Strips huge binary blobs and raw slide texts so payload is ultra-compact (< 15KB)
+ * while preserving 100% of courses, schedules, assignments, tasks, notes, exams, and flashcards.
  */
 export function sanitizePayload(payload: CloudWorkspacePayload): any {
   return {
@@ -49,7 +51,7 @@ export function sanitizePayload(payload: CloudWorkspacePayload): any {
     tasks: payload.tasks || [],
     notes: (payload.notes || []).map(n => ({
       ...n,
-      content: n.content && n.content.length > 5000 ? n.content.slice(0, 5000) : n.content
+      content: n.content && n.content.length > 8000 ? n.content.slice(0, 8000) : n.content
     })),
     events: payload.events || [],
     inboxItems: payload.inboxItems || [],
@@ -64,7 +66,7 @@ export function sanitizePayload(payload: CloudWorkspacePayload): any {
     })),
     flashcards: payload.flashcards || [],
     flashcardDecks: payload.flashcardDecks || [],
-    focusSessions: (payload.focusSessions || []).slice(0, 30),
+    focusSessions: (payload.focusSessions || []).slice(0, 20),
     quizzes: payload.quizzes || [],
     exams: payload.exams || [],
     gradeItems: payload.gradeItems || [],
@@ -98,7 +100,9 @@ export async function compressDirectPayload(payload: CloudWorkspacePayload): Pro
  */
 export async function decompressDirectPayload(encoded: string): Promise<CloudWorkspacePayload | null> {
   try {
-    const rawBase64 = decodeURIComponent(encoded.trim());
+    const raw = encoded.trim();
+    // Decode URI if it contains % encoded characters
+    const rawBase64 = raw.includes('%') ? decodeURIComponent(raw) : raw;
     const zip = await JSZip.loadAsync(rawBase64, { base64: true });
     const jsonStr = await zip.file('workspace.json')?.async('string');
     if (!jsonStr) return null;
@@ -110,138 +114,134 @@ export async function decompressDirectPayload(encoded: string): Promise<CloudWor
 }
 
 /**
- * Uploads workspace snapshot to cloud storage with full CORS support.
- * Returns both the cloud sync key and direct compressed payload.
+ * Normalizes user-entered sync code into a standard 6-digit format or topic name.
+ */
+export function normalizeSyncCode(code: string): string {
+  const cleaned = code.trim().replace(/^NK-?/i, '').replace(/^nook_sync_/i, '').replace(/\s+/g, '');
+  return cleaned;
+}
+
+/**
+ * Uploads workspace snapshot to the ntfy cloud relay with direct compressed base64 payload.
+ * Returns a 6-digit sync key and the direct compressed payload.
  */
 export async function uploadToCloud(
   payload: CloudWorkspacePayload,
   existingSyncId?: string | null
 ): Promise<{ syncId: string; syncedAt: string; directPayload: string }> {
   const syncedAt = new Date().toISOString();
-  
-  // 1. Always generate instantaneous offline direct compressed payload
-  const directPayload = await compressDirectPayload(payload);
 
-  // 2. Prepare chunked representation for cloud relay
+  // 1. Generate direct compressed payload with JSZip
+  const directPayload = await compressDirectPayload(payload);
   const rawBase64 = decodeURIComponent(directPayload);
-  const chunks: Record<string, string> = {};
-  for (let i = 0; i < rawBase64.length; i += CHUNK_SIZE) {
-    const idx = String(Math.floor(i / CHUNK_SIZE)).padStart(3, '0');
-    chunks[`c_${idx}`] = rawBase64.slice(i, i + CHUNK_SIZE);
+
+  // 2. Generate or preserve a friendly 6-digit sync code (e.g. 582914)
+  let cleanCode = existingSyncId ? normalizeSyncCode(existingSyncId) : '';
+  if (!cleanCode || cleanCode.length < 4 || cleanCode.startsWith('sync_')) {
+    cleanCode = String(Math.floor(100000 + Math.random() * 900000));
   }
 
-  const cloudBody = {
-    name: 'NookWorkspaceSync',
-    data: chunks
-  };
-
+  const topicName = `${TOPIC_PREFIX}${cleanCode}`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-  let syncId = existingSyncId || '';
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
 
   try {
-    // If we have an existing 32-char cloud ID, try updating in place with PUT
-    if (existingSyncId && existingSyncId.length >= 24 && !existingSyncId.startsWith('sync_')) {
-      try {
-        const putRes = await fetch(`${RESTFUL_API_URL}/${existingSyncId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cloudBody),
-          signal: controller.signal
-        });
-        if (putRes.ok) {
-          clearTimeout(timeoutId);
-          return { syncId: existingSyncId, syncedAt, directPayload };
-        }
-      } catch {
-        // Fall through to create new object
-      }
-    }
-
-    // Create a new object on the cloud relay
-    const postRes = await fetch(RESTFUL_API_URL, {
+    const res = await fetch(`${NTFY_BASE}/${topicName}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cloudBody),
+      headers: {
+        Title: 'NookWorkspaceSync',
+        Tags: 'package'
+      },
+      body: rawBase64,
       signal: controller.signal
     });
 
     clearTimeout(timeoutId);
 
-    if (postRes.ok) {
-      const result = await postRes.json();
-      if (result?.id) {
-        return { syncId: result.id, syncedAt, directPayload };
-      }
+    if (res.ok) {
+      return { syncId: cleanCode, syncedAt, directPayload };
     }
 
-    // If cloud service is unavailable, fallback gracefully to direct sync ID
-    syncId = `sync_${Date.now()}`;
-    return { syncId, syncedAt, directPayload };
+    console.warn('ntfy relay upload returned non-200:', res.status);
+    return { syncId: cleanCode, syncedAt, directPayload };
   } catch (err: any) {
     clearTimeout(timeoutId);
-    console.warn('Cloud relay upload warning (falling back to direct QR sync):', err);
-    // Never fail with a raw exception; return the direct payload so QR code still works 100%!
-    syncId = existingSyncId || `sync_${Date.now()}`;
-    return { syncId, syncedAt, directPayload };
+    console.warn('Cloud relay upload warning (falling back to direct QR payload):', err);
+    return { syncId: cleanCode, syncedAt, directPayload };
   }
 }
 
 /**
- * Fetches workspace data from cloud using either a direct payload or Sync ID.
+ * Fetches workspace data from cloud using either a 6-digit Sync Code, a full direct payload, or raw JSON.
  */
 export async function fetchFromCloud(syncIdOrPayload: string): Promise<CloudWorkspacePayload> {
   const cleanStr = syncIdOrPayload.trim();
 
-  // 1. Direct compressed payload detection
+  // 1. Raw JSON string detection
+  if (cleanStr.startsWith('{') && cleanStr.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(cleanStr);
+      if (parsed.courses || parsed.notes || parsed.tasks || parsed.user) {
+        return parsed as CloudWorkspacePayload;
+      }
+    } catch {
+      // Continue to next check
+    }
+  }
+
+  // 2. Direct Base64 / JSZip compressed payload detection
   if (cleanStr.length > 60 || cleanStr.startsWith('UEsDB') || cleanStr.startsWith('%') || cleanStr.includes('%2F')) {
     const directData = await decompressDirectPayload(cleanStr);
     if (directData) return directData;
   }
 
+  // 3. 6-Digit Sync Code via ntfy relay
+  const cleanCode = normalizeSyncCode(cleanStr);
+  const topicName = `${TOPIC_PREFIX}${cleanCode}`;
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
 
   try {
-    // 2. Fetch from restful-api.dev
-    const res = await fetch(`${RESTFUL_API_URL}/${cleanStr}`, {
-      headers: { Accept: 'application/json' },
+    const res = await fetch(`${NTFY_BASE}/${topicName}/json?poll=1`, {
+      headers: { Accept: 'application/x-ndjson, application/json' },
       signal: controller.signal
     });
 
+    clearTimeout(timeoutId);
+
     if (res.ok) {
-      clearTimeout(timeoutId);
-      const json = await res.json();
-      const dataObj = json?.data;
+      const text = await res.text();
+      const lines = text.split('\n').filter(l => l.trim().length > 0);
+      if (lines.length > 0) {
+        // Read the latest message
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const msgObj = JSON.parse(lines[i]);
+            if (msgObj.message && typeof msgObj.message === 'string') {
+              const b64 = msgObj.message.trim();
+              const decompressed = await decompressDirectPayload(b64);
+              if (decompressed) return decompressed;
 
-      if (dataObj) {
-        // Check if data contains reassemblable chunks
-        const chunkKeys = Object.keys(dataObj).filter(k => k.startsWith('c_')).sort();
-        if (chunkKeys.length > 0) {
-          const assembledB64 = chunkKeys.map(k => dataObj[k]).join('');
-          const decompressed = await decompressDirectPayload(assembledB64);
-          if (decompressed) return decompressed;
-        }
-
-        // Check if data is already a workspace object
-        if (dataObj.courses || dataObj.assignments || dataObj.tasks || dataObj.user) {
-          return dataObj as CloudWorkspacePayload;
+              // Check if raw message was uncompressed JSON
+              if (b64.startsWith('{') && b64.endsWith('}')) {
+                return JSON.parse(b64) as CloudWorkspacePayload;
+              }
+            }
+          } catch {
+            // Check next line
+          }
         }
       }
     }
 
-    clearTimeout(timeoutId);
-
-    // 3. Fallback: Check if it's a direct payload
-    const directFallback = await decompressDirectPayload(cleanStr);
-    if (directFallback) return directFallback;
-
-    throw new Error(`Could not find cloud workspace for code "${cleanStr}". Please scan the QR code or generate a fresh Sync Code on your main device.`);
+    throw new Error(
+      `Could not find workspace for Sync Code "${cleanCode}". Make sure the Sync Code was generated on your other device recently and try again.`
+    );
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      throw new Error('Connection timed out. Please check your network or scan the QR code directly.');
+      throw new Error('Connection timed out. Please check your internet or scan the QR code directly.');
     }
     throw err;
   }
@@ -249,7 +249,8 @@ export async function fetchFromCloud(syncIdOrPayload: string): Promise<CloudWork
 
 /**
  * Generates an easy-to-share URL with embedded sync parameter for phone/tablet.
- * Supports direct offline QR payloads and custom Wi-Fi LAN host testing.
+ * Produces ultra-crisp QR codes (< 40 chars) pointing to the 6-digit sync code,
+ * with optional direct hash fallback.
  */
 export function getShareableSyncUrl(syncId: string, directPayload?: string, customHost?: string): string {
   let origin = window.location.origin;
@@ -263,11 +264,13 @@ export function getShareableSyncUrl(syncId: string, directPayload?: string, cust
   }
 
   const base = origin + window.location.pathname;
+  const cleanCode = normalizeSyncCode(syncId);
 
-  // If direct payload is available and fits comfortably in a QR code (< 3000 chars), use direct hash!
-  if (directPayload && directPayload.length < 3200) {
-    return `${base}#sync_data=${directPayload}`;
+  // If direct payload is compact enough for a QR code (< 1800 chars), include it as hash fallback!
+  if (directPayload && directPayload.length < 1800) {
+    return `${base}?sync=${encodeURIComponent(cleanCode)}#sync_data=${directPayload}`;
   }
 
-  return `${base}?sync=${encodeURIComponent(syncId.trim())}`;
+  // Otherwise, use the ultra-crisp short code URL for 100% camera scanning success!
+  return `${base}?sync=${encodeURIComponent(cleanCode)}`;
 }
