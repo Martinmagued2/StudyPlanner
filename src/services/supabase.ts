@@ -256,7 +256,16 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
     );
 
     if (wsError) {
-      console.warn('Supabase workspaces upsert warning:', wsError.message);
+      console.warn('Supabase workspaces upsert failed:', wsError.message);
+      let helpfulMsg = wsError.message;
+      if (wsError.message.includes('invalid input syntax for type uuid')) {
+        helpfulMsg = 'Database column user_id is type UUID. Please run the SQL fix in Supabase to change user_id to TEXT.';
+      } else if (wsError.message.includes('violates foreign key constraint')) {
+        helpfulMsg = 'Database foreign key constraint to auth.users is blocking direct writes. Please run the SQL fix to drop the foreign key.';
+      } else if (wsError.code === '42501' || wsError.message.toLowerCase().includes('row-level security') || wsError.message.toLowerCase().includes('policy')) {
+        helpfulMsg = 'Supabase Row Level Security (RLS) is blocking anon writes. Please run the SQL fix to permit workspace sync.';
+      }
+      throw new Error(helpfulMsg);
     }
 
     // 2. Individual Relational Tables

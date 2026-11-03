@@ -296,7 +296,7 @@ interface AppContextType {
   isDatabaseConfigured: boolean;
   isDbModalOpen: boolean;
   setIsDbModalOpen: (open: boolean) => void;
-  saveToDatabase: () => Promise<boolean>;
+  saveToDatabase: () => Promise<{ success: boolean; error?: string }>;
   loadFromDatabase: () => Promise<boolean>;
 
   // Daily Briefing Pop-Up
@@ -3032,8 +3032,10 @@ How would you like me to assist you with your studies right now?`;
   }, [courses, assignments, tasks, notes, exams, gradeItems, cloudSyncId]);
 
   // Supabase PostgreSQL Database Integration
-  const saveToDatabase = async (): Promise<boolean> => {
-    if (!user || !isSupabaseConfigured()) return false;
+  const saveToDatabase = async (): Promise<{ success: boolean; error?: string }> => {
+    if (!user || !isSupabaseConfigured()) {
+      return { success: false, error: 'Database is not configured or user is not logged in.' };
+    }
     try {
       const payload: CloudWorkspacePayload = {
         version: '1.0.0',
@@ -3061,10 +3063,11 @@ How would you like me to assist you with your studies right now?`;
         reminderLogs
       };
       // Persist across all 15 relational PostgreSQL tables and atomic snapshot
-      return await dbSaveAllTablesToDatabase(user.id, payload);
-    } catch (e) {
+      await dbSaveAllTablesToDatabase(user.id, payload);
+      return { success: true };
+    } catch (e: any) {
       console.warn('Failed saving to Supabase database:', e);
-      return false;
+      return { success: false, error: e?.message || 'Database save failed' };
     }
   };
 
