@@ -260,17 +260,19 @@ g++ -O2 -std=c++17 solution.cpp -o solution
       const isDiagram =
         code.includes('^') ||
         code.includes('| \\') ||
-        code.includes('+---') ||
+        code.includes('| /') ||
+        code.includes('+--') ||
         code.includes('-->') ||
-        code.includes('<---');
+        code.includes('<--') ||
+        code.includes('---+');
       const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
       const badge = isDiagram
-        ? `<div class="text-[10px] uppercase font-bold tracking-wider text-emerald-400 mb-1 flex items-center gap-1 font-mono">📐 Conceptual Diagram / Architecture</div>`
+        ? `<div class="text-[10px] uppercase font-bold tracking-wider text-emerald-400 mb-1 flex items-center gap-1.5 font-mono">📐 Conceptual Diagram / Architecture</div>`
         : lang
         ? `<div class="text-[10px] uppercase font-bold tracking-wider text-blue-400 mb-1 font-mono">${lang}</div>`
         : '';
       const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      const html = `<div class="my-4 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 shadow-sm" contenteditable="false">${badge}<pre class="font-mono text-xs leading-snug ${
+      const html = `<div class="my-4 p-4 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 shadow-sm" contenteditable="false">${badge}<pre class="font-mono text-xs leading-relaxed ${
         isDiagram ? 'text-emerald-300' : 'text-slate-200'
       } overflow-x-auto whitespace-pre select-all"><code>${escaped}</code></pre></div>`;
       codeBlocks.push(html);
@@ -334,13 +336,19 @@ g++ -O2 -std=c++17 solution.cpp -o solution
       return tableHtml;
     });
 
-    // 4. Horizontal Dividers: --- or ***
+    // 4. Main Lecture Study Guide Banner: e.g. "🎓 Detailed Lecture Explanation..."
+    text = text.replace(
+      /^(?:#\s*)?(🎓[^\n]+)$/m,
+      '<div class="my-4 pb-3 border-b border-slate-200 dark:border-slate-800"><div class="text-[11px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 mb-1 flex items-center gap-1.5 font-mono"><span>🎓</span> Study Guide & Lecture Explanation</div><h1 class="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight leading-snug">$1</h1></div>'
+    );
+
+    // 5. Horizontal Dividers: --- or ***
     text = text.replace(
       /^(?:---|---|\*\*\*|___)$/gm,
       '<div class="my-6 flex items-center gap-3"><div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div><div class="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700"></div><div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div></div>'
     );
 
-    // 5. Exam Traps & Common Pitfalls
+    // 6. Exam Traps & Common Pitfalls
     text = text.replace(
       /^(?:>\s*)?(?:⚠️\s*)?(Trap\s*\d*|Exam Trap|Common Pitfall|Pitfall)\s*:\s*(.*)$/gim,
       '<div class="my-3 p-3.5 rounded-xl border border-amber-300 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 text-xs sm:text-sm leading-relaxed"><div class="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-200 uppercase tracking-wide text-xs mb-1">⚠️ $1</div><div class="text-slate-800 dark:text-slate-200 pl-4">$2</div></div>'
@@ -350,47 +358,71 @@ g++ -O2 -std=c++17 solution.cpp -o solution
       '<div class="my-2 p-2.5 rounded-lg border border-emerald-300 dark:border-emerald-900/50 bg-emerald-50/60 dark:bg-emerald-950/20 text-xs sm:text-sm pl-4"><strong class="text-emerald-700 dark:text-emerald-300 font-bold uppercase tracking-wide text-[10px] block mb-0.5">$1</strong><span class="text-slate-800 dark:text-slate-200">$2</span></div>'
     );
 
-    // 6. Practical Scenarios & Illustrations
+    // 7. Practical Scenarios & Illustrations
     text = text.replace(
       /^(?:>\s*)?(?:💡\s*)?(Scenario|Worked Example|Case Study)\s*:\s*(.*)$/gim,
       '<div class="my-3 p-3.5 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/25 text-xs sm:text-sm leading-relaxed"><div class="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-200 uppercase tracking-wide text-xs mb-1">💡 $1</div><div class="text-slate-800 dark:text-slate-200 pl-4">$2</div></div>'
     );
 
-    // 7. Checklists: [ ] and [x]
+    // 8. Checklists: [ ] and [x]
     text = text.replace(
       /^(?:[-*]\s*)?\[ \]\s*(.*)$/gim,
-      '<div class="flex items-start gap-2.5 my-1.5 pl-2 text-xs sm:text-sm text-slate-800 dark:text-slate-200"><span class="w-4 h-4 mt-0.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 shrink-0 inline-block"></span><span class="flex-1 leading-relaxed">$1</span></div>'
+      '<div class="flex items-start gap-2.5 my-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-800 text-xs sm:text-sm text-slate-800 dark:text-slate-200"><span class="w-4 h-4 mt-0.5 rounded border border-slate-400 dark:border-slate-500 bg-white dark:bg-slate-800 shrink-0 inline-block"></span><span class="flex-1 leading-relaxed">$1</span></div>'
     );
     text = text.replace(
       /^(?:[-*]\s*)?\[[xX]\]\s*(.*)$/gim,
-      '<div class="flex items-start gap-2.5 my-1.5 pl-2 text-xs sm:text-sm text-slate-400 dark:text-slate-500 line-through"><span class="w-4 h-4 mt-0.5 rounded bg-blue-600 text-white shrink-0 flex items-center justify-center text-[10px]">✓</span><span class="flex-1 leading-relaxed">$1</span></div>'
+      '<div class="flex items-start gap-2.5 my-2 p-2 rounded-lg bg-slate-50/50 dark:bg-slate-800/30 border border-slate-200/40 dark:border-slate-800 text-xs sm:text-sm text-slate-400 dark:text-slate-500 line-through"><span class="w-4 h-4 mt-0.5 rounded bg-blue-600 text-white shrink-0 flex items-center justify-center text-[10px]">✓</span><span class="flex-1 leading-relaxed">$1</span></div>'
     );
 
-    // 8. Numbered Major Sections: 1. Executive Summary...
+    // 9. Numbered Major Sections: 1. Executive Summary...
     text = text.replace(
-      /^(?:##\s*)?(\d+)\.\s+([A-Z][^\n]{3,70})$/gm,
-      '<div class="mt-6 mb-2.5 flex items-center gap-2.5 pt-1"><span class="w-6 h-6 rounded-md bg-blue-600 text-white font-extrabold text-xs flex items-center justify-center shadow-2xs shrink-0">$1</span><h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">$2</h2></div>'
+      /^(?:##\s*)?(\d+)\.\s+([A-Z][^\n]{3,80})$/gm,
+      '<div class="mt-7 mb-3 flex items-center gap-3 pt-2"><span class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-extrabold text-xs flex items-center justify-center shadow-xs shrink-0">$1</span><h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">$2</h2></div>'
     );
 
-    // 9. Lettered Subsections: A. The Three Basic...
+    // 10. Lettered Subsections: A. The Three Basic...
     text = text.replace(
       /^(?:###\s*)?([A-Z])\.\s+([A-Z][^\n]{3,80})$/gm,
-      '<div class="mt-4 mb-2 flex items-center gap-2"><span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">$1</span><h3 class="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">$2</h3></div>'
+      '<div class="mt-5 mb-2.5 flex items-center gap-2"><span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 font-mono">$1</span><h3 class="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">$2</h3></div>'
     );
 
-    // 10. Process Markdown bold and italics
+    // 11. Context Callout Header: e.g. "Why This Matters in CSE441"
+    text = text.replace(
+      /^(Why This Matters[^\n]*)$/gim,
+      '<div class="my-3 px-3.5 py-2 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-300 font-bold text-xs uppercase tracking-wide flex items-center gap-2">💡 $1</div>'
+    );
+
+    // 12. Phase Milestones: e.g. "Phase 1: Early Phases (Inception & Planning)"
+    text = text.replace(
+      /^(Phase\s+\d+:\s+[^\n]+)$/gim,
+      '<div class="mt-4 mb-2 p-2.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 font-bold text-xs sm:text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2"><span class="px-2 py-0.5 rounded bg-blue-600 text-white font-mono text-[10px] font-bold">PHASE</span><span>$1</span></div>'
+    );
+
+    // 13. Definition Pairs: e.g. "Definition: ...", "Structural Context: ...", "Deliverable: ..."
+    text = text.replace(
+      /^([A-Z][A-Za-z0-9 /()&-]{2,35})\s*:\s*(.+)$/gm,
+      '<div class="my-1.5 pl-3 border-l-2 border-blue-400/40 dark:border-blue-600/40 text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed"><strong class="font-bold text-slate-900 dark:text-slate-100">$1:</strong> $2</div>'
+    );
+
+    // 14. Single Category Header Line Ending with Colon: e.g. "Functional Structure:"
+    text = text.replace(
+      /^([A-Z][A-Za-z0-9 /()&-]{2,35}):\s*$/gm,
+      '<div class="mt-3 mb-1 text-xs sm:text-sm font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider font-mono flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span><span>$1</span></div>'
+    );
+
+    // 15. Process Markdown bold and italics
     text = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-900 dark:text-slate-100">$1</strong>');
     text = text.replace(/__([^_]+)__/g, '<strong class="font-bold text-slate-900 dark:text-slate-100">$1</strong>');
     text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
 
-    // 11. Process inline code
+    // 16. Process inline code
     text = text.replace(
       /`([^`]+)`/g,
       '<code class="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-xs text-blue-600 dark:text-blue-400 font-semibold">$1</code>'
     );
 
-    // 12. Headings
+    // 17. Headings
     text = text.replace(
       /^### (.*$)/gim,
       '<h3 class="text-base font-bold mt-4 mb-1 text-slate-900 dark:text-slate-100">$1</h3>'
@@ -404,51 +436,71 @@ g++ -O2 -std=c++17 solution.cpp -o solution
       '<h1 class="text-xl sm:text-2xl font-black mt-4 mb-3 pb-2 border-b border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100">$1</h1>'
     );
 
-    // 13. Blockquotes
+    // 18. Blockquotes
     text = text.replace(
       /^\> (.*$)/gim,
       '<blockquote class="border-l-4 border-blue-500 pl-3.5 py-1.5 my-2.5 bg-blue-50/50 dark:bg-blue-950/25 italic text-slate-700 dark:text-slate-300 rounded-r text-xs sm:text-sm leading-relaxed">$1</blockquote>'
     );
 
-    // 14. Bullet lists
+    // 19. Bullet lists
     text = text.replace(
       /^[-*] (.*$)/gim,
       '<li class="ml-4 list-disc text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 my-1">$1</li>'
     );
 
-    // 15. Numbered lists
+    // 20. Numbered lists
     text = text.replace(
       /^\d+\. (.*$)/gim,
       '<li class="ml-4 list-decimal text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 my-1">$1</li>'
     );
 
-    // 16. Paragraphs and linebreaks
-    text = text.replace(/\n\n+/g, '</p><p class="mb-2 leading-relaxed text-xs sm:text-sm text-slate-800 dark:text-slate-200">');
-    text = text.replace(/\n/g, '<br/>');
+    // 21. Safe paragraph block parsing (avoid illegal nesting of div inside p)
+    const rawBlocks = text.split(/\n\n+/);
+    const formattedBlocks = rawBlocks.map(b => {
+      const trimmed = b.trim();
+      if (!trimmed) return '';
+      if (
+        trimmed.startsWith('<div') ||
+        trimmed.startsWith('<h') ||
+        trimmed.startsWith('<table') ||
+        trimmed.startsWith('<ul') ||
+        trimmed.startsWith('<ol') ||
+        trimmed.startsWith('<blockquote') ||
+        trimmed.startsWith('__CODE_BLOCK_') ||
+        trimmed.startsWith('__MATH_BLOCK_')
+      ) {
+        return trimmed;
+      }
+      return `<p class="mb-3 leading-relaxed text-xs sm:text-sm text-slate-800 dark:text-slate-200">${trimmed.replace(/\n/g, '<br/>')}</p>`;
+    });
 
-    if (!text.startsWith('<')) {
-      text = `<p class="mb-2 leading-relaxed text-xs sm:text-sm text-slate-800 dark:text-slate-200">${text}</p>`;
-    }
+    let result = formattedBlocks.filter(Boolean).join('\n');
 
-    // 17. Restore protected Code and Math blocks
+    // 22. Restore protected Code and Math blocks
     codeBlocks.forEach((bHtml, idx) => {
-      text = text.replace(`__CODE_BLOCK_${idx}__`, bHtml);
+      result = result.replace(`__CODE_BLOCK_${idx}__`, bHtml);
     });
     mathBlocks.forEach((mHtml, idx) => {
-      text = text.replace(`__MATH_BLOCK_${idx}__`, mHtml);
+      result = result.replace(`__MATH_BLOCK_${idx}__`, mHtml);
     });
 
-    return text;
+    return result;
   };
 
   // Normalize initial content to clean HTML
   const normalizeToHtml = (content: string) => {
     if (!content) return '<p><br></p>';
-    // If it contains LaTeX equations or markdown tables, parse them into rich KaTeX/table elements
-    if (content.includes('$') || content.includes('| ---') || content.includes('|:--') || content.includes('**')) {
-      return parseAcademicTextToHtml(content);
+    // If it starts with standard HTML wrappers and doesn't contain raw markdown constructs, return as is
+    if (
+      (content.startsWith('<div') || content.startsWith('<p>') || content.startsWith('<h1') || content.startsWith('<h2')) &&
+      !content.includes('---') &&
+      !content.includes('## ') &&
+      !content.includes('🎓') &&
+      !content.includes('Trap 1:') &&
+      !content.includes('[ ]')
+    ) {
+      return content;
     }
-    if (/<[a-z][\s\S]*>/i.test(content)) return content;
     return parseAcademicTextToHtml(content);
   };
 
@@ -1784,7 +1836,21 @@ Include:
 
               {/* The Live Document Body or Markdown/LaTeX Preview */}
               {isPreviewMode ? (
-                <div className="flex-1 w-full min-h-[500px] text-slate-800 dark:text-slate-200 p-2">
+                <div className="flex-1 w-full min-h-[500px] text-slate-800 dark:text-slate-200 p-4 sm:p-6 bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs">
+                  <div className="mb-4 flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 text-xs text-slate-500">
+                    <span className="flex items-center gap-1.5 font-semibold text-blue-600 dark:text-blue-400">
+                      <Eye className="w-3.5 h-3.5" />
+                      Executive Reading View (Rendered LaTeX, Diagrams, Definitions & Checklists)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsPreviewMode(false)}
+                      className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-blue-600 flex items-center gap-1 font-medium transition-colors"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>Switch to Live Edit</span>
+                    </button>
+                  </div>
                   <MarkdownRenderer content={selectedNote.content} />
                 </div>
               ) : (

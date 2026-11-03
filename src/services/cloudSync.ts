@@ -49,10 +49,7 @@ export function sanitizePayload(payload: CloudWorkspacePayload): any {
     courses: payload.courses || [],
     assignments: payload.assignments || [],
     tasks: payload.tasks || [],
-    notes: (payload.notes || []).map(n => ({
-      ...n,
-      content: n.content && n.content.length > 8000 ? n.content.slice(0, 8000) : n.content
-    })),
+    notes: payload.notes || [],
     events: payload.events || [],
     inboxItems: payload.inboxItems || [],
     files: (payload.files || []).map(f => ({

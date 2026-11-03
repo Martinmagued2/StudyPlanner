@@ -442,6 +442,56 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         continue;
       }
 
+      // 8.5 Context Callout Headers: e.g. "Why This Matters in CSE441"
+      const whyMattersMatch = trimmed.match(/^(Why This Matters[^\n]*)$/i);
+      if (whyMattersMatch) {
+        blocks.push(
+          <div
+            key={`why_matters_${blockKey++}`}
+            className="my-3 px-3.5 py-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 font-bold text-xs uppercase tracking-wide flex items-center gap-2 shadow-xs"
+          >
+            <Lightbulb className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+            <span>{whyMattersMatch[1]}</span>
+          </div>
+        );
+        i++;
+        continue;
+      }
+
+      // 8.6 Phase Sections: e.g. "Phase 1: Early Phases (Inception & Planning)"
+      const phaseMatch = trimmed.match(/^(Phase\s+\d+:\s+[^\n]+)$/i);
+      if (phaseMatch) {
+        blocks.push(
+          <div
+            key={`phase_hdr_${blockKey++}`}
+            className="mt-4 mb-2 p-2.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 font-bold text-xs sm:text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2"
+          >
+            <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-mono text-[10px] font-bold">
+              MILESTONE
+            </span>
+            <span>{phaseMatch[1]}</span>
+          </div>
+        );
+        i++;
+        continue;
+      }
+
+      // 8.7 Standalone Category Heading Line Ending with Colon: e.g. "Functional Structure:"
+      const labelHeadingMatch = trimmed.match(/^([A-Z][A-Za-z0-9 /()&-]{2,40}):\s*$/);
+      if (labelHeadingMatch) {
+        blocks.push(
+          <div
+            key={`label_heading_${blockKey++}`}
+            className="mt-4 mb-1.5 flex items-center gap-1.5 font-bold text-xs sm:text-sm text-blue-700 dark:text-blue-400 font-mono uppercase tracking-wide"
+          >
+            <span className="w-2 h-2 rounded-full bg-blue-500" />
+            <span>{labelHeadingMatch[1]}</span>
+          </div>
+        );
+        i++;
+        continue;
+      }
+
       // 9. Document Main Title: # Title OR (🎓 Title
       if (trimmed.startsWith('# ') || trimmed.startsWith('(🎓') || (trimmed.startsWith('🎓') && i === 0)) {
         const cleanTitle = trimmed
@@ -645,11 +695,13 @@ const AcademicCodeBlock: React.FC<AcademicCodeBlockProps> = ({ code, language })
     code.includes('^') ||
     code.includes('| \\') ||
     code.includes('| /') ||
-    code.includes('+----') ||
-    code.includes('---->') ||
-    code.includes('<----') ||
+    code.includes('+--') ||
+    code.includes('-->') ||
+    code.includes('<--') ||
+    code.includes('---+') ||
     language.toLowerCase() === 'diagram' ||
-    language.toLowerCase() === 'ascii';
+    language.toLowerCase() === 'ascii' ||
+    language.toLowerCase() === 'text';
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);

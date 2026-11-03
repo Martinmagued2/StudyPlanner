@@ -37,7 +37,29 @@ import {
   isSupabaseConfigured,
   saveWorkspaceToSupabase,
   fetchWorkspaceFromSupabase,
-  subscribeToWorkspaceRealtime
+  dbSaveAllTablesToDatabase,
+  dbLoadAllTablesFromDatabase,
+  subscribeToWorkspaceRealtime,
+  dbSaveNote,
+  dbDeleteNote,
+  dbSaveFile,
+  dbDeleteFile,
+  dbSaveCourse,
+  dbDeleteCourse,
+  dbSaveTask,
+  dbDeleteTask,
+  dbSaveAssignment,
+  dbDeleteAssignment,
+  dbSaveExam,
+  dbDeleteExam,
+  dbSaveFlashcard,
+  dbDeleteFlashcard,
+  dbSaveDeck,
+  dbDeleteDeck,
+  dbSaveQuiz,
+  dbDeleteQuiz,
+  dbSaveEvent,
+  dbDeleteEvent
 } from '../services/supabase';
 import { fetchRepoCommits } from '../services/githubService';
 import {
@@ -723,10 +745,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Check if user already has saved workspace in this browser
     const userStorageKey = `nook_workspace_${userId}`;
     const savedCoursesStr = localStorage.getItem(`${userStorageKey}_courses`);
+    let hasLocalData = false;
     if (savedCoursesStr) {
       try {
         const parsedCourses = JSON.parse(savedCoursesStr);
         if (Array.isArray(parsedCourses) && parsedCourses.length > 0) {
+          hasLocalData = true;
           setCourses(parsedCourses);
           const a = localStorage.getItem(`${userStorageKey}_assignments`);
           if (a) setAssignments(JSON.parse(a));
@@ -742,45 +766,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (g) setGradeItems(JSON.parse(g));
           const p = localStorage.getItem(`${userStorageKey}_previous_term_courses`);
           if (p) setPreviousTermCourses(JSON.parse(p));
-          return;
         }
       } catch (err) {
         console.warn('Failed restoring user local workspace:', err);
       }
     }
 
-    // Fresh registration
-    setCourses([]);
-    setAssignments([]);
-    setTasks([]);
-    setEvents([]);
-    setInboxItems([]);
-    setFiles([]);
-    setFlashcards([]);
-    setFlashcardDecks([]);
-    setFocusSessions([]);
-    setQuizzes([]);
-    setExams([]);
-    setGradeItems([]);
-    setPreviousTermCourses([]);
-    setAiMemories([]);
-    setGithubRepos([]);
-    setDailyPlan({
-      date: new Date().toISOString().slice(0, 10),
-      generatedBy: 'ai',
-      blocks: []
-    });
-    setNotes([]);
-    setNotifications([
-      {
-        id: `notif_${Date.now()}`,
-        title: 'Account Ready',
-        message: 'Your workspace is 100% clean and ready. Add courses manually or chat with Ask AI to set up your subjects and timetable.',
-        type: 'system',
-        timestamp: 'Just now',
-        read: false
-      }
-    ]);
+    // Always fetch fresh authoritative data from PostgreSQL database if configured!
+    if (isSupabaseConfigured()) {
+      dbLoadAllTablesFromDatabase(userId).then(dbData => {
+        if (dbData) {
+          if (Array.isArray(dbData.courses) && dbData.courses.length > 0) setCourses(dbData.courses);
+          if (Array.isArray(dbData.assignments) && dbData.assignments.length > 0) setAssignments(dbData.assignments);
+          if (Array.isArray(dbData.tasks) && dbData.tasks.length > 0) setTasks(dbData.tasks);
+          if (Array.isArray(dbData.notes) && dbData.notes.length > 0) setNotes(dbData.notes);
+          if (Array.isArray(dbData.files) && dbData.files.length > 0) setFiles(dbData.files);
+          if (Array.isArray(dbData.exams) && dbData.exams.length > 0) setExams(dbData.exams);
+          if (Array.isArray(dbData.events) && dbData.events.length > 0) setEvents(dbData.events);
+          if (Array.isArray(dbData.inboxItems) && dbData.inboxItems.length > 0) setInboxItems(dbData.inboxItems);
+          if (Array.isArray(dbData.flashcards) && dbData.flashcards.length > 0) setFlashcards(dbData.flashcards);
+          if (Array.isArray(dbData.flashcardDecks) && dbData.flashcardDecks.length > 0) setFlashcardDecks(dbData.flashcardDecks);
+          if (Array.isArray(dbData.gradeItems) && dbData.gradeItems.length > 0) setGradeItems(dbData.gradeItems);
+          if (dbData.dailyPlan) setDailyPlan(dbData.dailyPlan);
+        }
+      }).catch(err => console.warn('Supabase DB fetch on login error:', err));
+    }
+
+    if (!hasLocalData && !isSupabaseConfigured()) {
+      // Fresh registration with no database
+      setCourses([]);
+      setAssignments([]);
+      setTasks([]);
+      setEvents([]);
+      setInboxItems([]);
+      setFiles([]);
+      setFlashcards([]);
+      setFlashcardDecks([]);
+      setFocusSessions([]);
+      setQuizzes([]);
+      setExams([]);
+      setGradeItems([]);
+      setPreviousTermCourses([]);
+      setAiMemories([]);
+      setGithubRepos([]);
+      setDailyPlan({
+        date: new Date().toISOString().slice(0, 10),
+        generatedBy: 'ai',
+        blocks: []
+      });
+      setNotes([]);
+      setNotifications([
+        {
+          id: `notif_${Date.now()}`,
+          title: 'Account Ready',
+          message: 'Your workspace is 100% clean and ready. Add courses manually or chat with Ask AI to set up your subjects and timetable.',
+          type: 'system',
+          timestamp: 'Just now',
+          read: false
+        }
+      ]);
+    }
   };
 
   const logout = () => {
@@ -808,19 +853,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `course_${Date.now()}`
     };
     setCourses(prev => [...prev, newCourse]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveCourse(user.id, newCourse).catch(err => console.warn('DB course save:', err));
+    }
     return newCourse;
   };
 
   const updateCourse = (id: string, updates: Partial<Course>) => {
-    setCourses(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    setCourses(prev => {
+      const updated = prev.map(c => c.id === id ? { ...c, ...updates } : c);
+      const target = updated.find(c => c.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveCourse(user.id, target).catch(err => console.warn('DB course update:', err));
+      }
+      return updated;
+    });
   };
 
   const archiveCourse = (id: string, archive: boolean) => {
-    setCourses(prev => prev.map(c => c.id === id ? { ...c, isArchived: archive } : c));
+    setCourses(prev => {
+      const updated = prev.map(c => c.id === id ? { ...c, isArchived: archive } : c);
+      const target = updated.find(c => c.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveCourse(user.id, target).catch(err => console.warn('DB course archive:', err));
+      }
+      return updated;
+    });
   };
 
   const deleteCourse = (id: string) => {
     setCourses(prev => prev.filter(c => c.id !== id));
+    if (user && isSupabaseConfigured()) {
+      dbDeleteCourse(user.id, id).catch(err => console.warn('DB course delete:', err));
+    }
   };
 
   // Assignments
@@ -832,15 +897,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isBrokenDown: false
     };
     setAssignments(prev => [newAsg, ...prev]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveAssignment(user.id, newAsg).catch(err => console.warn('DB asg save:', err));
+    }
     return newAsg;
   };
 
   const updateAssignment = (id: string, updates: Partial<Assignment>) => {
-    setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
+    setAssignments(prev => {
+      const updated = prev.map(a => a.id === id ? { ...a, ...updates } : a);
+      const target = updated.find(a => a.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveAssignment(user.id, target).catch(err => console.warn('DB asg update:', err));
+      }
+      return updated;
+    });
   };
 
   const deleteAssignment = (id: string) => {
     setAssignments(prev => prev.filter(a => a.id !== id));
+    if (user && isSupabaseConfigured()) {
+      dbDeleteAssignment(user.id, id).catch(err => console.warn('DB asg delete:', err));
+    }
   };
 
   const breakdownAssignmentWithAi = (asgId: string) => {
@@ -929,47 +1007,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       subtasks: []
     };
     setTasks(prev => [newTask, ...prev]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveTask(user.id, newTask).catch(err => console.warn('DB task save:', err));
+    }
     return newTask;
   };
 
   const updateTask = (id: string, updates: Partial<Task>) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+    setTasks(prev => {
+      const updated = prev.map(t => t.id === id ? { ...t, ...updates } : t);
+      const target = updated.find(t => t.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveTask(user.id, target).catch(err => console.warn('DB task update:', err));
+      }
+      return updated;
+    });
   };
 
   const toggleTaskComplete = (id: string) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      const nextCompleted = !t.completed;
-      return {
-        ...t,
-        completed: nextCompleted,
-        completedAt: nextCompleted ? new Date().toISOString() : undefined
-      };
-    }));
+    setTasks(prev => {
+      const updated = prev.map(t => {
+        if (t.id !== id) return t;
+        const nextCompleted = !t.completed;
+        return {
+          ...t,
+          completed: nextCompleted,
+          completedAt: nextCompleted ? new Date().toISOString() : undefined
+        };
+      });
+      const target = updated.find(t => t.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveTask(user.id, target).catch(err => console.warn('DB task toggle:', err));
+      }
+      return updated;
+    });
   };
 
   const deleteTask = (id: string) => {
     setTasks(prev => prev.filter(t => t.id !== id));
+    if (user && isSupabaseConfigured()) {
+      dbDeleteTask(user.id, id).catch(err => console.warn('DB task delete:', err));
+    }
   };
 
   const addSubtask = (taskId: string, title: string) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      return {
-        ...t,
-        subtasks: [...t.subtasks, { id: `st_${Date.now()}`, title, completed: false }]
-      };
-    }));
+    setTasks(prev => {
+      const updated = prev.map(t => {
+        if (t.id !== taskId) return t;
+        return {
+          ...t,
+          subtasks: [...t.subtasks, { id: `st_${Date.now()}`, title, completed: false }]
+        };
+      });
+      const target = updated.find(t => t.id === taskId);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveTask(user.id, target).catch(err => console.warn('DB subtask save:', err));
+      }
+      return updated;
+    });
   };
 
   const toggleSubtask = (taskId: string, subtaskId: string) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      return {
-        ...t,
-        subtasks: t.subtasks.map(s => s.id === subtaskId ? { ...s, completed: !s.completed } : s)
-      };
-    }));
+    setTasks(prev => {
+      const updated = prev.map(t => {
+        if (t.id !== taskId) return t;
+        return {
+          ...t,
+          subtasks: t.subtasks.map(s => s.id === subtaskId ? { ...s, completed: !s.completed } : s)
+        };
+      });
+      const target = updated.find(t => t.id === taskId);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveTask(user.id, target).catch(err => console.warn('DB subtask toggle:', err));
+      }
+      return updated;
+    });
   };
 
   // Notes
@@ -982,23 +1094,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       inTrash: false
     };
     setNotes(prev => [newNote, ...prev]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveNote(user.id, newNote).catch(err => console.warn('DB note save:', err));
+    }
     return newNote;
   };
 
   const updateNote = (id: string, updates: Partial<Note>) => {
-    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n));
+    setNotes(prev => {
+      const updated = prev.map(n => n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n);
+      const target = updated.find(n => n.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveNote(user.id, target).catch(err => console.warn('DB note update:', err));
+      }
+      return updated;
+    });
   };
 
   const moveNoteToTrash = (id: string) => {
-    setNotes(prev => prev.map(n => n.id === id ? { ...n, inTrash: true } : n));
+    updateNote(id, { inTrash: true });
   };
 
   const restoreNote = (id: string) => {
-    setNotes(prev => prev.map(n => n.id === id ? { ...n, inTrash: false } : n));
+    updateNote(id, { inTrash: false });
   };
 
   const deleteNotePermanently = (id: string) => {
     setNotes(prev => prev.filter(n => n.id !== id));
+    if (user && isSupabaseConfigured()) {
+      dbDeleteNote(user.id, id).catch(err => console.warn('DB note permanent delete:', err));
+    }
   };
 
   // Events
@@ -1008,15 +1133,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `ev_${Date.now()}`
     };
     setEvents(prev => [...prev, newEvent]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveEvent(user.id, newEvent).catch(err => console.warn('DB event save:', err));
+    }
     return newEvent;
   };
 
   const updateEvent = (id: string, updates: Partial<CalendarEvent>) => {
-    setEvents(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+    setEvents(prev => {
+      const updated = prev.map(e => e.id === id ? { ...e, ...updates } : e);
+      const target = updated.find(e => e.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveEvent(user.id, target).catch(err => console.warn('DB event update:', err));
+      }
+      return updated;
+    });
   };
 
   const deleteEvent = (id: string) => {
     setEvents(prev => prev.filter(e => e.id !== id));
+    if (user && isSupabaseConfigured()) {
+      dbDeleteEvent(user.id, id).catch(err => console.warn('DB event delete:', err));
+    }
   };
 
   // Inbox
@@ -1116,15 +1254,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       chunks
     };
     setFiles(prev => [newFile, ...prev]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveFile(user.id, newFile).catch(err => console.warn('DB file save:', err));
+    }
     return newFile;
   };
 
   const updateFile = (id: string, updates: Partial<DocumentFile>) => {
-    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+    setFiles(prev => {
+      const updated = prev.map(f => f.id === id ? { ...f, ...updates } : f);
+      const target = updated.find(f => f.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveFile(user.id, target).catch(err => console.warn('DB file update:', err));
+      }
+      return updated;
+    });
   };
 
   const deleteFile = (id: string) => {
     setFiles(prev => prev.filter(f => f.id !== id));
+    if (user && isSupabaseConfigured()) {
+      dbDeleteFile(user.id, id).catch(err => console.warn('DB file delete:', err));
+    }
   };
 
   const toggleFavoriteFile = (id: string) => {
@@ -1228,6 +1379,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       state: 'new'
     };
     setFlashcards(prev => [newCard, ...prev]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveFlashcard(user.id, newCard).catch(err => console.warn('DB flashcard save:', err));
+    }
   };
 
   const addFlashcardDeck = (name: string, courseId?: string, tag?: string) => {
@@ -1238,6 +1392,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       tag
     };
     setFlashcardDecks(prev => [...prev, newDeck]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveDeck(user.id, newDeck).catch(err => console.warn('DB deck save:', err));
+    }
   };
 
   const createFlashcardsFromQuizErrors = (quizTitle: string, errors: { question: string; answer: string; courseId?: string }[]) => {
@@ -1402,6 +1559,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       attempts: []
     };
     setQuizzes(prev => [newQuiz, ...prev]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveQuiz(user.id, newQuiz).catch(err => console.warn('DB quiz save:', err));
+    }
     return newQuiz;
   };
 
@@ -1414,6 +1574,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       revisionSessions: []
     };
     setExams(prev => [...prev, newExam]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveExam(user.id, newExam).catch(err => console.warn('DB exam save:', err));
+    }
     return newExam;
   };
 
@@ -2788,10 +2951,7 @@ How would you like me to assist you with your studies right now?`;
         notes,
         events,
         inboxItems,
-        files: files.map(f => ({
-          ...f,
-          rawText: f.rawText && f.rawText.length > 50000 ? f.rawText.slice(0, 50000) : f.rawText
-        })),
+        files, // 100% of file data including rawText and slide chunks stored directly in DB
         flashcards,
         flashcardDecks,
         focusSessions,
@@ -2806,7 +2966,8 @@ How would you like me to assist you with your studies right now?`;
         notifications,
         reminderLogs
       };
-      return await saveWorkspaceToSupabase(user.id, payload);
+      // Persist across all 15 relational PostgreSQL tables and atomic snapshot
+      return await dbSaveAllTablesToDatabase(user.id, payload);
     } catch (e) {
       console.warn('Failed saving to Supabase database:', e);
       return false;
@@ -2816,7 +2977,7 @@ How would you like me to assist you with your studies right now?`;
   const loadFromDatabase = async (): Promise<boolean> => {
     if (!user || !isSupabaseConfigured()) return false;
     try {
-      const data = await fetchWorkspaceFromSupabase(user.id);
+      const data = await dbLoadAllTablesFromDatabase(user.id);
       if (!data) return false;
       if (Array.isArray(data.courses)) setCourses(data.courses);
       if (Array.isArray(data.assignments)) setAssignments(data.assignments);
