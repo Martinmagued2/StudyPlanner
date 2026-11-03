@@ -114,9 +114,26 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
   };
 
   const handleCopySql = async () => {
-    const sqlSchema = `-- StudyPlanner Universal Supabase PostgreSQL Setup
--- Run this in your Supabase SQL Editor:
-CREATE TABLE IF NOT EXISTS public.workspaces (
+    const sqlSchema = `-- StudyPlanner Complete Database Setup (Run in Supabase SQL Editor):
+-- 1. Safely reset older tables to remove rigid constraints:
+DROP TABLE IF EXISTS public.workspaces CASCADE;
+DROP TABLE IF EXISTS public.inbox_items CASCADE;
+DROP TABLE IF EXISTS public.focus_sessions CASCADE;
+DROP TABLE IF EXISTS public.grade_items CASCADE;
+DROP TABLE IF EXISTS public.calendar_events CASCADE;
+DROP TABLE IF EXISTS public.quizzes CASCADE;
+DROP TABLE IF EXISTS public.flashcards CASCADE;
+DROP TABLE IF EXISTS public.flashcard_decks CASCADE;
+DROP TABLE IF EXISTS public.exams CASCADE;
+DROP TABLE IF EXISTS public.assignments CASCADE;
+DROP TABLE IF EXISTS public.tasks CASCADE;
+DROP TABLE IF EXISTS public.files CASCADE;
+DROP TABLE IF EXISTS public.notes CASCADE;
+DROP TABLE IF EXISTS public.courses CASCADE;
+DROP TABLE IF EXISTS public.profiles CASCADE;
+
+-- 2. Create workspaces (Complete app snapshot):
+CREATE TABLE public.workspaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL,
     version TEXT NOT NULL DEFAULT '1.0.0',
@@ -124,30 +141,135 @@ CREATE TABLE IF NOT EXISTS public.workspaces (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     CONSTRAINT unique_user_workspace UNIQUE (user_id)
 );
+CREATE INDEX idx_workspaces_user_id ON public.workspaces(user_id);
 
--- Safely convert user_id to TEXT and drop any rigid foreign key constraints:
-ALTER TABLE public.workspaces DROP CONSTRAINT IF EXISTS workspaces_user_id_fkey;
-ALTER TABLE public.workspaces ALTER COLUMN user_id TYPE TEXT;
+-- 3. Create relational tables:
+CREATE TABLE public.courses (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL,
+    instructor TEXT DEFAULT '',
+    color TEXT DEFAULT '#0284c7',
+    location TEXT DEFAULT '',
+    credit_hours NUMERIC DEFAULT 3,
+    term TEXT DEFAULT '',
+    syllabus_url TEXT,
+    links JSONB DEFAULT '[]'::jsonb,
+    is_archived BOOLEAN DEFAULT false,
+    meeting_slots JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
 
-CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON public.workspaces(user_id);
-ALTER TABLE public.workspaces ENABLE ROW LEVEL SECURITY;
+CREATE TABLE public.notes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tags TEXT[] DEFAULT '{}',
+    pinned BOOLEAN DEFAULT false,
+    in_trash BOOLEAN DEFAULT false,
+    highlighted_terms TEXT[] DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
 
--- Allow workspace synchronization for both anonymous and authenticated sessions:
-DROP POLICY IF EXISTS "Users can manage their own workspace" ON public.workspaces;
-DROP POLICY IF EXISTS "Allow workspace sync" ON public.workspaces;
-CREATE POLICY "Allow workspace sync" ON public.workspaces FOR ALL USING (true) WITH CHECK (true);
+CREATE TABLE public.files (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    name TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    size_bytes BIGINT DEFAULT 0,
+    page_count INTEGER DEFAULT 0,
+    raw_text TEXT DEFAULT '',
+    summary TEXT DEFAULT '',
+    chunks JSONB DEFAULT '[]'::jsonb,
+    status TEXT DEFAULT 'indexed',
+    is_favorite BOOLEAN DEFAULT false,
+    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
 
--- Enable Supabase Realtime WebSocket notifications
+CREATE TABLE public.tasks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    assignment_id TEXT,
+    exam_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    due_date TEXT,
+    priority TEXT DEFAULT 'medium',
+    tags TEXT[] DEFAULT '{}',
+    completed BOOLEAN DEFAULT false,
+    completed_at TEXT,
+    subtasks JSONB DEFAULT '[]'::jsonb,
+    source TEXT DEFAULT 'user',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE public.assignments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    type TEXT DEFAULT 'homework',
+    status TEXT DEFAULT 'todo',
+    priority TEXT DEFAULT 'medium',
+    due_date TEXT NOT NULL,
+    estimated_minutes INTEGER DEFAULT 60,
+    submission_url TEXT,
+    links TEXT[] DEFAULT '{}',
+    steps JSONB DEFAULT '[]'::jsonb,
+    is_broken_down BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE public.exams (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    date TEXT NOT NULL,
+    weight_percentage NUMERIC DEFAULT 25,
+    readiness_percent NUMERIC DEFAULT 0,
+    room TEXT DEFAULT '',
+    revision_sessions JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 4. Enable Row Level Security and Allow Workspace Sync:
 DO $$
+DECLARE
+    tbl text;
+    tables text[] := ARRAY['courses', 'notes', 'files', 'tasks', 'assignments', 'exams', 'workspaces'];
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' 
-        AND schemaname = 'public' 
-        AND tablename = 'workspaces'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.workspaces;
-    END IF;
+    FOREACH tbl IN ARRAY tables LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
+        EXECUTE format('DROP POLICY IF EXISTS "Allow workspace sync" ON public.%I;', tbl);
+        EXECUTE format('CREATE POLICY "Allow workspace sync" ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl);
+    END LOOP;
+END $$;
+
+-- 5. Enable Realtime WebSocket Notifications:
+DO $$
+DECLARE
+    tbl text;
+    tables text[] := ARRAY['courses', 'notes', 'files', 'tasks', 'assignments', 'exams', 'workspaces'];
+BEGIN
+    FOREACH tbl IN ARRAY tables LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables 
+            WHERE pubname = 'supabase_realtime' 
+            AND schemaname = 'public' 
+            AND tablename = tbl
+        ) THEN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I;', tbl);
+        END IF;
+    END LOOP;
 END $$;`;
 
     try {
