@@ -18,7 +18,8 @@ import {
   ShieldCheck,
   Check,
   FolderGit2,
-  KeyRound
+  KeyRound,
+  Trash2
 } from 'lucide-react';
 import { IntegrationConnector } from '../../../types';
 import { getGitHubToken, setGitHubToken, fetchUserRepos } from '../../../services/githubService';
@@ -30,6 +31,8 @@ export const IntegrationsView: React.FC = () => {
     syncIntegration,
     githubRepos,
     addGitHubRepo,
+    syncGitHubRepo,
+    deleteGitHubRepo,
     addCommitBriefAsTask,
     addInboxItem,
     courses
@@ -38,6 +41,7 @@ export const IntegrationsView: React.FC = () => {
   const [requestedName, setRequestedName] = useState('');
   const [requestSent, setRequestSent] = useState(false);
   const [syncingProvider, setSyncingProvider] = useState<string | null>(null);
+  const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
 
   // Connection Setup Modal
   const [activeModalProvider, setActiveModalProvider] = useState<IntegrationConnector['provider'] | null>(null);
@@ -105,12 +109,22 @@ export const IntegrationsView: React.FC = () => {
     setActiveModalProvider(null);
   };
 
-  const handleTriggerSync = (provider: IntegrationConnector['provider']) => {
+  const handleTriggerSync = async (provider: IntegrationConnector['provider']) => {
     setSyncingProvider(provider);
-    setTimeout(() => {
-      syncIntegration(provider);
+    try {
+      await syncIntegration(provider);
+    } finally {
       setSyncingProvider(null);
-    }, 900);
+    }
+  };
+
+  const handleSyncSingleRepo = async (repoId: string) => {
+    setSyncingRepoId(repoId);
+    try {
+      await syncGitHubRepo(repoId);
+    } finally {
+      setSyncingRepoId(null);
+    }
   };
 
   const handleCreateGitHubRepo = (e: React.FormEvent) => {
@@ -304,11 +318,61 @@ export const IntegrationsView: React.FC = () => {
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">{repo.notes}</p>
                   </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSyncSingleRepo(repo.id)}
+                      disabled={syncingRepoId === repo.id}
+                      className="px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 hover:text-blue-600 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      title="Fetch latest commits from GitHub"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${syncingRepoId === repo.id ? 'animate-spin text-blue-600' : ''}`} />
+                      <span>{syncingRepoId === repo.id ? 'Fetching...' : 'Sync Commits'}</span>
+                    </button>
+
+                    <a
+                      href={`https://github.com/${repo.owner}/${repo.repo}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                      title="Open repository on GitHub"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Remove ${repo.owner}/${repo.repo} from linked repositories?`)) {
+                          deleteGitHubRepo(repo.id);
+                        }
+                      }}
+                      className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-300 transition-colors"
+                      title="Unlink repository"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Commits Feed */}
                 <div className="space-y-3">
-                  {repo.commits.map(commit => (
+                  {repo.commits.length === 0 ? (
+                    <div className="py-6 px-4 text-center rounded-lg border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 text-xs text-slate-500 space-y-2">
+                      <p>No commits tracked yet for <strong>{repo.owner}/{repo.repo}</strong>.</p>
+                      <button
+                        type="button"
+                        onClick={() => handleSyncSingleRepo(repo.id)}
+                        disabled={syncingRepoId === repo.id}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-md text-xs inline-flex items-center gap-1.5 transition-colors shadow-xs"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${syncingRepoId === repo.id ? 'animate-spin' : ''}`} />
+                        <span>{syncingRepoId === repo.id ? 'Fetching commits...' : 'Fetch Commits Now'}</span>
+                      </button>
+                    </div>
+                  ) : (
+                    repo.commits.map(commit => (
                     <div
                       key={commit.hash}
                       className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 space-y-2 text-xs"
@@ -353,7 +417,8 @@ export const IntegrationsView: React.FC = () => {
                         </button>
                       </div>
                     </div>
-                  ))}
+                  ))
+                )}
                 </div>
               </div>
             );

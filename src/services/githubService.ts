@@ -84,24 +84,48 @@ export async function fetchRepoCommits(owner: string, repo: string, branch: stri
     headers['Authorization'] = `token ${activeToken.trim()}`;
   }
 
-  const cleanOwner = owner.trim();
-  const cleanRepo = repo.trim();
-  const endpoint = `https://api.github.com/repos/${cleanOwner}/${cleanRepo}/commits?sha=${encodeURIComponent(branch)}&per_page=10`;
+  // Handle cases where user pastes full github.com/owner/repo URL
+  let cleanOwner = owner.trim();
+  let cleanRepo = repo.trim();
 
-  const resp = await fetch(endpoint, { headers });
-  if (!resp.ok) {
-    // If branch doesn't exist, try without sha param
-    const fallbackEndpoint = `https://api.github.com/repos/${cleanOwner}/${cleanRepo}/commits?per_page=10`;
-    const fallbackResp = await fetch(fallbackEndpoint, { headers });
-    if (!fallbackResp.ok) {
-      throw new Error(`Failed to fetch commits for ${cleanOwner}/${cleanRepo} (${resp.status})`);
+  if (cleanOwner.includes('github.com/')) {
+    const parts = cleanOwner.replace(/^https?:\/\/github\.com\//, '').split('/');
+    if (parts.length >= 2) {
+      cleanOwner = parts[0];
+      cleanRepo = parts[1].replace(/\.git$/, '');
     }
-    const data = await fallbackResp.json();
-    return formatCommits(data);
   }
 
-  const data = await resp.json();
-  return formatCommits(data);
+  cleanRepo = cleanRepo.replace(/\.git$/, '').replace(/^\//, '');
+  const cleanBranch = branch.trim() || 'main';
+
+  const endpoint = `https://api.github.com/repos/${cleanOwner}/${cleanRepo}/commits?sha=${encodeURIComponent(cleanBranch)}&per_page=15`;
+
+  try {
+    const resp = await fetch(endpoint, { headers });
+    if (!resp.ok) {
+      if (resp.status === 403) {
+        throw new Error('GitHub API rate limit exceeded. Please save a GitHub Personal Access Token in Settings above to increase your limit to 5,000 req/hr.');
+      }
+      if (resp.status === 404) {
+        // Fallback without sha query param (in case branch is master, develop, or default)
+        const fallbackEndpoint = `https://api.github.com/repos/${cleanOwner}/${cleanRepo}/commits?per_page=15`;
+        const fallbackResp = await fetch(fallbackEndpoint, { headers });
+        if (fallbackResp.ok) {
+          const fallbackData = await fallbackResp.json();
+          return formatCommits(fallbackData);
+        }
+        throw new Error(`Repository "${cleanOwner}/${cleanRepo}" was not found or is private. If private, please provide a GitHub Personal Access Token.`);
+      }
+      throw new Error(`GitHub API error (${resp.status}): ${resp.statusText}`);
+    }
+
+    const data = await resp.json();
+    return formatCommits(data);
+  } catch (err: any) {
+    console.warn(`Error fetching commits for ${cleanOwner}/${cleanRepo}:`, err);
+    throw err;
+  }
 }
 
 function formatCommits(data: any[]): GitHubCommitData[] {

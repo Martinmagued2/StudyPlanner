@@ -61,7 +61,7 @@ import {
   dbSaveEvent,
   dbDeleteEvent
 } from '../services/supabase';
-import { fetchRepoCommits } from '../services/githubService';
+import { fetchRepoCommits, getGitHubToken } from '../services/githubService';
 import {
   getAcademicScheduleContext,
   isScheduleOrDateQuery,
@@ -257,10 +257,12 @@ interface AppContextType {
 
   integrations: IntegrationConnector[];
   toggleIntegrationConnection: (provider: IntegrationConnector['provider']) => void;
-  syncIntegration: (provider: IntegrationConnector['provider']) => void;
+  syncIntegration: (provider: IntegrationConnector['provider']) => Promise<number>;
 
   githubRepos: GitHubRepo[];
-  addGitHubRepo: (courseId: string, owner: string, repo: string, branch?: string) => void;
+  addGitHubRepo: (courseId: string, owner: string, repo: string, branch?: string) => Promise<void>;
+  syncGitHubRepo: (repoId: string) => Promise<boolean>;
+  deleteGitHubRepo: (repoId: string) => void;
   addCommitBriefAsTask: (commit: any, courseId: string) => void;
 
   notifications: AppNotification[];
@@ -494,7 +496,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     blocks: []
   }));
   const [integrations, setIntegrations] = useState<IntegrationConnector[]>(() => loadStored('integrations', initialIntegrations));
-  const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>(() => loadStored('repos', []));
+  const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>(() => loadStored('repos', initialRepos));
   const [notifications, setNotifications] = useState<AppNotification[]>(() => loadStored('notifications', [
     {
       id: 'notif_init',
@@ -566,6 +568,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => { saveStored('repos', githubRepos); }, [githubRepos, storageKey]);
   useEffect(() => { saveStored('notifications', notifications); }, [notifications, storageKey]);
   useEffect(() => { saveStored('reminder_logs', reminderLogs); }, [reminderLogs, storageKey]);
+
+  // Auto-fetch real commits for any linked repo that hasn't fetched commits yet
+  useEffect(() => {
+    const unhydrated = githubRepos.filter(r => !r.commits || r.commits.length === 0);
+    if (unhydrated.length > 0) {
+      const activeToken = getGitHubToken();
+      unhydrated.forEach(r => {
+        fetchRepoCommits(r.owner, r.repo, r.branch || 'main', activeToken)
+          .then(commits => {
+            if (commits && commits.length > 0) {
+              setGithubRepos(prev => prev.map(repo => repo.id === r.id ? { ...repo, commits } : repo));
+            }
+          })
+          .catch(err => console.warn(`Initial commit fetch for ${r.owner}/${r.repo}:`, err));
+      });
+    }
+  }, []);
 
   // Derived current session messages
   const activeChatSession = chatSessions.find(s => s.id === activeChatSessionId) || chatSessions[0];
@@ -2508,7 +2527,7 @@ How would you like me to assist you with your studies right now?`;
     setIntegrations(prev => prev.map(i => i.provider === provider ? { ...i, connected: !i.connected } : i));
   };
 
-  const syncIntegration = (provider: IntegrationConnector['provider']) => {
+  const syncIntegration = async (provider: IntegrationConnector['provider']): Promise<number> => {
     let itemsImported = 0;
 
     if (provider === 'google') {
@@ -2570,10 +2589,29 @@ How would you like me to assist you with your studies right now?`;
       setAssignments(prev => [moodleAsg, ...prev.filter(a => !a.id.startsWith('moodle_asg_'))]);
       itemsImported = 1;
     } else if (provider === 'github') {
-      if (githubRepos.length === 0 && courses.length > 0) {
-        addGitHubRepo(courses[0].id, 'student-developer', 'coursework-algorithms', 'main');
+      const activeToken = getGitHubToken();
+      if (githubRepos.length > 0) {
+        let totalCommits = 0;
+        const updatedRepos = await Promise.all(
+          githubRepos.map(async r => {
+            try {
+              const freshCommits = await fetchRepoCommits(r.owner, r.repo, r.branch || 'main', activeToken);
+              if (Array.isArray(freshCommits) && freshCommits.length > 0) {
+                totalCommits += freshCommits.length;
+                return { ...r, commits: freshCommits };
+              }
+            } catch (err) {
+              console.warn(`Sync failed for repo ${r.owner}/${r.repo}:`, err);
+            }
+            return r;
+          })
+        );
+        setGithubRepos(updatedRepos);
+        itemsImported = totalCommits;
+      } else if (courses.length > 0) {
+        await addGitHubRepo(courses[0].id, 'Martinmagued2', 'StudyPlanner', 'main');
+        itemsImported = 1;
       }
-      itemsImported = 1;
     }
 
     setIntegrations(prev => prev.map(i => {
@@ -2599,9 +2637,54 @@ How would you like me to assist you with your studies right now?`;
       },
       ...prev
     ]);
+
+    return itemsImported;
   };
 
-  const addGitHubRepo = (courseId: string, owner: string, repo: string, branch: string = 'main') => {
+  const syncGitHubRepo = async (repoId: string): Promise<boolean> => {
+    const target = githubRepos.find(r => r.id === repoId);
+    if (!target) return false;
+    try {
+      const activeToken = getGitHubToken();
+      const freshCommits = await fetchRepoCommits(target.owner, target.repo, target.branch || 'main', activeToken);
+      if (Array.isArray(freshCommits) && freshCommits.length > 0) {
+        setGithubRepos(prev => prev.map(r => r.id === repoId ? { ...r, commits: freshCommits } : r));
+        setNotifications(prev => [
+          {
+            id: `notif_${Date.now()}`,
+            title: `Synced ${target.owner}/${target.repo}`,
+            message: `Loaded ${freshCommits.length} latest commits directly from GitHub!`,
+            type: 'system',
+            timestamp: 'Just now',
+            read: false
+          },
+          ...prev
+        ]);
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      console.warn(`Error syncing repo ${target.owner}/${target.repo}:`, err);
+      setNotifications(prev => [
+        {
+          id: `notif_${Date.now()}`,
+          title: `Sync Failed (${target.owner}/${target.repo})`,
+          message: err?.message || 'Could not fetch commits. Check owner/repo name or personal access token.',
+          type: 'system',
+          timestamp: 'Just now',
+          read: false
+        },
+        ...prev
+      ]);
+      return false;
+    }
+  };
+
+  const deleteGitHubRepo = (repoId: string) => {
+    setGithubRepos(prev => prev.filter(r => r.id !== repoId));
+  };
+
+  const addGitHubRepo = async (courseId: string, owner: string, repo: string, branch: string = 'main'): Promise<void> => {
     const tempId = `repo_${Date.now()}`;
     const initialRepo: GitHubRepo = {
       id: tempId,
@@ -2615,15 +2698,26 @@ How would you like me to assist you with your studies right now?`;
     setGithubRepos(prev => [initialRepo, ...prev]);
 
     // Fetch real commits from GitHub API
-    fetchRepoCommits(owner, repo, branch)
-      .then(realCommits => {
-        if (realCommits && realCommits.length > 0) {
-          setGithubRepos(prev => prev.map(r => r.id === tempId ? { ...r, commits: realCommits } : r));
-        }
-      })
-      .catch(err => {
-        console.warn(`Could not fetch remote commits for ${owner}/${repo}:`, err);
-      });
+    try {
+      const activeToken = getGitHubToken();
+      const realCommits = await fetchRepoCommits(owner, repo, branch, activeToken);
+      if (realCommits && realCommits.length > 0) {
+        setGithubRepos(prev => prev.map(r => r.id === tempId ? { ...r, commits: realCommits } : r));
+      }
+    } catch (err: any) {
+      console.warn(`Could not fetch remote commits for ${owner}/${repo}:`, err);
+      setNotifications(prev => [
+        {
+          id: `notif_${Date.now()}`,
+          title: `GitHub Repo Notice (${owner}/${repo})`,
+          message: err?.message || 'Could not fetch commits automatically. Verify repo name or add a GitHub Personal Access Token.',
+          type: 'system',
+          timestamp: 'Just now',
+          read: false
+        },
+        ...prev
+      ]);
+    }
   };
 
   const addCommitBriefAsTask = (commit: any, courseId: string) => {
@@ -3210,6 +3304,8 @@ How would you like me to assist you with your studies right now?`;
         syncIntegration,
         githubRepos,
         addGitHubRepo,
+        syncGitHubRepo,
+        deleteGitHubRepo,
         addCommitBriefAsTask,
         notifications,
         markNotificationRead,

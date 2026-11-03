@@ -710,41 +710,13 @@ export const initialIntegrations: IntegrationConnector[] = [
 
 export const initialRepos: GitHubRepo[] = [
   {
-    id: 'repo_cs302',
+    id: 'repo_studyplanner',
     courseId: 'course_cs302',
-    owner: 'alexrivera-uel',
-    repo: 'cs302-algorithms-lab',
+    owner: 'Martinmagued2',
+    repo: 'StudyPlanner',
     branch: 'main',
-    notes: 'Primary coursework repository containing balanced trees, priority queues, and graph search implementations.',
-    commits: [
-      {
-        hash: '7c8a14f',
-        shortHash: '7c8a14f',
-        author: 'Alex Rivera',
-        authorAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-        message: 'feat(avl): add recursive height update and balance factor computation',
-        date: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
-        additions: 48,
-        deletions: 12,
-        changedFiles: 2,
-        isOwnCommit: true,
-        seen: true,
-        aiSummary: 'Implemented height caching for AVL tree nodes; next step is implementing single left/right rotation methods.'
-      },
-      {
-        hash: 'b2e910c',
-        shortHash: 'b2e910c',
-        author: 'Alex Rivera',
-        authorAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-        message: 'test(bst): add randomized permutation test runner',
-        date: new Date(Date.now() - 26 * 3600 * 1000).toISOString(),
-        additions: 74,
-        deletions: 5,
-        changedFiles: 1,
-        isOwnCommit: true,
-        seen: true
-      }
-    ]
+    notes: 'Primary StudyPlanner application and coursework repository.',
+    commits: []
   }
 ];
 
