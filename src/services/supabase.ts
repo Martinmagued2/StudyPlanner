@@ -449,6 +449,57 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
       await client.from('grade_items').upsert(records, { onConflict: 'id' });
     }
 
+    // Calendar Events
+    if (Array.isArray(data.events) && data.events.length > 0) {
+      const records = data.events.map((e: CalendarEvent) => ({
+        id: e.id,
+        user_id: userId,
+        course_id: e.courseId || null,
+        assignment_id: e.assignmentId || null,
+        title: e.title,
+        description: e.description || '',
+        location: e.location || '',
+        start_time: e.start,
+        end_time: e.end,
+        all_day: e.allDay || false,
+        type: e.type || 'event',
+        provider: e.provider || 'local'
+      }));
+      await client.from('calendar_events').upsert(records, { onConflict: 'id' });
+    }
+
+    // Focus Sessions
+    if (Array.isArray(data.focusSessions) && data.focusSessions.length > 0) {
+      const records = data.focusSessions.map((f: FocusSession) => ({
+        id: f.id,
+        user_id: userId,
+        course_id: f.courseId || null,
+        task_id: f.taskId || null,
+        duration_minutes: f.durationMinutes,
+        actual_minutes: f.actualMinutes,
+        label: f.label || 'Deep Work',
+        timestamp: f.timestamp
+      }));
+      await client.from('focus_sessions').upsert(records, { onConflict: 'id' });
+    }
+
+    // Inbox Items
+    if (Array.isArray(data.inboxItems) && data.inboxItems.length > 0) {
+      const records = data.inboxItems.map((i: InboxItem) => ({
+        id: i.id,
+        user_id: userId,
+        title: i.title,
+        content: i.content || '',
+        type: i.type || 'note',
+        url: i.url || null,
+        email_sender: i.emailSender || null,
+        email_subject: i.emailSubject || null,
+        processed: i.processed || false,
+        converted_to: i.convertedTo || null
+      }));
+      await client.from('inbox_items').upsert(records, { onConflict: 'id' });
+    }
+
     return true;
   } catch (err) {
     console.warn('Error saving all tables to Supabase:', err);
@@ -469,7 +520,7 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       .from('workspaces')
       .select('data, updated_at')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     // 2. Fetch individual tables to ensure 100% latest data and all raw file texts
     const [
@@ -482,7 +533,10 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       decksRes,
       cardsRes,
       quizzesRes,
-      gradeRes
+      gradeRes,
+      eventsRes,
+      focusRes,
+      inboxRes
     ] = await Promise.all([
       client.from('courses').select('*').eq('user_id', userId),
       client.from('notes').select('*').eq('user_id', userId),
@@ -493,7 +547,10 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       client.from('flashcard_decks').select('*').eq('user_id', userId),
       client.from('flashcards').select('*').eq('user_id', userId),
       client.from('quizzes').select('*').eq('user_id', userId),
-      client.from('grade_items').select('*').eq('user_id', userId)
+      client.from('grade_items').select('*').eq('user_id', userId),
+      client.from('calendar_events').select('*').eq('user_id', userId),
+      client.from('focus_sessions').select('*').eq('user_id', userId),
+      client.from('inbox_items').select('*').eq('user_id', userId)
     ]);
 
     const baseData = snapshot?.data || {};
@@ -648,6 +705,48 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
         }))
       : baseData.gradeItems || [];
 
+    const events: CalendarEvent[] = (eventsRes.data && eventsRes.data.length > 0)
+      ? eventsRes.data.map(e => ({
+          id: e.id,
+          courseId: e.course_id,
+          assignmentId: e.assignment_id,
+          title: e.title,
+          description: e.description || '',
+          location: e.location || '',
+          start: e.start_time,
+          end: e.end_time,
+          allDay: e.all_day || false,
+          type: e.type || 'event',
+          provider: e.provider || 'local'
+        }))
+      : baseData.events || [];
+
+    const focusSessions: FocusSession[] = (focusRes.data && focusRes.data.length > 0)
+      ? focusRes.data.map(f => ({
+          id: f.id,
+          courseId: f.course_id,
+          taskId: f.task_id,
+          durationMinutes: Number(f.duration_minutes) || 25,
+          actualMinutes: Number(f.actual_minutes) || 25,
+          label: f.label || 'Deep Work',
+          timestamp: f.timestamp
+        }))
+      : baseData.focusSessions || [];
+
+    const inboxItems: InboxItem[] = (inboxRes.data && inboxRes.data.length > 0)
+      ? inboxRes.data.map(i => ({
+          id: i.id,
+          title: i.title,
+          content: i.content || '',
+          type: i.type || 'note',
+          url: i.url,
+          emailSender: i.email_sender,
+          emailSubject: i.email_subject,
+          processed: i.processed || false,
+          convertedTo: i.converted_to
+        }))
+      : baseData.inboxItems || [];
+
     return {
       ...baseData,
       courses,
@@ -659,7 +758,10 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       flashcardDecks,
       flashcards,
       quizzes,
-      gradeItems
+      gradeItems,
+      events,
+      focusSessions,
+      inboxItems
     };
   } catch (err) {
     console.warn('Error loading all tables from Supabase:', err);

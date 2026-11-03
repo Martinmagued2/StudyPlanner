@@ -32,6 +32,9 @@ export interface CloudWorkspacePayload {
   githubRepos: any[];
   notifications: any[];
   reminderLogs: any[];
+  chatSessions?: any[];
+  activeChatSessionId?: string;
+  theme?: string;
 }
 
 const NTFY_BASE = 'https://ntfy.sh';

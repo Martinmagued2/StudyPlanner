@@ -3060,7 +3060,10 @@ How would you like me to assist you with your studies right now?`;
         integrations,
         githubRepos,
         notifications,
-        reminderLogs
+        reminderLogs,
+        chatSessions,
+        activeChatSessionId,
+        theme
       };
       // Persist across all 15 relational PostgreSQL tables and atomic snapshot
       await dbSaveAllTablesToDatabase(user.id, payload);
@@ -3094,6 +3097,11 @@ How would you like me to assist you with your studies right now?`;
       if (data.dailyPlan) setDailyPlan(data.dailyPlan);
       if (Array.isArray(data.integrations)) setIntegrations(data.integrations);
       if (Array.isArray(data.githubRepos)) setGithubRepos(data.githubRepos);
+      if (Array.isArray(data.chatSessions)) setChatSessions(data.chatSessions);
+      if (data.activeChatSessionId) setActiveChatSessionId(data.activeChatSessionId);
+      if (data.theme) setTheme(data.theme);
+      if (Array.isArray(data.notifications)) setNotifications(data.notifications);
+      if (Array.isArray(data.reminderLogs)) setReminderLogs(data.reminderLogs);
       return true;
     } catch (e) {
       console.warn('Failed loading from Supabase database:', e);
@@ -3123,6 +3131,9 @@ How would you like me to assist you with your studies right now?`;
         if (Array.isArray(remoteData.exams)) setExams(remoteData.exams);
         if (Array.isArray(remoteData.gradeItems)) setGradeItems(remoteData.gradeItems);
         if (remoteData.dailyPlan) setDailyPlan(remoteData.dailyPlan);
+        if (Array.isArray(remoteData.chatSessions)) setChatSessions(remoteData.chatSessions);
+        if (Array.isArray(remoteData.notifications)) setNotifications(remoteData.notifications);
+        if (Array.isArray(remoteData.reminderLogs)) setReminderLogs(remoteData.reminderLogs);
       }
     });
 
