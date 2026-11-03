@@ -142,6 +142,99 @@ export async function testSupabaseConnection(
   }
 }
 
+/**
+ * Tests both Read and Write capabilities in Supabase PostgreSQL
+ */
+export async function testDatabaseReadWrite(
+  userId: string
+): Promise<{ success: boolean; message: string; latencyMs: number }> {
+  const startTime = Date.now();
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, message: 'Supabase client is not configured.', latencyMs: 0 };
+  }
+
+  try {
+    const testPingPayload = {
+      testPing: true,
+      testedAt: new Date().toISOString(),
+      agent: 'StudyPlanner Diagnostic'
+    };
+
+    // 1. Attempt upsert write
+    const { error: writeError } = await client.from('workspaces').upsert(
+      {
+        user_id: userId,
+        version: '1.0.0',
+        data: testPingPayload,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'user_id' }
+    );
+
+    if (writeError) {
+      const msg = writeError.message || '';
+      if (msg.includes('invalid input syntax for type uuid')) {
+        return {
+          success: false,
+          message:
+            'Column user_id in PostgreSQL is UUID type, but your user ID is text. Please run the updated SQL schema to change user_id to TEXT.',
+          latencyMs: Date.now() - startTime
+        };
+      }
+      if (msg.includes('violates foreign key constraint')) {
+        return {
+          success: false,
+          message:
+            'Foreign key constraint to auth.users is blocking direct writes. Please run the updated SQL schema to drop the foreign key constraint.',
+          latencyMs: Date.now() - startTime
+        };
+      }
+      if (writeError.code === '42501' || msg.toLowerCase().includes('row-level security') || msg.toLowerCase().includes('policy')) {
+        return {
+          success: false,
+          message:
+            'Row Level Security (RLS) policy is blocking writes. Run the SQL policy to allow workspace sync for anon/authenticated clients.',
+          latencyMs: Date.now() - startTime
+        };
+      }
+      return {
+        success: false,
+        message: `Database write test failed: ${writeError.message}`,
+        latencyMs: Date.now() - startTime
+      };
+    }
+
+    // 2. Attempt read verification
+    const { data: readData, error: readError } = await client
+      .from('workspaces')
+      .select('updated_at, data')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (readError) {
+      return {
+        success: false,
+        message: `Database read test failed: ${readError.message}`,
+        latencyMs: Date.now() - startTime
+      };
+    }
+
+    const latencyMs = Date.now() - startTime;
+    return {
+      success: true,
+      message: `Database read/write test succeeded in ${latencyMs}ms! Workspace data is actively persisting in Supabase PostgreSQL.`,
+      latencyMs
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || 'Database test failed.',
+      latencyMs: Date.now() - startTime
+    };
+  }
+}
+
 // ==============================================================================
 // 100% COMPLETE DATABASE PERSISTENCE (Stores Every Table in PostgreSQL)
 // ==============================================================================
@@ -152,7 +245,7 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
 
   try {
     // 1. Fast comprehensive snapshot in workspaces table
-    await client.from('workspaces').upsert(
+    const { error: wsError } = await client.from('workspaces').upsert(
       {
         user_id: userId,
         version: '1.0.0',
@@ -161,6 +254,10 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
       },
       { onConflict: 'user_id' }
     );
+
+    if (wsError) {
+      console.warn('Supabase workspaces upsert warning:', wsError.message);
+    }
 
     // 2. Individual Relational Tables
     // Courses
