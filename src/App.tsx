@@ -9,6 +9,7 @@ import { GlobalAiDrawer } from './components/modules/ai/GlobalAiDrawer';
 import { AuthModal } from './components/modules/auth/AuthModal';
 import { DailyBriefingModal } from './components/modules/today/DailyBriefingModal';
 import { DeviceSyncModal } from './components/common/DeviceSyncModal';
+import { DatabaseConfigModal } from './components/common/DatabaseConfigModal';
 
 // Views
 import { TodayDashboard } from './components/modules/today/TodayDashboard';
@@ -39,7 +40,9 @@ const WorkspaceContent: React.FC = () => {
     isBriefingOpen,
     setIsBriefingOpen,
     isSyncModalOpen,
-    setIsSyncModalOpen
+    setIsSyncModalOpen,
+    isDbModalOpen,
+    setIsDbModalOpen
   } = useApp();
 
   // If not logged in, show dedicated full-screen Register / Sign-in page
@@ -116,6 +119,10 @@ const WorkspaceContent: React.FC = () => {
       <DeviceSyncModal
         isOpen={isSyncModalOpen}
         onClose={() => setIsSyncModalOpen(false)}
+      />
+      <DatabaseConfigModal
+        isOpen={isDbModalOpen}
+        onClose={() => setIsDbModalOpen(false)}
       />
     </div>
   );

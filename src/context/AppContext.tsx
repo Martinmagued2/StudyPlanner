@@ -33,6 +33,12 @@ import {
   MeetingSlot
 } from '../types';
 import { uploadToCloud, fetchFromCloud, CloudWorkspacePayload } from '../services/cloudSync';
+import {
+  isSupabaseConfigured,
+  saveWorkspaceToSupabase,
+  fetchWorkspaceFromSupabase,
+  subscribeToWorkspaceRealtime
+} from '../services/supabase';
 import { fetchRepoCommits } from '../services/githubService';
 import {
   getAcademicScheduleContext,
@@ -262,6 +268,13 @@ interface AppContextType {
   isSyncModalOpen: boolean;
   setIsSyncModalOpen: (open: boolean) => void;
 
+  // Cloud Database (Supabase PostgreSQL)
+  isDatabaseConfigured: boolean;
+  isDbModalOpen: boolean;
+  setIsDbModalOpen: (open: boolean) => void;
+  saveToDatabase: () => Promise<boolean>;
+  loadFromDatabase: () => Promise<boolean>;
+
   // Daily Briefing Pop-Up
   isBriefingOpen: boolean;
   setIsBriefingOpen: (open: boolean) => void;
@@ -365,6 +378,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return localStorage.getItem('nook_last_cloud_sync_at') || null;
   });
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [isDbModalOpen, setIsDbModalOpen] = useState(false);
 
   // Daily Briefing Pop-Up State
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
@@ -2760,6 +2774,114 @@ How would you like me to assist you with your studies right now?`;
     return () => clearTimeout(timer);
   }, [courses, assignments, tasks, notes, exams, gradeItems, cloudSyncId]);
 
+  // Supabase PostgreSQL Database Integration
+  const saveToDatabase = async (): Promise<boolean> => {
+    if (!user || !isSupabaseConfigured()) return false;
+    try {
+      const payload: CloudWorkspacePayload = {
+        version: '1.0.0',
+        syncedAt: new Date().toISOString(),
+        user,
+        courses,
+        assignments,
+        tasks,
+        notes,
+        events,
+        inboxItems,
+        files: files.map(f => ({
+          ...f,
+          rawText: f.rawText && f.rawText.length > 50000 ? f.rawText.slice(0, 50000) : f.rawText
+        })),
+        flashcards,
+        flashcardDecks,
+        focusSessions,
+        quizzes,
+        exams,
+        gradeItems,
+        previousTermCourses,
+        aiMemories,
+        dailyPlan,
+        integrations,
+        githubRepos,
+        notifications,
+        reminderLogs
+      };
+      return await saveWorkspaceToSupabase(user.id, payload);
+    } catch (e) {
+      console.warn('Failed saving to Supabase database:', e);
+      return false;
+    }
+  };
+
+  const loadFromDatabase = async (): Promise<boolean> => {
+    if (!user || !isSupabaseConfigured()) return false;
+    try {
+      const data = await fetchWorkspaceFromSupabase(user.id);
+      if (!data) return false;
+      if (Array.isArray(data.courses)) setCourses(data.courses);
+      if (Array.isArray(data.assignments)) setAssignments(data.assignments);
+      if (Array.isArray(data.tasks)) setTasks(data.tasks);
+      if (Array.isArray(data.notes)) setNotes(data.notes);
+      if (Array.isArray(data.events)) setEvents(data.events);
+      if (Array.isArray(data.inboxItems)) setInboxItems(data.inboxItems);
+      if (Array.isArray(data.files)) setFiles(data.files);
+      if (Array.isArray(data.flashcards)) setFlashcards(data.flashcards);
+      if (Array.isArray(data.flashcardDecks)) setFlashcardDecks(data.flashcardDecks);
+      if (Array.isArray(data.focusSessions)) setFocusSessions(data.focusSessions);
+      if (Array.isArray(data.quizzes)) setQuizzes(data.quizzes);
+      if (Array.isArray(data.exams)) setExams(data.exams);
+      if (Array.isArray(data.gradeItems)) setGradeItems(data.gradeItems);
+      if (Array.isArray(data.previousTermCourses)) setPreviousTermCourses(data.previousTermCourses);
+      if (Array.isArray(data.aiMemories)) setAiMemories(data.aiMemories);
+      if (data.dailyPlan) setDailyPlan(data.dailyPlan);
+      if (Array.isArray(data.integrations)) setIntegrations(data.integrations);
+      if (Array.isArray(data.githubRepos)) setGithubRepos(data.githubRepos);
+      return true;
+    } catch (e) {
+      console.warn('Failed loading from Supabase database:', e);
+      return false;
+    }
+  };
+
+  // Realtime WebSocket Subscription to Supabase Postgres
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured()) return;
+
+    // Load initial snapshot from database
+    loadFromDatabase().catch(err => console.warn('Initial DB load warning:', err));
+
+    // Subscribe to Postgres Realtime changes
+    const unsubscribe = subscribeToWorkspaceRealtime(user.id, remoteData => {
+      if (remoteData) {
+        if (Array.isArray(remoteData.courses)) setCourses(remoteData.courses);
+        if (Array.isArray(remoteData.assignments)) setAssignments(remoteData.assignments);
+        if (Array.isArray(remoteData.tasks)) setTasks(remoteData.tasks);
+        if (Array.isArray(remoteData.notes)) setNotes(remoteData.notes);
+        if (Array.isArray(remoteData.events)) setEvents(remoteData.events);
+        if (Array.isArray(remoteData.inboxItems)) setInboxItems(remoteData.inboxItems);
+        if (Array.isArray(remoteData.files)) setFiles(remoteData.files);
+        if (Array.isArray(remoteData.flashcards)) setFlashcards(remoteData.flashcards);
+        if (Array.isArray(remoteData.flashcardDecks)) setFlashcardDecks(remoteData.flashcardDecks);
+        if (Array.isArray(remoteData.exams)) setExams(remoteData.exams);
+        if (Array.isArray(remoteData.gradeItems)) setGradeItems(remoteData.gradeItems);
+        if (remoteData.dailyPlan) setDailyPlan(remoteData.dailyPlan);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [user?.id]);
+
+  // Debounced auto-save to Supabase PostgreSQL database whenever data changes!
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured()) return;
+    const timer = setTimeout(() => {
+      saveToDatabase().catch(err => console.warn('Auto DB sync failed:', err));
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [courses, assignments, tasks, notes, exams, gradeItems, flashcards, flashcardDecks, dailyPlan, user?.id]);
+
   const clearAllWorkspaceData = () => {
     setCourses([]);
     setAssignments([]);
@@ -2948,6 +3070,11 @@ How would you like me to assist you with your studies right now?`;
         loadFromCloud,
         isSyncModalOpen,
         setIsSyncModalOpen,
+        isDatabaseConfigured: isSupabaseConfigured(),
+        isDbModalOpen,
+        setIsDbModalOpen,
+        saveToDatabase,
+        loadFromDatabase,
         isBriefingOpen,
         setIsBriefingOpen,
         isMobileNavOpen,

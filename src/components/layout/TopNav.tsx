@@ -19,6 +19,7 @@ import {
   X,
   Menu,
   Smartphone,
+  Database,
   Sun
 } from 'lucide-react';
 
@@ -122,6 +123,8 @@ export const TopNav: React.FC = () => {
     stopFocusTimer,
     setIsMobileNavOpen,
     setIsSyncModalOpen,
+    setIsDbModalOpen,
+    isDatabaseConfigured,
     setIsBriefingOpen,
     cloudSyncStatus
   } = useApp();
@@ -253,6 +256,22 @@ export const TopNav: React.FC = () => {
                 : 'bg-slate-400'
             }`}
             title={`Cloud Sync: ${cloudSyncStatus}`}
+          />
+        </button>
+
+        {/* Cloud Database (Supabase PostgreSQL) Button */}
+        <button
+          onClick={() => setIsDbModalOpen(true)}
+          className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors border border-emerald-200/60 dark:border-emerald-800/60 shadow-2xs"
+          title="Cloud PostgreSQL Database & Real-Time Sync (Supabase)"
+        >
+          <Database className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+          <span className="hidden xl:inline">Cloud DB</span>
+          <span
+            className={`w-2 h-2 rounded-full ${
+              isDatabaseConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+            }`}
+            title={isDatabaseConfigured ? 'Database Connected (Realtime WebSockets Active)' : 'Database Offline'}
           />
         </button>
 

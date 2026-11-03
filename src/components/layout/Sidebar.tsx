@@ -29,6 +29,7 @@ import {
   Timer,
   X,
   Smartphone,
+  Database,
   LogOut,
   Bot
 } from 'lucide-react';
@@ -55,6 +56,8 @@ export const Sidebar: React.FC = () => {
     isMobileNavOpen,
     setIsMobileNavOpen,
     setIsSyncModalOpen,
+    setIsDbModalOpen,
+    isDatabaseConfigured,
     logout
   } = useApp();
 
@@ -147,6 +150,16 @@ export const Sidebar: React.FC = () => {
               >
                 <Smartphone className="w-3.5 h-3.5" />
                 <span>Sync</span>
+              </button>
+              <button
+                onClick={() => {
+                  setIsMobileNavOpen(false);
+                  setIsDbModalOpen(true);
+                }}
+                className="py-1.5 px-2 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900 flex items-center justify-center gap-1.5"
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>DB</span>
               </button>
             </div>
 
@@ -548,6 +561,16 @@ export const Sidebar: React.FC = () => {
 
         {!isCollapsed && (
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsDbModalOpen(true)}
+              className="p-1.5 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 relative"
+              title="Cloud Database (Supabase PostgreSQL)"
+            >
+              <Database className="w-3.5 h-3.5" />
+              {isDatabaseConfigured && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 absolute top-1 right-1" />
+              )}
+            </button>
             <button
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               className="p-1.5 rounded-md text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"

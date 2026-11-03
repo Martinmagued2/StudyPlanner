@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.114.0",
     "@types/katex": "^0.16.8",
     "@types/prismjs": "^1.26.6",
     "@types/qrcode": "^1.5.6",
