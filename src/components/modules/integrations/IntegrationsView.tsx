@@ -62,7 +62,8 @@ export const IntegrationsView: React.FC = () => {
 
   const handleOpenConnect = (provider: IntegrationConnector['provider']) => {
     setActiveModalProvider(provider);
-    if (provider === 'google') setAccountEmail('student@gmail.com');
+    if (provider === 'gdrive') setAccountEmail('student@gmail.com');
+    else if (provider === 'google') setAccountEmail('student@gmail.com');
     else if (provider === 'outlook') setAccountEmail('student@uel.ac.uk');
     else if (provider === 'moodle') setPortalUrl('https://moodle.uel.ac.uk');
     else if (provider === 'github') {
@@ -197,6 +198,7 @@ export const IntegrationsView: React.FC = () => {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                    {conn.provider === 'gdrive' && <DownloadCloud className="w-5 h-5 text-emerald-600" />}
                     {conn.provider === 'github' && <GitBranch className="w-5 h-5 text-slate-900 dark:text-slate-100" />}
                     {conn.provider === 'google' && <Calendar className="w-5 h-5 text-blue-600" />}
                     {conn.provider === 'outlook' && <Mail className="w-5 h-5 text-sky-600" />}

@@ -134,7 +134,18 @@ DROP TABLE IF EXISTS public.notes CASCADE;
 DROP TABLE IF EXISTS public.courses CASCADE;
 DROP TABLE IF EXISTS public.profiles CASCADE;
 
--- 2. Create workspaces (Complete app snapshot):
+-- 2. Create profiles table (Stores all student accounts):
+CREATE TABLE public.profiles (
+    id TEXT PRIMARY KEY,
+    email TEXT,
+    name TEXT,
+    avatar_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_profiles_email ON public.profiles(email);
+
+-- 3. Create workspaces (Complete app snapshot):
 CREATE TABLE public.workspaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL,
@@ -384,7 +395,7 @@ DO $$
 DECLARE
     tbl text;
     tables text[] := ARRAY[
-        'courses', 'notes', 'files', 'tasks', 'assignments', 'exams',
+        'profiles', 'courses', 'notes', 'files', 'tasks', 'assignments', 'exams',
         'flashcard_decks', 'flashcards', 'quizzes', 'calendar_events',
         'grade_items', 'previous_term_courses', 'chat_sessions',
         'focus_sessions', 'inbox_items', 'workspaces'

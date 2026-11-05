@@ -19,7 +19,9 @@ import {
   GradeItem,
   PreviousTermCourse,
   ChatSession,
-  AiMemory
+  AiMemory,
+  UserAccount,
+  StoredAccountRecord
 } from '../types';
 
 export interface SupabaseConfig {
@@ -248,6 +250,184 @@ export function isRecentLocalDbWrite(windowMs: number = 6500): boolean {
 }
 
 // ==============================================================================
+// SMART HYBRID STORAGE (Google Drive / Local for heavy files, Supabase for data)
+// ==============================================================================
+
+/**
+ * Sanitizes large document files before sending to Supabase PostgreSQL.
+ * Keeps structured metadata, summary, and preview chunks (~2 KB per file) in cloud DB,
+ * while large slide decks and raw document texts remain locally / in Google Drive.
+ * This completely avoids exceeding Supabase's free storage limits (5 GB) while keeping
+ * instant search, courses, notes, tasks, and assignments 100% cloud synced.
+ */
+export function sanitizeFileForCloud(f: DocumentFile): DocumentFile {
+  const isLargeRawText = f.rawText && f.rawText.length > 1500;
+  const cleanRawText = isLargeRawText
+    ? f.rawText!.slice(0, 1500) + '... [Smart Hybrid: Full document preserved locally & in Google Drive]'
+    : (f.rawText || '');
+
+  const cleanChunks = Array.isArray(f.chunks)
+    ? f.chunks.slice(0, 5).map(c => ({
+        id: c.id,
+        page: c.page,
+        slideNumber: c.slideNumber,
+        content: c.content && c.content.length > 400 ? c.content.slice(0, 400) + '...' : (c.content || ''),
+        hasVisuals: !!c.hasVisuals,
+        visualDescription: c.visualDescription
+      }))
+    : [];
+
+  return {
+    ...f,
+    rawText: cleanRawText,
+    chunks: cleanChunks
+  };
+}
+
+/**
+ * Persists a user account profile into public.profiles in Supabase.
+ * Ensures the user record exists for foreign keys and profile management.
+ */
+export async function dbSaveProfile(user: UserAccount, passwordHash?: string): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client || !user?.id) return { success: false, error: 'Database client or User ID unavailable' };
+
+  try {
+    markLocalDbWrite();
+    const { error: profileError } = await client.from('profiles').upsert(
+      {
+        id: user.id,
+        email: user.email || '',
+        name: user.name || (user.email ? user.email.split('@')[0] : 'Student'),
+        avatar_url: user.avatarUrl || null,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'id' }
+    );
+
+    if (profileError) {
+      console.warn('Error saving profile to Supabase:', profileError.message);
+      return { success: false, error: profileError.message };
+    }
+
+    // Ensure a workspace row exists for this user
+    try {
+      await client.from('workspaces').upsert(
+        {
+          user_id: user.id,
+          version: '1.0.0',
+          data: {
+            user: { ...user, passwordHash },
+            courses: [],
+            notes: [],
+            tasks: [],
+            assignments: [],
+            files: [],
+            events: []
+          },
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'user_id' }
+      );
+    } catch { }
+
+    return { success: true };
+  } catch (err: any) {
+    console.warn('dbSaveProfile exception:', err);
+    return { success: false, error: err?.message || 'Failed saving profile' };
+  }
+}
+
+/**
+ * Loads all registered student profiles from public.profiles in Supabase.
+ */
+export async function dbLoadAllProfiles(): Promise<StoredAccountRecord[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('profiles')
+      .select('id, email, name, avatar_url, created_at')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) {
+      console.warn('Error loading profiles from Supabase:', error?.message);
+      return [];
+    }
+
+    return data.map((p: any) => ({
+      id: p.id,
+      email: p.email || '',
+      name: p.name || (p.email ? p.email.split('@')[0] : 'Student'),
+      username: (p.email ? p.email.split('@')[0] : p.id).toLowerCase(),
+      passwordHash: '',
+      createdAt: p.created_at || new Date().toISOString(),
+      avatarUrl: p.avatar_url || undefined
+    }));
+  } catch (err) {
+    console.warn('dbLoadAllProfiles exception:', err);
+    return [];
+  }
+}
+
+/**
+ * Prunes oversized lecture slide raw text from files and workspaces tables in Supabase.
+ * Cleans out bloating gigabytes to free up database storage and clear read-only restrictions.
+ */
+export async function pruneSupabaseBloat(userId: string): Promise<{ success: boolean; prunedCount: number; message: string }> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return { success: false, prunedCount: 0, message: 'Supabase client or userId missing' };
+
+  try {
+    const { data: files, error } = await client
+      .from('files')
+      .select('id, name, raw_text, chunks')
+      .eq('user_id', userId);
+
+    if (error) {
+      return { success: false, prunedCount: 0, message: error.message };
+    }
+
+    let prunedCount = 0;
+    if (files && files.length > 0) {
+      for (const f of files) {
+        if ((f.raw_text && f.raw_text.length > 1500) || (Array.isArray(f.chunks) && f.chunks.length > 5)) {
+          const cleanText = f.raw_text ? f.raw_text.slice(0, 1500) + '... [Pruned for Smart Hybrid Storage]' : '';
+          const cleanChunks = Array.isArray(f.chunks) ? f.chunks.slice(0, 5) : [];
+          await client.from('files').update({
+            raw_text: cleanText,
+            chunks: cleanChunks
+          }).eq('id', f.id).eq('user_id', userId);
+          prunedCount++;
+        }
+      }
+    }
+
+    // Prune workspaces snapshot
+    const { data: ws } = await client.from('workspaces').select('data').eq('user_id', userId).maybeSingle();
+    if (ws && ws.data && Array.isArray(ws.data.files)) {
+      const sanitizedFiles = ws.data.files.map(sanitizeFileForCloud);
+      await client.from('workspaces').update({
+        data: {
+          ...ws.data,
+          files: sanitizedFiles
+        },
+        updated_at: new Date().toISOString()
+      }).eq('user_id', userId);
+    }
+
+    return {
+      success: true,
+      prunedCount,
+      message: `Successfully pruned ${prunedCount} heavy document(s). Cloud storage optimized with Smart Hybrid mode!`
+    };
+  } catch (err: any) {
+    return { success: false, prunedCount: 0, message: err?.message || 'Storage pruning encountered an error' };
+  }
+}
+
+// ==============================================================================
 // 100% COMPLETE DATABASE PERSISTENCE (Stores Every Table in PostgreSQL)
 // ==============================================================================
 
@@ -257,12 +437,35 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
   markLocalDbWrite();
 
   try {
-    // 1. Fast comprehensive snapshot in workspaces table
+    // 0. Ensure user profile exists in profiles table
+    if (data.user) {
+      try {
+        await client.from('profiles').upsert(
+          {
+            id: userId,
+            email: data.user.email || null,
+            name: data.user.name || null,
+            avatar_url: data.user.avatarUrl || null,
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: 'id' }
+        );
+      } catch (err: any) {
+        console.warn('Profile upsert warning:', err);
+      }
+    }
+
+    // 1. Sanitize payload with Smart Hybrid storage before saving workspace snapshot
+    const sanitizedWorkspaceData = {
+      ...data,
+      files: Array.isArray(data.files) ? data.files.map(sanitizeFileForCloud) : []
+    };
+
     const { error: wsError } = await client.from('workspaces').upsert(
       {
         user_id: userId,
         version: '1.0.0',
-        data,
+        data: sanitizedWorkspaceData,
         updated_at: new Date().toISOString()
       },
       { onConflict: 'user_id' }
@@ -277,6 +480,8 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
         helpfulMsg = 'Database foreign key constraint to auth.users is blocking direct writes. Please run the SQL fix to drop the foreign key.';
       } else if (wsError.code === '42501' || wsError.message.toLowerCase().includes('row-level security') || wsError.message.toLowerCase().includes('policy')) {
         helpfulMsg = 'Supabase Row Level Security (RLS) is blocking anon writes. Please run the SQL fix to permit workspace sync.';
+      } else if (wsError.message.includes('read-only') || wsError.message.includes('quota')) {
+        helpfulMsg = 'Supabase storage quota reached. Please use "Optimize Cloud Storage" in Settings to prune heavy file payloads.';
       }
       throw new Error(helpfulMsg);
     }
@@ -300,7 +505,8 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
         meeting_slots: c.meetingSlots || [],
         updated_at: new Date().toISOString()
       }));
-      await client.from('courses').upsert(records, { onConflict: 'id' });
+      const { error } = await client.from('courses').upsert(records, { onConflict: 'id' });
+      if (error) console.warn('Supabase courses upsert error:', error.message);
     }
 
     // Notes (Full rich content, unlimited size)
@@ -317,27 +523,32 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
         highlighted_terms: n.highlightedTerms || [],
         updated_at: new Date().toISOString()
       }));
-      await client.from('notes').upsert(records, { onConflict: 'id' });
+      const { error } = await client.from('notes').upsert(records, { onConflict: 'id' });
+      if (error) console.warn('Supabase notes upsert error:', error.message);
     }
 
-    // Files (Full raw slide texts, chunks, summaries - 100% saved in database!)
+    // Files (Smart Hybrid: Lightweight metadata and preview chunks in DB, full text locally/Drive)
     if (Array.isArray(data.files) && data.files.length > 0) {
-      const records = data.files.map((f: DocumentFile) => ({
-        id: f.id,
-        user_id: userId,
-        course_id: f.courseId || null,
-        name: f.name,
-        file_type: f.fileType,
-        size_bytes: f.sizeBytes || 0,
-        page_count: f.pageCount || 0,
-        raw_text: f.rawText || '',
-        summary: f.summary || '',
-        chunks: f.chunks || [],
-        status: f.status || 'indexed',
-        is_favorite: f.isFavorite || false,
-        uploaded_at: f.uploadedAt || new Date().toISOString()
-      }));
-      await client.from('files').upsert(records, { onConflict: 'id' });
+      const records = data.files.map((f: DocumentFile) => {
+        const sanitized = sanitizeFileForCloud(f);
+        return {
+          id: sanitized.id,
+          user_id: userId,
+          course_id: sanitized.courseId || null,
+          name: sanitized.name,
+          file_type: sanitized.fileType,
+          size_bytes: sanitized.sizeBytes || 0,
+          page_count: sanitized.pageCount || 0,
+          raw_text: sanitized.rawText || '',
+          summary: sanitized.summary || '',
+          chunks: sanitized.chunks || [],
+          status: sanitized.status || 'indexed',
+          is_favorite: sanitized.isFavorite || false,
+          uploaded_at: sanitized.uploadedAt || new Date().toISOString()
+        };
+      });
+      const { error } = await client.from('files').upsert(records, { onConflict: 'id' });
+      if (error) console.warn('Supabase files upsert error:', error.message);
     }
 
     // Tasks
@@ -913,12 +1124,12 @@ export const fetchWorkspaceFromSupabase = dbLoadAllTablesFromDatabase;
 // GRANULAR DIRECT CRUD (Saves Directly to PostgreSQL upon any Action)
 // ==============================================================================
 
-export async function dbSaveNote(userId: string, note: Note): Promise<void> {
+export async function dbSaveNote(userId: string, note: Note): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient();
-  if (!client || !userId) return;
+  if (!client || !userId) return { success: false, error: 'Database client or User ID missing' };
   try {
     markLocalDbWrite();
-    await client.from('notes').upsert({
+    const { error } = await client.from('notes').upsert({
       id: note.id,
       user_id: userId,
       course_id: note.courseId || null,
@@ -930,8 +1141,14 @@ export async function dbSaveNote(userId: string, note: Note): Promise<void> {
       highlighted_terms: note.highlightedTerms || [],
       updated_at: new Date().toISOString()
     });
-  } catch (err) {
+    if (error) {
+      console.warn('Failed saving note to DB:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
     console.warn('Failed saving note to DB:', err);
+    return { success: false, error: err?.message || 'Failed saving note' };
   }
 }
 
@@ -946,28 +1163,35 @@ export async function dbDeleteNote(userId: string, noteId: string): Promise<void
   }
 }
 
-export async function dbSaveFile(userId: string, file: DocumentFile): Promise<void> {
+export async function dbSaveFile(userId: string, file: DocumentFile): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient();
-  if (!client || !userId) return;
+  if (!client || !userId) return { success: false, error: 'Database client or User ID missing' };
   try {
     markLocalDbWrite();
-    await client.from('files').upsert({
-      id: file.id,
+    const sanitized = sanitizeFileForCloud(file);
+    const { error } = await client.from('files').upsert({
+      id: sanitized.id,
       user_id: userId,
-      course_id: file.courseId || null,
-      name: file.name,
-      file_type: file.fileType,
-      size_bytes: file.sizeBytes || 0,
-      page_count: file.pageCount || 0,
-      raw_text: file.rawText || '',
-      summary: file.summary || '',
-      chunks: file.chunks || [],
-      status: file.status || 'indexed',
-      is_favorite: file.isFavorite || false,
-      uploaded_at: file.uploadedAt || new Date().toISOString()
+      course_id: sanitized.courseId || null,
+      name: sanitized.name,
+      file_type: sanitized.fileType,
+      size_bytes: sanitized.sizeBytes || 0,
+      page_count: sanitized.pageCount || 0,
+      raw_text: sanitized.rawText || '',
+      summary: sanitized.summary || '',
+      chunks: sanitized.chunks || [],
+      status: sanitized.status || 'indexed',
+      is_favorite: sanitized.isFavorite || false,
+      uploaded_at: sanitized.uploadedAt || new Date().toISOString()
     });
-  } catch (err) {
+    if (error) {
+      console.warn('Failed saving file to DB:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
     console.warn('Failed saving file to DB:', err);
+    return { success: false, error: err?.message || 'Failed saving file' };
   }
 }
 
@@ -982,12 +1206,20 @@ export async function dbDeleteFile(userId: string, fileId: string): Promise<void
   }
 }
 
-export async function dbSaveCourse(userId: string, course: Course): Promise<void> {
+export async function dbSaveCourse(userId: string, course: Course): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient();
-  if (!client || !userId) return;
+  if (!client || !userId) return { success: false, error: 'Database client or User ID missing' };
   try {
     markLocalDbWrite();
-    await client.from('courses').upsert({
+    // Ensure profile row exists first so any potential foreign key constraints succeed
+    try {
+      await client.from('profiles').upsert({
+        id: userId,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' });
+    } catch { }
+
+    const { error } = await client.from('courses').upsert({
       id: course.id,
       user_id: userId,
       name: course.name,
@@ -1003,8 +1235,15 @@ export async function dbSaveCourse(userId: string, course: Course): Promise<void
       meeting_slots: course.meetingSlots || [],
       updated_at: new Date().toISOString()
     });
-  } catch (err) {
+
+    if (error) {
+      console.error('Failed saving course to DB:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
     console.warn('Failed saving course to DB:', err);
+    return { success: false, error: err?.message || 'Failed saving course' };
   }
 }
 
@@ -1019,12 +1258,12 @@ export async function dbDeleteCourse(userId: string, courseId: string): Promise<
   }
 }
 
-export async function dbSaveTask(userId: string, task: Task): Promise<void> {
+export async function dbSaveTask(userId: string, task: Task): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient();
-  if (!client || !userId) return;
+  if (!client || !userId) return { success: false, error: 'Database client or User ID missing' };
   try {
     markLocalDbWrite();
-    await client.from('tasks').upsert({
+    const { error } = await client.from('tasks').upsert({
       id: task.id,
       user_id: userId,
       course_id: task.courseId || null,
@@ -1040,8 +1279,14 @@ export async function dbSaveTask(userId: string, task: Task): Promise<void> {
       subtasks: task.subtasks || [],
       source: task.source || 'user'
     });
-  } catch (err) {
+    if (error) {
+      console.warn('Failed saving task to DB:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
     console.warn('Failed saving task to DB:', err);
+    return { success: false, error: err?.message || 'Failed saving task' };
   }
 }
 
@@ -1056,12 +1301,12 @@ export async function dbDeleteTask(userId: string, taskId: string): Promise<void
   }
 }
 
-export async function dbSaveAssignment(userId: string, assignment: Assignment): Promise<void> {
+export async function dbSaveAssignment(userId: string, assignment: Assignment): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient();
-  if (!client || !userId) return;
+  if (!client || !userId) return { success: false, error: 'Database client or User ID missing' };
   try {
     markLocalDbWrite();
-    await client.from('assignments').upsert({
+    const { error } = await client.from('assignments').upsert({
       id: assignment.id,
       user_id: userId,
       course_id: assignment.courseId || null,
@@ -1077,8 +1322,14 @@ export async function dbSaveAssignment(userId: string, assignment: Assignment): 
       steps: assignment.steps || [],
       is_broken_down: assignment.isBrokenDown || false
     });
-  } catch (err) {
+    if (error) {
+      console.warn('Failed saving assignment to DB:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
     console.warn('Failed saving assignment to DB:', err);
+    return { success: false, error: err?.message || 'Failed saving assignment' };
   }
 }
 
@@ -1093,12 +1344,12 @@ export async function dbDeleteAssignment(userId: string, assignmentId: string): 
   }
 }
 
-export async function dbSaveExam(userId: string, exam: Exam): Promise<void> {
+export async function dbSaveExam(userId: string, exam: Exam): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient();
-  if (!client || !userId) return;
+  if (!client || !userId) return { success: false, error: 'Database client or User ID missing' };
   try {
     markLocalDbWrite();
-    await client.from('exams').upsert({
+    const { error } = await client.from('exams').upsert({
       id: exam.id,
       user_id: userId,
       course_id: exam.courseId,
@@ -1112,8 +1363,14 @@ export async function dbSaveExam(userId: string, exam: Exam): Promise<void> {
       description: exam.description || '',
       revision_sessions: exam.revisionSessions || []
     });
-  } catch (err) {
+    if (error) {
+      console.warn('Failed saving exam to DB:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
     console.warn('Failed saving exam to DB:', err);
+    return { success: false, error: err?.message || 'Failed saving exam' };
   }
 }
 

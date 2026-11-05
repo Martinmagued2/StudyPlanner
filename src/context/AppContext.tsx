@@ -34,7 +34,8 @@ import {
   ChatSession,
   MeetingSlot,
   AcademicMode,
-  AcademicCalendarConfig
+  AcademicCalendarConfig,
+  StoredAccountRecord
 } from '../types';
 import { uploadToCloud, fetchFromCloud, CloudWorkspacePayload } from '../services/cloudSync';
 import {
@@ -46,6 +47,9 @@ import {
   subscribeToWorkspaceRealtime,
   markLocalDbWrite,
   isRecentLocalDbWrite,
+  dbSaveProfile,
+  dbLoadAllProfiles,
+  pruneSupabaseBloat,
   dbSaveNote,
   dbDeleteNote,
   dbSaveFile,
@@ -107,7 +111,7 @@ import {
   initialReminderLogs
 } from '../data/mockData';
 
-export type ActiveView = 
+export type ActiveView =
   | 'today'
   | 'courses'
   | 'course-detail'
@@ -132,6 +136,10 @@ export type ActiveView =
 interface AppContextType {
   // User & Auth
   user: UserAccount | null;
+  registeredAccounts: StoredAccountRecord[];
+  switchAccount: (userId: string) => Promise<boolean>;
+  deleteAccount: (userId: string) => void;
+  pruneCloudStorage: () => Promise<{ success: boolean; message: string }>;
   login: (email: string, name?: string) => void;
   registerAccount: (name: string, email: string, password: string, username?: string) => Promise<{ success: boolean; error?: string }>;
   authenticateUser: (emailOrUsername: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -567,7 +575,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const next = { ...prev, ...updates };
       try {
         localStorage.setItem(`${storageKey}_academic_config`, JSON.stringify(next));
-      } catch {}
+      } catch { }
       return next;
     });
   }, [storageKey]);
@@ -630,12 +638,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       // 4. Check University Holidays
       const holiday = (academicConfig.holidays || []).find(h => {
-        const start = h.date || h.startDate || '';
-        const end = h.endDate || start;
-        return Boolean(start) && dateStr >= start && dateStr <= end;
+        if (!h.date) return false;
+        const end = h.endDate || h.date;
+        return dateStr >= h.date && dateStr <= end;
       });
       if (holiday) {
-        return { suspended: true, reason: `University Holiday: ${holiday.name || holiday.title || 'Holiday'}` };
+        return { suspended: true, reason: `University Holiday: ${holiday.name}` };
       }
       // 5. Check individual Cancelled Classes
       if (courseId) {
@@ -888,7 +896,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         timestamp: new Date().toISOString()
       };
       setFocusSessions(prev => [newSession, ...prev]);
-      
+
       // If linked task, prompt or mark complete
       if (focusState.linkedTaskId) {
         toggleTaskComplete(focusState.linkedTaskId);
@@ -931,7 +939,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
       }
-    } catch {}
+    } catch { }
     // Fallback deterministic hash if SubtleCrypto is unavailable
     let h = 2166136261;
     const str = `nook_salt_v1_${clean}`;
@@ -941,15 +949,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return `fnv_${(h >>> 0).toString(16)}`;
   };
-
-  interface StoredAccountRecord {
-    id: string;
-    name: string;
-    email: string;
-    username: string;
-    passwordHash: string;
-    createdAt: string;
-  }
 
   const getRegisteredAccounts = (): StoredAccountRecord[] => {
     try {
@@ -963,8 +962,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const saveRegisteredAccounts = (accounts: StoredAccountRecord[]) => {
     try {
       localStorage.setItem('nook_registered_accounts', JSON.stringify(accounts));
-    } catch {}
+    } catch { }
   };
+
+  const [registeredAccounts, setRegisteredAccounts] = useState<StoredAccountRecord[]>(() => getRegisteredAccounts());
+
+  // Background fetch of all profiles from Supabase to merge any cross-device registrations
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      dbLoadAllProfiles()
+        .then(remoteProfiles => {
+          if (remoteProfiles && remoteProfiles.length > 0) {
+            setRegisteredAccounts(prev => {
+              const map = new Map<string, StoredAccountRecord>();
+              prev.forEach(a => map.set(a.id, a));
+              remoteProfiles.forEach(rp => {
+                if (!map.has(rp.id)) {
+                  map.set(rp.id, rp);
+                } else {
+                  const existing = map.get(rp.id)!;
+                  map.set(rp.id, {
+                    ...existing,
+                    name: rp.name || existing.name,
+                    avatarUrl: rp.avatarUrl || existing.avatarUrl
+                  });
+                }
+              });
+              const merged = Array.from(map.values());
+              saveRegisteredAccounts(merged);
+              return merged;
+            });
+          }
+        })
+        .catch(err => console.warn('Supabase profile sync warning:', err));
+    }
+  }, []);
 
   // Strictly load only the target user's isolated workspace data and clear any previous user's state from memory
   const hydrateUserIsolatedWorkspace = (userId: string, isBrandNewRegistration: boolean = false) => {
@@ -1125,7 +1157,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             error: 'An account with this email is already registered in the cloud database. Please sign in.'
           };
         }
-      } catch {}
+      } catch { }
     }
 
     const newRecord: StoredAccountRecord = {
@@ -1136,7 +1168,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       passwordHash,
       createdAt: new Date().toISOString()
     };
-    saveRegisteredAccounts([...accounts, newRecord]);
+    const updatedAccounts = [...accounts, newRecord];
+    saveRegisteredAccounts(updatedAccounts);
+    setRegisteredAccounts(updatedAccounts);
 
     const newUser: UserAccount = {
       id: userId,
@@ -1145,11 +1179,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       email: cleanEmail,
       avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
       isDemo: false,
-      createdAt: newRecord.createdAt
+      createdAt: newRecord.createdAt,
+      passwordHash
     };
-
-    // Also store passwordHash on user object for cloud snapshot credential verification across devices
-    (newUser as any).passwordHash = passwordHash;
 
     // Clear any stale local keys for this userId before initializing fresh workspace
     const userStorageKey = `nook_workspace_${userId}`;
@@ -1162,12 +1194,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
 
+    // Initialize user's isolated local workspace storage
+    localStorage.setItem(`${userStorageKey}_courses`, JSON.stringify([]));
+    localStorage.setItem(`${userStorageKey}_notes`, JSON.stringify([]));
+    localStorage.setItem(`${userStorageKey}_tasks`, JSON.stringify([]));
+    localStorage.setItem(`${userStorageKey}_assignments`, JSON.stringify([]));
+    localStorage.setItem(`${userStorageKey}_events`, JSON.stringify([]));
+    localStorage.setItem(`${userStorageKey}_files`, JSON.stringify([]));
+
     hydrateUserIsolatedWorkspace(userId, true);
     setUser(newUser);
     localStorage.setItem('nook_current_user', JSON.stringify(newUser));
 
+    // Save profile to Supabase public.profiles and workspaces so it immediately appears in the database!
     if (isSupabaseConfigured()) {
-      supabaseSignUp(cleanEmail, password, cleanName).catch(() => {});
+      dbSaveProfile(newUser, passwordHash).catch(err => console.warn('Cloud profile registration error:', err));
+      supabaseSignUp(cleanEmail, password, cleanName).catch(() => { });
     }
 
     return { success: true };
@@ -1252,7 +1294,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
           return { success: true };
         }
-      } catch {}
+      } catch { }
     }
 
     // Check if legacy local workspace exists for this email on this browser
@@ -1352,15 +1394,101 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('nook_current_user', JSON.stringify(freshUser));
   };
 
+  const switchAccount = async (targetUserId: string): Promise<boolean> => {
+    if (targetUserId === 'demo') {
+      loginDemo();
+      return true;
+    }
+
+    const accounts = getRegisteredAccounts();
+    const target = accounts.find(a => a.id === targetUserId);
+    if (!target) return false;
+
+    const targetUser: UserAccount = {
+      id: target.id,
+      name: target.name,
+      username: target.username,
+      email: target.email,
+      avatarUrl: target.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+      isDemo: false,
+      createdAt: target.createdAt,
+      passwordHash: target.passwordHash
+    };
+
+    hydrateUserIsolatedWorkspace(target.id, false);
+    setUser(targetUser);
+    localStorage.setItem('nook_current_user', JSON.stringify(targetUser));
+
+    if (isSupabaseConfigured()) {
+      dbLoadAllTablesFromDatabase(target.id)
+        .then(dbData => {
+          if (!dbData) return;
+          isApplyingRemoteRef.current = true;
+          if (Array.isArray(dbData.courses)) setCourses(dbData.courses);
+          if (Array.isArray(dbData.assignments)) setAssignments(dbData.assignments);
+          if (Array.isArray(dbData.tasks)) setTasks(dbData.tasks);
+          if (Array.isArray(dbData.notes)) setNotes(dbData.notes);
+          if (Array.isArray(dbData.events)) setEvents(dbData.events);
+          if (Array.isArray(dbData.inboxItems)) setInboxItems(dbData.inboxItems);
+          if (Array.isArray(dbData.files)) setFiles(dbData.files);
+          if (Array.isArray(dbData.exams)) setExams(dbData.exams);
+          if (Array.isArray(dbData.flashcards)) setFlashcards(dbData.flashcards);
+          if (Array.isArray(dbData.gradeItems)) setGradeItems(dbData.gradeItems);
+          setTimeout(() => {
+            isApplyingRemoteRef.current = false;
+          }, 300);
+        })
+        .catch(err => console.warn('Supabase DB fetch on switchAccount error:', err));
+    }
+    return true;
+  };
+
+  const deleteAccount = (userId: string) => {
+    const updated = registeredAccounts.filter(a => a.id !== userId);
+    setRegisteredAccounts(updated);
+    saveRegisteredAccounts(updated);
+    const userStorageKey = `nook_workspace_${userId}`;
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(userStorageKey)) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+
+    if (user?.id === userId) {
+      loginDemo();
+    }
+  };
+
+  const pruneCloudStorage = async (): Promise<{ success: boolean; message: string }> => {
+    if (!user || !isSupabaseConfigured()) {
+      return { success: false, message: 'Cloud database is not configured.' };
+    }
+    const res = await pruneSupabaseBloat(user.id);
+    return { success: res.success, message: res.message };
+  };
+
   // CRUD Implementations (Using guaranteed unique IDs)
   const addCourse = (courseData: Omit<Course, 'id'>) => {
     const newCourse: Course = {
       ...courseData,
       id: generateUniqueId('course')
     };
-    setCourses(prev => [...prev, newCourse]);
+    setCourses(prev => {
+      const next = [...prev, newCourse];
+      saveStored('courses', next);
+      return next;
+    });
     if (user && isSupabaseConfigured()) {
-      dbSaveCourse(user.id, newCourse).catch(err => console.warn('DB course save:', err));
+      dbSaveCourse(user.id, newCourse)
+        .then(res => {
+          if (res && !res.success) {
+            console.warn('DB course save returned error:', res.error);
+          }
+        })
+        .catch(err => console.warn('DB course save exception:', err));
     }
     return newCourse;
   };
@@ -1368,6 +1496,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateCourse = (id: string, updates: Partial<Course>) => {
     setCourses(prev => {
       const updated = prev.map(c => c.id === id ? { ...c, ...updates } : c);
+      saveStored('courses', updated);
       const target = updated.find(c => c.id === id);
       if (target && user && isSupabaseConfigured()) {
         dbSaveCourse(user.id, target).catch(err => console.warn('DB course update:', err));
@@ -1379,6 +1508,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const archiveCourse = (id: string, archive: boolean) => {
     setCourses(prev => {
       const updated = prev.map(c => c.id === id ? { ...c, isArchived: archive } : c);
+      saveStored('courses', updated);
       const target = updated.find(c => c.id === id);
       if (target && user && isSupabaseConfigured()) {
         dbSaveCourse(user.id, target).catch(err => console.warn('DB course archive:', err));
@@ -1388,7 +1518,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteCourse = (id: string) => {
-    setCourses(prev => prev.filter(c => c.id !== id));
+    setCourses(prev => {
+      const updated = prev.filter(c => c.id !== id);
+      saveStored('courses', updated);
+      return updated;
+    });
     if (user && isSupabaseConfigured()) {
       dbDeleteCourse(user.id, id).catch(err => console.warn('DB course delete:', err));
     }
@@ -1442,7 +1576,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const generatedSteps = verbs.map((verb, idx) => {
       const stepId = `step_${asgId}_${idx + 1}`;
       const taskId = `task_${asgId}_${idx + 1}`;
-      
+
       // Also generate real Task
       const newTask: Task = {
         id: taskId,
@@ -1710,7 +1844,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Files
   const addFile = (fileData: Omit<DocumentFile, 'id' | 'uploadedAt' | 'chunks'>, sampleContent?: string) => {
     const fullText = fileData.rawText || sampleContent || `Introduction and overview of ${fileData.name}. Core concepts, algorithmic formulations, and analytical breakdown.`;
-    
+
     // Check if the text contains structured slide or page delimiters (e.g. === Slide 1 === or === Page 1 ===)
     const delimiterRegex = /===\s*(?:Slide|Page)\s*(\d+)\s*===\s*([\s\S]*?)(?=(?:===\s*(?:Slide|Page)\s*\d+\s*===|$))/gi;
     const delimiterMatches = Array.from(fullText.matchAll(delimiterRegex));
@@ -1906,7 +2040,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createFlashcardsFromQuizErrors = (quizTitle: string, errors: { question: string; answer: string; courseId?: string }[]) => {
     if (errors.length === 0) return;
     const targetDeck = flashcardDecks.find(d => d.courseId === errors[0].courseId) || flashcardDecks[0];
-    
+
     errors.forEach((err, idx) => {
       addFlashcard({
         deckId: targetDeck ? targetDeck.id : 'deck_cs302',
@@ -1942,7 +2076,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const userAns = (userAnswers[q.id] || '').trim().toLowerCase();
       const correctAns = q.correctAnswer.trim().toLowerCase();
       const isCorrect = userAns === correctAns || (q.type === 'short' && (userAns.includes(correctAns) || correctAns.includes(userAns)));
-      
+
       if (isCorrect) {
         correctCount++;
       } else {
@@ -2573,7 +2707,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Occupied intervals in minutes [startMin, endMin] to strictly prevent overlapping activities
     const occupiedIntervals: Array<{ start: number; end: number; label: string }> = [];
     const isIntervalFree = (start: number, end: number): boolean => {
-      return !occupiedIntervals.some( iv => start < iv.end && end > iv.start );
+      return !occupiedIntervals.some(iv => start < iv.end && end > iv.start);
     };
     const reserveInterval = (start: number, end: number, label: string) => {
       occupiedIntervals.push({ start, end, label });
@@ -2786,10 +2920,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           diffDays < 0
             ? `Overdue (${Math.abs(diffDays)}d ago)`
             : diffDays === 0
-            ? 'Due Today'
-            : diffDays === 1
-            ? 'Due Tomorrow'
-            : `Due in ${diffDays} days`;
+              ? 'Due Today'
+              : diffDays === 1
+                ? 'Due Tomorrow'
+                : `Due in ${diffDays} days`;
 
         if (diffDays <= 7) {
           deadlinesConsidered.push(`Assignment: "${asg.title}" (${dueLabel})`);
@@ -3167,10 +3301,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         fallbackReason: adaptSummary,
         explanation: prev.explanation
           ? {
-              ...prev.explanation,
-              summary: adaptSummary,
-              postponedItems: Array.from(new Set(newlyPostponed))
-            }
+            ...prev.explanation,
+            summary: adaptSummary,
+            postponedItems: Array.from(new Set(newlyPostponed))
+          }
           : undefined,
         blocks: rescheduled
       };
@@ -3316,16 +3450,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateAiMemory = useCallback(
     (id: string, updates: Partial<AiMemory>) => {
       setAiMemories(prev => {
-        const next: AiMemory[] = prev.map(m => {
+        const next = prev.map(m => {
           if (m.id !== id) return m;
-          const updatedContent = updates.content ?? updates.fact ?? m.content ?? m.fact ?? '';
-          return {
+          const updatedContent: string = String(updates.content ?? updates.fact ?? m.content ?? m.fact ?? '');
+          const updatedMemory: AiMemory = {
             ...m,
             ...updates,
             content: updatedContent,
             fact: updatedContent,
             updatedAt: new Date().toISOString()
           };
+          return updatedMemory;
         });
         const target = next.find(m => m.id === id);
         if (target && user && isSupabaseConfigured()) {
@@ -3418,9 +3553,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const activeMemoryStrings: string[] = [
       ...newlySavedMemories.map(m => m.content || m.fact || ''),
       ...aiMemories.map(m => m.content || m.fact || '')
-    ]
-      .filter((s): s is string => Boolean(s))
-      .slice(0, 6);
+    ].filter((s): s is string => Boolean(s)).slice(0, 6);
 
     const currentSession = chatSessions.find(s => s.id === activeChatSessionId);
     if (currentSession && (currentSession.title === 'New Chat' || currentSession.title === 'Study Assistant')) {
@@ -3455,11 +3588,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ? `\n\nUSER SAVED PREFERENCES & AI MEMORY (Strictly respect these and never invent preferences not listed here):\n${activeMemoryStrings.map(m => `- ${m}`).join('\n')}`
             : '\n\nUSER SAVED PREFERENCES: None saved yet. Do not assume or hallucinate unstated preferences.';
 
-        const modeContextBlock = `\nCURRENT ACADEMIC MODE: ${activeAcademicMode.toUpperCase()} MODE (${
-          activeAcademicMode === 'normal'
-            ? 'Regular weekly classes active'
-            : 'Regular weekly lectures are SUSPENDED; only examinations and revision take place'
-        }).`;
+        const modeContextBlock = `\nCURRENT ACADEMIC MODE: ${activeAcademicMode.toUpperCase()} MODE (${activeAcademicMode === 'normal'
+          ? 'Regular weekly classes active'
+          : 'Regular weekly lectures are SUSPENDED; only examinations and revision take place'
+          }).`;
 
         const academicPrompt =
           buildGeminiAcademicPrompt(scheduleCtx, courses, text) + memoryContextBlock + modeContextBlock;
@@ -3547,17 +3679,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lower.includes('study plan')
       ) {
         regenerateDailyPlan();
-        replyContent = `I have regenerated your **Intelligent Daily Plan** for today in **${
-          activeAcademicMode === 'normal'
-            ? 'Normal Semester Mode'
-            : activeAcademicMode === 'midterm'
+        replyContent = `I have regenerated your **Intelligent Daily Plan** for today in **${activeAcademicMode === 'normal'
+          ? 'Normal Semester Mode'
+          : activeAcademicMode === 'midterm'
             ? 'Midterm Exam Mode (Regular Classes Suspended)'
             : 'Final Exam Mode (Regular Classes Suspended)'
-        }**.\n\n${
-          activeMemoryStrings.length > 0
+          }**.\n\n${activeMemoryStrings.length > 0
             ? `✨ *Personalized using your preferences: ${activeMemoryStrings.slice(0, 2).join(' • ')}*\n\n`
             : ''
-        }Open the **Today** dashboard to view the full non-overlapping timeline, prioritization breakdown, and adaptive controls.`;
+          }Open the **Today** dashboard to view the full non-overlapping timeline, prioritization breakdown, and adaptive controls.`;
       } else if (
         lower.includes('how to use') ||
         lower.includes('how do i use') ||
@@ -3669,14 +3799,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : '';
         replyContent =
           memoryAck +
-          `I've analyzed your workspace (${
-            activeAcademicMode === 'normal'
-              ? 'Normal Semester Mode'
-              : activeAcademicMode === 'midterm'
+          `I've analyzed your workspace (${activeAcademicMode === 'normal'
+            ? 'Normal Semester Mode'
+            : activeAcademicMode === 'midterm'
               ? 'Midterm Exam Mode'
               : 'Final Exam Mode'
-          }): you have **${courses.length}** active course(s), **${
-            tasks.filter(t => !t.completed).length
+          }): you have **${courses.length}** active course(s), **${tasks.filter(t => !t.completed).length
           }** open task(s), and **${exams.length}** scheduled exam(s).\n\nHow would you like me to help with your study plan, notes, or coursework today?`;
       }
 
@@ -4351,7 +4479,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setter(prev => {
         try {
           if (JSON.stringify(prev) === JSON.stringify(incoming)) return prev;
-        } catch {}
+        } catch { }
         return incoming;
       });
     };
@@ -4498,6 +4626,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     <AppContext.Provider
       value={{
         user,
+        registeredAccounts,
+        switchAccount,
+        deleteAccount,
+        pruneCloudStorage,
         login,
         registerAccount,
         authenticateUser,

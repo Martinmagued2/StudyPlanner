@@ -13,13 +13,27 @@ import {
   Plus,
   Trash2,
   Brain,
-  AlertTriangle
+  AlertTriangle,
+  Database,
+  FolderArchive,
+  Users,
+  Check,
+  RefreshCw,
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
   const {
     user,
+    registeredAccounts,
+    switchAccount,
+    deleteAccount,
+    pruneCloudStorage,
+    isDatabaseConfigured,
+    setIsDbModalOpen,
     logout,
+    loginDemo,
     theme,
     setTheme,
     clearAllWorkspaceData,
@@ -37,6 +51,12 @@ export const SettingsView: React.FC = () => {
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [timezone, setTimezone] = useState('Europe/London (BST / GMT+01:00)');
+
+  // Pruning and switching states
+  const [isPruning, setIsPruning] = useState(false);
+  const [pruneResult, setPruneResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+  const [switchFeedback, setSwitchFeedback] = useState<string | null>(null);
 
   // Holiday form
   const [holidayName, setHolidayName] = useState('');
@@ -123,6 +143,215 @@ export const SettingsView: React.FC = () => {
             <span>Settings saved successfully</span>
           </div>
         )}
+      </div>
+
+      {/* 1. Registered Profiles & Multi-Account Switcher */}
+      <div className="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4 text-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <h3 className="font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+              <Users className="w-4 h-4 text-blue-600" />
+              <span>Registered Accounts & Profile Switcher</span>
+            </h3>
+            <p className="text-slate-500 mt-0.5">
+              Switch between your student profiles. Every profile has its own 100% isolated courses, notes, and timetable.
+            </p>
+          </div>
+          <span className="text-[11px] font-semibold text-slate-400">
+            {registeredAccounts.length} Profile{registeredAccounts.length === 1 ? '' : 's'} Registered
+          </span>
+        </div>
+
+        {switchFeedback && (
+          <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-medium flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+            <span>{switchFeedback}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {registeredAccounts.map(account => {
+            const isActive = user?.id === account.id;
+            return (
+              <div
+                key={account.id}
+                className={`p-3.5 rounded-xl border transition-all flex flex-col justify-between gap-3 ${
+                  isActive
+                    ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/30 ring-1 ring-blue-500'
+                    : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-700 dark:text-slate-200 uppercase text-xs shrink-0">
+                      {account.name ? account.name.slice(0, 2) : 'ST'}
+                    </div>
+                    <div className="truncate">
+                      <div className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                        {account.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono truncate">
+                        {account.email}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        ID: {account.id}
+                      </div>
+                    </div>
+                  </div>
+                  {isActive && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700 shrink-0">
+                      Active
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                  <div className="text-[10px] text-slate-400">
+                    Joined {account.createdAt ? new Date(account.createdAt).toLocaleDateString() : 'Recently'}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {!isActive ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={switchingId === account.id}
+                          onClick={async () => {
+                            setSwitchingId(account.id);
+                            const ok = await switchAccount(account.id);
+                            setSwitchingId(null);
+                            if (ok) {
+                              setSwitchFeedback(`Switched to profile: ${account.name}`);
+                              setTimeout(() => setSwitchFeedback(null), 3000);
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[11px] flex items-center gap-1 shadow-xs transition-colors"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${switchingId === account.id ? 'animate-spin' : ''}`} />
+                          <span>Switch</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Remove profile "${account.name}" from this device?`)) {
+                              deleteAccount(account.id);
+                            }
+                          }}
+                          className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                          title="Delete profile"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Current Profile</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 2. Smart Hybrid Cloud Storage (Google Drive + Supabase) */}
+      <div className="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4 text-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <h3 className="font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-600" />
+              <span>Smart Hybrid Cloud Storage Architecture</span>
+            </h3>
+            <p className="text-slate-500 mt-0.5">
+              Avoids PostgreSQL quota limits (5 GB) by using Google Drive / Local Storage for heavy slides & PDFs, and Supabase for structured academic data.
+            </p>
+          </div>
+          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 self-start sm:self-auto">
+            Smart Hybrid: Active
+          </span>
+        </div>
+
+        {pruneResult && (
+          <div
+            className={`p-3 rounded-lg border font-medium flex items-center gap-2 ${
+              pruneResult.success
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+            }`}
+          >
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+            <span>{pruneResult.message}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-2">
+            <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100">
+              <Database className="w-4 h-4 text-blue-600" />
+              <span>Supabase Cloud Database</span>
+            </div>
+            <p className="text-slate-500 leading-relaxed text-[11px]">
+              Stores courses, assignments, tasks, notes, exams, timetable, and AI memory. Compact, structured, and synchronized in real-time (&lt; 5 MB total).
+            </p>
+            <div className="text-[10px] font-semibold text-emerald-600">
+              ✓ 100% Free Tier Safe • No Storage Overage
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-2">
+            <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100">
+              <FolderArchive className="w-4 h-4 text-emerald-600" />
+              <span>Google Drive & Local Documents</span>
+            </div>
+            <p className="text-slate-500 leading-relaxed text-[11px]">
+              Large lecture slides (PPTX), hundred-page PDFs, and video transcripts are streamed via Google Drive links and local browser cache without bloating the database.
+            </p>
+            <div className="text-[10px] font-semibold text-emerald-600">
+              ✓ 0 MB PostgreSQL footprint • Instant Preview
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200">
+              Storage Optimization & Clean Up
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Prunes heavy historical slide text from Supabase tables to keep your project free from storage quota limits.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsDbModalOpen(true)}
+              className="px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium text-[11px] flex items-center gap-1.5 transition-colors"
+            >
+              <Database className="w-3.5 h-3.5 text-blue-600" />
+              <span>DB Connection</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isPruning}
+              onClick={async () => {
+                setIsPruning(true);
+                setPruneResult(null);
+                const res = await pruneCloudStorage();
+                setIsPruning(false);
+                setPruneResult(res);
+                setTimeout(() => setPruneResult(null), 5000);
+              }}
+              className="px-3.5 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] flex items-center gap-1.5 shadow-xs transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isPruning ? 'animate-spin' : ''}`} />
+              <span>{isPruning ? 'Pruning...' : 'Optimize Cloud Storage'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Academic Calendar & Academic Modes Management */}

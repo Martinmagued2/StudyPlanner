@@ -667,6 +667,16 @@ export const initialEvents: CalendarEvent[] = [
 
 export const initialIntegrations: IntegrationConnector[] = [
   {
+    provider: 'gdrive',
+    name: 'Google Drive (Smart Hybrid Storage)',
+    connected: true,
+    lastSync: 'Just now',
+    status: 'ok',
+    importedCount: 6,
+    skippedCount: 0,
+    updatedCount: 0
+  },
+  {
     provider: 'google',
     name: 'Google Calendar (OAuth 2.0)',
     connected: true,

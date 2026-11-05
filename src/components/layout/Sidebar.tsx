@@ -540,13 +540,17 @@ export const Sidebar: React.FC = () => {
       {/* User & Theme Toggle Footer */}
       <div className="p-2.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
         {!isCollapsed ? (
-          <div className="flex items-center gap-2 overflow-hidden">
+          <div
+            onClick={() => setActiveView('settings')}
+            className="flex items-center gap-2 overflow-hidden cursor-pointer hover:opacity-80 transition-opacity p-1 rounded-md"
+            title="Click to manage profiles & account settings"
+          >
             <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-medium text-xs text-slate-700 dark:text-slate-200 shrink-0">
-              {user?.name?.slice(0, 2).toUpperCase() || 'AR'}
+              {user?.name?.slice(0, 2).toUpperCase() || 'ST'}
             </div>
             <div className="flex flex-col truncate">
               <span className="text-xs font-medium text-slate-900 dark:text-slate-100 truncate">
-                {user?.name || 'Alex Rivera'}
+                {user?.name || 'Student'}
               </span>
               <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                 {user?.isDemo ? 'Demo Workspace' : user?.email}
@@ -554,8 +558,12 @@ export const Sidebar: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="w-7 h-7 mx-auto rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-medium text-xs text-slate-700 dark:text-slate-200">
-            {user?.name?.slice(0, 2).toUpperCase() || 'AR'}
+          <div
+            onClick={() => setActiveView('settings')}
+            className="w-7 h-7 mx-auto rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-medium text-xs text-slate-700 dark:text-slate-200 cursor-pointer hover:opacity-80"
+            title="Account Settings & Profiles"
+          >
+            {user?.name?.slice(0, 2).toUpperCase() || 'ST'}
           </div>
         )}
 

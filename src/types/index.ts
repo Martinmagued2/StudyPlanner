@@ -119,6 +119,7 @@ export interface InboxItem {
 }
 
 export type FileReadStatus = 'fully_read' | 'indexed' | 'ocr' | 'unreadable' | 'failed';
+export type StorageProvider = 'local' | 'gdrive' | 'hybrid' | 'supabase';
 
 export interface DocumentChunk {
   id: string;
@@ -142,6 +143,10 @@ export interface DocumentFile {
   chunks: DocumentChunk[];
   summary?: string;
   rawText?: string;
+  storageProvider?: StorageProvider;
+  gdriveUrl?: string;
+  gdriveFileId?: string;
+  downloadUrl?: string;
 }
 
 export interface Flashcard {
@@ -408,7 +413,7 @@ export interface AppNotification {
 }
 
 export interface IntegrationConnector {
-  provider: 'google' | 'outlook' | 'github' | 'moodle';
+  provider: 'google' | 'outlook' | 'github' | 'moodle' | 'gdrive';
   name: string;
   connected: boolean;
   lastSync: string | null;
@@ -453,4 +458,15 @@ export interface UserAccount {
   avatarUrl?: string;
   isDemo: boolean;
   createdAt?: string;
+  passwordHash?: string;
+}
+
+export interface StoredAccountRecord {
+  id: string;
+  name: string;
+  email: string;
+  username: string;
+  passwordHash: string;
+  createdAt: string;
+  avatarUrl?: string;
 }
