@@ -11,19 +11,99 @@ import {
   RotateCcw,
   BookOpen,
   MapPin,
-  Play
+  Play,
+  Edit3,
+  Trash2,
+  X,
+  FileText
 } from 'lucide-react';
 import { Exam, RevisionSession } from '../../../types';
 
 export const ExamsView: React.FC = () => {
-  const { exams, courses, addExam, generateRevisionPlanForExam, toggleRevisionSession, startFocusTimer, openQuickCreate } = useApp();
+  const {
+    exams,
+    courses,
+    addExam,
+    updateExam,
+    deleteExam,
+    generateRevisionPlanForExam,
+    toggleRevisionSession,
+    startFocusTimer,
+    openQuickCreate
+  } = useApp();
 
   const [selectedExamId, setSelectedExamId] = useState<string>(exams[0]?.id || '');
   const selectedExam = exams.find(e => e.id === selectedExamId) || exams[0];
 
+  // Edit exam modal state
+  const [editingExam, setEditingExam] = useState<Exam | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editCourseId, setEditCourseId] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editStartTime, setEditStartTime] = useState('');
+  const [editEndTime, setEditEndTime] = useState('');
+  const [editRoom, setEditRoom] = useState('');
+  const [editWeight, setEditWeight] = useState(25);
+  const [editDescription, setEditDescription] = useState('');
+
+  const openEditModal = (exam: Exam, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setEditingExam(exam);
+    setEditName(exam.name);
+    setEditCourseId(exam.courseId);
+    setEditDate(exam.date);
+    setEditStartTime(exam.startTime || '09:00');
+    setEditEndTime(exam.endTime || '11:00');
+    setEditRoom(exam.room || '');
+    setEditWeight(exam.weightPercentage || 25);
+    setEditDescription(exam.description || '');
+  };
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingExam) return;
+    updateExam(editingExam.id, {
+      name: editName,
+      courseId: editCourseId,
+      date: editDate,
+      startTime: editStartTime || undefined,
+      endTime: editEndTime || undefined,
+      room: editRoom || undefined,
+      weightPercentage: Number(editWeight) || 25,
+      description: editDescription || undefined
+    });
+    setEditingExam(null);
+  };
+
+  const handleDeleteExam = (id: string, name: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (window.confirm(`Are you sure you want to remove the exam "${name}"?`)) {
+      deleteExam(id);
+      if (selectedExamId === id) {
+        const remaining = exams.filter(ex => ex.id !== id);
+        setSelectedExamId(remaining[0]?.id || '');
+      }
+    }
+  };
+
   const getDaysRemaining = (examDateStr: string) => {
     const diffTime = new Date(examDateStr).getTime() - Date.now();
     return Math.ceil(diffTime / (86400 * 1000));
+  };
+
+  const formatExamTime = (start?: string, end?: string) => {
+    if (!start && !end) return null;
+    if (start && end) {
+      const [sh, sm] = start.split(':').map(Number);
+      const [eh, em] = end.split(':').map(Number);
+      if (!isNaN(sh) && !isNaN(eh)) {
+        const diffMin = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+        const durStr = diffMin > 0 ? ` (${Math.floor(diffMin / 60)}h${diffMin % 60 ? ` ${diffMin % 60}m` : ''})` : '';
+        return `${start} – ${end}${durStr}`;
+      }
+      return `${start} – ${end}`;
+    }
+    return start || end;
   };
 
   const getUrgencyBadge = (days: number) => {
@@ -46,7 +126,7 @@ export const ExamsView: React.FC = () => {
             Exams & Spaced Revision Planning
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Auto-generate spaced revision blocks leading up to finals, with eve-of-exam formula reviews and readiness tracking.
+            Auto-generate spaced revision blocks leading up to finals, with synced calendar schedules and readiness tracking.
           </p>
         </div>
 
@@ -61,68 +141,120 @@ export const ExamsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Exam Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {exams.map(exam => {
-          const course = courses.find(c => c.id === exam.courseId);
-          const daysLeft = getDaysRemaining(exam.date);
-          const isSelected = exam.id === selectedExamId;
+      {/* Empty State */}
+      {exams.length === 0 && (
+        <div className="p-12 text-center rounded-xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+          <Award className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-700" />
+          <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">No Exams Scheduled</h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            Add your midterms, finals, or practical exams with start and end times to automatically sync them to your calendar and generate revision plans.
+          </p>
+          <button
+            onClick={() => openQuickCreate('exam')}
+            className="px-4 py-2 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 inline-flex items-center gap-1.5 shadow-sm"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create First Exam</span>
+          </button>
+        </div>
+      )}
 
-          return (
-            <div
-              key={exam.id}
-              onClick={() => setSelectedExamId(exam.id)}
-              className={`p-5 rounded-xl border cursor-pointer transition-colors space-y-4 ${
-                isSelected
-                  ? 'border-slate-900 dark:border-slate-100 bg-white dark:bg-slate-900 shadow-md ring-1 ring-slate-900 dark:ring-slate-100'
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  {course && (
-                    <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border" style={{ borderColor: course.color, color: course.color }}>
-                      {course.code} • Weight: {exam.weightPercentage}%
+      {/* Exam Cards Grid */}
+      {exams.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {exams.map(exam => {
+            const course = courses.find(c => c.id === exam.courseId);
+            const daysLeft = getDaysRemaining(exam.date);
+            const isSelected = exam.id === selectedExamId;
+            const timeFormatted = formatExamTime(exam.startTime, exam.endTime);
+
+            return (
+              <div
+                key={exam.id}
+                onClick={() => setSelectedExamId(exam.id)}
+                className={`p-5 rounded-xl border cursor-pointer transition-colors space-y-4 ${
+                  isSelected
+                    ? 'border-slate-900 dark:border-slate-100 bg-white dark:bg-slate-900 shadow-md ring-1 ring-slate-900 dark:ring-slate-100'
+                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    {course && (
+                      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border" style={{ borderColor: course.color, color: course.color }}>
+                        {course.code} • Weight: {exam.weightPercentage}%
+                      </span>
+                    )}
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1.5">
+                      {exam.name}
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {getUrgencyBadge(daysLeft)}
+                    <button
+                      onClick={(e) => openEditModal(exam, e)}
+                      title="Edit Exam"
+                      className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteExam(exam.id, exam.name, e)}
+                      title="Delete Exam"
+                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Exam Date & Time Badge */}
+                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                    <span>{new Date(exam.date).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  </span>
+
+                  {timeFormatted && (
+                    <span className="flex items-center gap-1.5 font-mono font-semibold text-slate-800 dark:text-slate-200">
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span>{timeFormatted}</span>
                     </span>
                   )}
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1.5">
-                    {exam.name}
-                  </h3>
                 </div>
-                {getUrgencyBadge(daysLeft)}
-              </div>
 
-              {/* Readiness Progress Bar */}
-              <div className="space-y-1.5 text-xs">
-                <div className="flex items-center justify-between text-slate-500">
-                  <span>Exam Readiness Score</span>
-                  <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                    {exam.readinessPercent}%
+                {/* Readiness Progress Bar */}
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span>Exam Readiness Score</span>
+                    <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                      {exam.readinessPercent}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        exam.readinessPercent >= 70 ? 'bg-emerald-600' :
+                        exam.readinessPercent >= 45 ? 'bg-amber-600' : 'bg-rose-600'
+                      }`}
+                      style={{ width: `${exam.readinessPercent}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Room & Revision Sessions Count */}
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 font-mono">
+                  <span className="flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span>{exam.room || 'Main Hall'}</span>
                   </span>
-                </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      exam.readinessPercent >= 70 ? 'bg-emerald-600' :
-                      exam.readinessPercent >= 45 ? 'bg-amber-600' : 'bg-rose-600'
-                    }`}
-                    style={{ width: `${exam.readinessPercent}%` }}
-                  />
+                  <span>{exam.revisionSessions.length} Spaced Sessions</span>
                 </div>
               </div>
-
-              {/* Room & Revision Sessions Count */}
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 font-mono">
-                <span className="flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5" />
-                  <span>{exam.room || 'Main Hall'}</span>
-                </span>
-                <span>{exam.revisionSessions.length} Spaced Sessions</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Selected Exam Revision Schedule Detail */}
       {selectedExam && (
@@ -132,18 +264,35 @@ export const ExamsView: React.FC = () => {
               <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                 Automated Revision Schedule & Task Links
               </div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5">
-                {selectedExam.name}
-              </h2>
+              <div className="flex items-center gap-2 mt-0.5">
+                <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  {selectedExam.name}
+                </h2>
+                {formatExamTime(selectedExam.startTime, selectedExam.endTime) && (
+                  <span className="text-xs px-2 py-0.5 rounded font-mono font-semibold bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                    {formatExamTime(selectedExam.startTime, selectedExam.endTime)}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <button
-              onClick={() => generateRevisionPlanForExam(selectedExam.id)}
-              className="px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1.5 shadow-sm"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{selectedExam.revisionSessions.length > 0 ? 'Rebuild Revision Schedule' : 'Generate Revision Plan'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => openEditModal(selectedExam)}
+                className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1.5"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Edit Exam</span>
+              </button>
+
+              <button
+                onClick={() => generateRevisionPlanForExam(selectedExam.id)}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1.5 shadow-sm"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{selectedExam.revisionSessions.length > 0 ? 'Rebuild Revision Schedule' : 'Generate Revision Plan'}</span>
+              </button>
+            </div>
           </div>
 
           {selectedExam.revisionSessions.length > 0 ? (
@@ -205,6 +354,157 @@ export const ExamsView: React.FC = () => {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Edit Exam Modal */}
+      {editingExam && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Award className="w-4 h-4 text-amber-500" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Edit Exam Details & Schedule</h3>
+              </div>
+              <button
+                onClick={() => setEditingExam(null)}
+                className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="p-4 space-y-3.5">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Exam Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Course
+                  </label>
+                  <select
+                    value={editCourseId}
+                    onChange={e => setEditCourseId(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  >
+                    {courses.map(c => (
+                      <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Exam Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={editDate}
+                    onChange={e => setEditDate(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Start & End Time */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>Start Time</span>
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={editStartTime}
+                    onChange={e => setEditStartTime(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>End Time</span>
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={editEndTime}
+                    onChange={e => setEditEndTime(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Room / Hall
+                  </label>
+                  <input
+                    type="text"
+                    value={editRoom}
+                    onChange={e => setEditRoom(e.target.value)}
+                    placeholder="e.g. Great Hall Aud 1"
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Weight (%)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={editWeight}
+                    onChange={e => setEditWeight(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Description / Topic Notes
+                </label>
+                <textarea
+                  rows={2}
+                  value={editDescription}
+                  onChange={e => setEditDescription(e.target.value)}
+                  placeholder="Notes, required equipment, calculator permissions..."
+                  className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingExam(null)}
+                  className="px-3 py-1.5 text-xs font-medium rounded-md text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

@@ -149,9 +149,12 @@ CREATE TABLE public.exams (
     course_id TEXT NOT NULL,
     name TEXT NOT NULL,
     date TEXT NOT NULL,
+    start_time TEXT DEFAULT '',
+    end_time TEXT DEFAULT '',
     weight_percentage NUMERIC DEFAULT 25,
     readiness_percent NUMERIC DEFAULT 0,
     room TEXT DEFAULT '',
+    description TEXT DEFAULT '',
     revision_sessions JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );

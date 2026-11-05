@@ -230,10 +230,13 @@ export interface Exam {
   name: string;
   courseId: string;
   date: string; // YYYY-MM-DD
+  startTime?: string; // HH:mm e.g. "09:00"
+  endTime?: string;   // HH:mm e.g. "11:30"
   weightPercentage: number;
   readinessPercent: number;
   revisionSessions: RevisionSession[];
   room?: string;
+  description?: string;
 }
 
 export interface GradeItem {

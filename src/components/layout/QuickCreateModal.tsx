@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, CheckSquare, FileText, FileCheck2, Award, Calendar } from 'lucide-react';
+import { X, CheckSquare, FileText, FileCheck2, Award, Calendar, Clock } from 'lucide-react';
 import { AssignmentType, PriorityLevel, EventType } from '../../types';
 
 export const QuickCreateModal: React.FC = () => {
@@ -28,6 +28,8 @@ export const QuickCreateModal: React.FC = () => {
   const [assignmentType, setAssignmentType] = useState<AssignmentType>('homework');
   const [estimatedMinutes, setEstimatedMinutes] = useState(60);
   const [examWeight, setExamWeight] = useState(25);
+  const [examStartTime, setExamStartTime] = useState('09:00');
+  const [examEndTime, setExamEndTime] = useState('11:00');
   const [eventType, setEventType] = useState<EventType>('event');
   const [location, setLocation] = useState('');
 
@@ -77,8 +79,11 @@ export const QuickCreateModal: React.FC = () => {
         name: title,
         courseId: courseId || courses[0]?.id || 'course_cs302',
         date: dueDate ? dueDate.slice(0, 10) : new Date(Date.now() + 14 * 86400 * 1000).toISOString().slice(0, 10),
+        startTime: examStartTime || '09:00',
+        endTime: examEndTime || '11:00',
         weightPercentage: Number(examWeight) || 25,
-        room: location || 'Exam Hall'
+        room: location || 'Exam Hall',
+        description: description || undefined
       });
       setActiveView('exams');
     } else if (activeTab === 'event') {
@@ -207,13 +212,13 @@ export const QuickCreateModal: React.FC = () => {
               </select>
             </div>
 
-            {activeTab !== 'note' && (
+            {activeTab !== 'note' && activeTab !== 'exam' && (
               <div>
                 <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  {activeTab === 'exam' ? 'Exam Date' : activeTab === 'event' ? 'Start Time' : 'Due Date'}
+                  {activeTab === 'event' ? 'Start Time' : 'Due Date'}
                 </label>
                 <input
-                  type={activeTab === 'exam' ? 'date' : 'datetime-local'}
+                  type="datetime-local"
                   value={dueDate}
                   onChange={e => setDueDate(e.target.value)}
                   className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
@@ -264,10 +269,102 @@ export const QuickCreateModal: React.FC = () => {
           )}
 
           {activeTab === 'exam' && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Exam Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={dueDate}
+                    onChange={e => setDueDate(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Room / Exam Hall
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Great Hall 2A"
+                    value={location}
+                    onChange={e => setLocation(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Exam Start & End Times */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>Start Time</span>
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={examStartTime}
+                    onChange={e => {
+                      const newStart = e.target.value;
+                      setExamStartTime(newStart);
+                      if (newStart >= examEndTime) {
+                        const [h, m] = newStart.split(':').map(Number);
+                        const endH = (h + 2) % 24;
+                        setExamEndTime(`${String(endH).padStart(2, '0')}:${String(m || 0).padStart(2, '0')}`);
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>End Time</span>
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={examEndTime}
+                    onChange={e => setExamEndTime(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Quick Exam Duration Presets */}
+              <div className="flex items-center flex-wrap gap-1.5 text-[11px] text-slate-500">
+                <span className="font-medium">Quick Duration:</span>
+                {[
+                  { label: '1 hr', hours: 1 },
+                  { label: '1.5 hrs', hours: 1.5 },
+                  { label: '2 hrs', hours: 2 },
+                  { label: '2.5 hrs', hours: 2.5 },
+                  { label: '3 hrs', hours: 3 }
+                ].map(dur => (
+                  <button
+                    key={dur.label}
+                    type="button"
+                    onClick={() => {
+                      const [h, m] = examStartTime.split(':').map(Number);
+                      const totalMinutes = (isNaN(h) ? 9 : h) * 60 + (isNaN(m) ? 0 : m) + dur.hours * 60;
+                      const endH = Math.floor(totalMinutes / 60) % 24;
+                      const endM = Math.floor(totalMinutes % 60);
+                      setExamEndTime(`${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`);
+                    }}
+                    className="px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-medium transition-colors"
+                  >
+                    {dur.label}
+                  </button>
+                ))}
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Course Grade Weight (%)
+                  Grade Weight (% of Final Grade)
                 </label>
                 <input
                   type="number"
@@ -275,18 +372,6 @@ export const QuickCreateModal: React.FC = () => {
                   max="100"
                   value={examWeight}
                   onChange={e => setExamWeight(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Room / Location
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Great Hall Aud 2"
-                  value={location}
-                  onChange={e => setLocation(e.target.value)}
                   className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
               </div>

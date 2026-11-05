@@ -238,6 +238,8 @@ interface AppContextType {
 
   exams: Exam[];
   addExam: (exam: Omit<Exam, 'id' | 'revisionSessions' | 'readinessPercent'>) => Exam;
+  updateExam: (id: string, updates: Partial<Exam>) => void;
+  deleteExam: (id: string) => void;
   generateRevisionPlanForExam: (examId: string) => void;
   toggleRevisionSession: (examId: string, sessionId: string) => void;
 
@@ -1597,6 +1599,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dbSaveExam(user.id, newExam).catch(err => console.warn('DB exam save:', err));
     }
     return newExam;
+  };
+
+  const updateExam = (id: string, updates: Partial<Exam>) => {
+    setExams(prev => {
+      const updated = prev.map(e => e.id === id ? { ...e, ...updates } : e);
+      const target = updated.find(e => e.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveExam(user.id, target).catch(err => console.warn('DB exam update:', err));
+      }
+      return updated;
+    });
+  };
+
+  const deleteExam = (id: string) => {
+    setExams(prev => prev.filter(e => e.id !== id));
+    if (user && isSupabaseConfigured()) {
+      dbDeleteExam(user.id, id).catch(err => console.warn('DB exam delete:', err));
+    }
   };
 
   const generateRevisionPlanForExam = (examId: string) => {
@@ -3300,6 +3320,8 @@ How would you like me to assist you with your studies right now?`;
         addQuiz,
         exams,
         addExam,
+        updateExam,
+        deleteExam,
         generateRevisionPlanForExam,
         toggleRevisionSession,
         gradeItems,

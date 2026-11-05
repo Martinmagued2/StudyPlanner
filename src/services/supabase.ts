@@ -377,9 +377,12 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
         course_id: e.courseId,
         name: e.name,
         date: e.date,
+        start_time: e.startTime || null,
+        end_time: e.endTime || null,
         weight_percentage: e.weightPercentage || 25,
         readiness_percent: e.readinessPercent || 0,
         room: e.room || '',
+        description: e.description || '',
         revision_sessions: e.revisionSessions || []
       }));
       await client.from('exams').upsert(records, { onConflict: 'id' });
@@ -646,9 +649,12 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
           name: e.name,
           courseId: e.course_id,
           date: e.date,
+          startTime: e.start_time || undefined,
+          endTime: e.end_time || undefined,
           weightPercentage: Number(e.weight_percentage) || 25,
           readinessPercent: Number(e.readiness_percent) || 0,
           room: e.room || '',
+          description: e.description || '',
           revisionSessions: e.revision_sessions || []
         }))
       : baseData.exams || [];
@@ -956,9 +962,12 @@ export async function dbSaveExam(userId: string, exam: Exam): Promise<void> {
       course_id: exam.courseId,
       name: exam.name,
       date: exam.date,
+      start_time: exam.startTime || null,
+      end_time: exam.endTime || null,
       weight_percentage: exam.weightPercentage || 25,
       readiness_percent: exam.readinessPercent || 0,
       room: exam.room || '',
+      description: exam.description || '',
       revision_sessions: exam.revisionSessions || []
     });
   } catch (err) {
