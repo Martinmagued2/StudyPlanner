@@ -12,12 +12,26 @@ import {
   Filter,
   Sparkles,
   X,
-  Check
+  Check,
+  Award,
+  Settings
 } from 'lucide-react';
 import { ClassType, MeetingSlot } from '../../../types';
 
 export const ScheduleView: React.FC = () => {
-  const { courses, updateCourse, navigateToCourse, setIsAiDrawerOpen } = useApp();
+  const {
+    courses,
+    exams,
+    updateCourse,
+    navigateToCourse,
+    setIsAiDrawerOpen,
+    activeAcademicMode,
+    academicConfig,
+    updateAcademicConfig,
+    setActiveView
+  } = useApp();
+
+  const [showRegularInExamMode, setShowRegularInExamMode] = useState(false);
 
   const [currentTimeMinutes, setCurrentTimeMinutes] = useState(() => {
     const d = new Date();
@@ -487,6 +501,91 @@ export const ScheduleView: React.FC = () => {
         </div>
       </div>
 
+      {/* Academic Period Suspension Banner (Midterm Mode / Final Exam Mode) */}
+      {(activeAcademicMode === 'midterm' || activeAcademicMode === 'final') && (
+        <div className={`p-4 rounded-xl border space-y-3 ${
+          activeAcademicMode === 'midterm'
+            ? 'bg-amber-50/90 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
+            : 'bg-rose-50/90 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className={`p-2 rounded-lg text-white shrink-0 ${
+                activeAcademicMode === 'midterm' ? 'bg-amber-600' : 'bg-rose-600'
+              }`}>
+                <Award className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    {activeAcademicMode === 'midterm'
+                      ? 'Midterm Week Active — Regular Classes Temporarily Suspended'
+                      : 'Final Examination Period Active — Regular Classes Temporarily Suspended'}
+                  </h2>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-white/80 dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                    Timetable Preserved
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                  During {activeAcademicMode === 'midterm' ? 'Midterm Week' : 'Final Examinations'}, normal weekly lectures are paused so the AI planner only schedules exam sessions and revision. Your regular class timetable has <strong>not</strong> been deleted and will automatically return when this exam period ends.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <button
+                onClick={() => setShowRegularInExamMode(prev => !prev)}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50"
+              >
+                {showRegularInExamMode ? 'Hide Suspended Classes' : 'Preview Regular Timetable'}
+              </button>
+              <button
+                onClick={() => updateAcademicConfig({ modePreference: 'normal' })}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+              >
+                Return to Normal Semester Mode
+              </button>
+            </div>
+          </div>
+
+          {/* Active Examination Schedule inside Timetable View */}
+          {exams.length > 0 && (
+            <div className="pt-2 border-t border-amber-200/70 dark:border-slate-800 space-y-2">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Active Examination Timetable ({exams.length})
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {exams.map(ex => {
+                  const course = courses.find(c => c.id === ex.courseId);
+                  return (
+                    <div
+                      key={ex.id}
+                      onClick={() => setActiveView('exams')}
+                      className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 cursor-pointer hover:border-amber-400 transition-colors space-y-1 text-xs"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900 dark:text-slate-100">
+                          {course?.code || 'EXAM'} — {ex.name}
+                        </span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 font-bold uppercase">
+                          {ex.examType || 'exam'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-600 dark:text-slate-400">
+                        📅 {ex.date} • ⏰ {ex.startTime || '09:00'} – {ex.endTime || '11:00'}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        📍 {ex.room || 'Exam Hall'}{ex.building ? ` (${ex.building})` : ''}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Upcoming Class Banner */}
       <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -495,9 +594,17 @@ export const ScheduleView: React.FC = () => {
           </div>
           <div>
             <div className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
-              {upcomingClass ? 'Next Scheduled Class' : 'Schedule Status'}
+              {(activeAcademicMode === 'midterm' || activeAcademicMode === 'final')
+                ? 'Examination Period Status'
+                : upcomingClass
+                ? 'Next Scheduled Class'
+                : 'Schedule Status'}
             </div>
-            {upcomingClass ? (
+            {(activeAcademicMode === 'midterm' || activeAcademicMode === 'final') ? (
+              <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Regular lectures are suspended during {activeAcademicMode === 'midterm' ? 'Midterm Week' : 'Final Exams'} ({allMeetingSlots.length} weekly slots preserved)
+              </div>
+            ) : upcomingClass ? (
               <div className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <span>{upcomingClass.courseCode}: {upcomingClass.courseName}</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded uppercase font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
@@ -637,7 +744,13 @@ export const ScheduleView: React.FC = () => {
                       )}
 
                       {/* Placed Class Blocks along the horizontal timeline */}
-                      {daySlots.length === 0 ? (
+                      {(activeAcademicMode === 'midterm' || activeAcademicMode === 'final') && !showRegularInExamMode ? (
+                        <div className="h-full flex items-center justify-center text-[11px] text-amber-700 dark:text-amber-400 font-medium select-none bg-amber-50/30 dark:bg-amber-950/10 rounded">
+                          {daySlots.length > 0
+                            ? `${daySlots.length} regular class${daySlots.length > 1 ? 'es' : ''} suspended for ${activeAcademicMode === 'midterm' ? 'Midterm Week' : 'Final Exams'} (Preserved)`
+                            : `No regular classes on ${day.name}`}
+                        </div>
+                      ) : daySlots.length === 0 ? (
                         <div className="h-full flex items-center justify-center text-[11px] text-slate-300 dark:text-slate-700 italic select-none">
                           No classes scheduled for {day.name}
                         </div>

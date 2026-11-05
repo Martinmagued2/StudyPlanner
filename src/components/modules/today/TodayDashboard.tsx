@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
-import { MeetingSlot } from '../../../types';
+import { MeetingSlot, AcademicMode } from '../../../types';
 import { getLiveScheduleStatus } from '../../../services/academicScheduleService';
 import {
   CheckSquare,
@@ -24,7 +24,17 @@ import {
   Smartphone,
   Flame,
   ShieldAlert,
-  ListChecks
+  ListChecks,
+  ArrowUp,
+  ArrowDown,
+  Edit3,
+  Trash2,
+  MapPin,
+  Info,
+  Zap,
+  Settings,
+  X,
+  Check
 } from 'lucide-react';
 
 export const TodayDashboard: React.FC = () => {
@@ -38,6 +48,16 @@ export const TodayDashboard: React.FC = () => {
     dailyPlan,
     regenerateDailyPlan,
     toggleDailyPlanBlock,
+    updateDailyPlanBlock,
+    deleteDailyPlanBlock,
+    moveDailyPlanBlock,
+    addCustomDailyPlanBlock,
+    adaptDailyPlan,
+    academicConfig,
+    updateAcademicConfig,
+    activeAcademicMode,
+    isClassSuspendedOnDate,
+    aiMemories,
     toggleTaskComplete,
     startFocusTimer,
     getWhatShouldIDoNow,
@@ -52,6 +72,15 @@ export const TodayDashboard: React.FC = () => {
   } = useApp();
 
   const [timeWindow, setTimeWindow] = useState<number>(45);
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+  const [editBlockTime, setEditBlockTime] = useState('');
+  const [editBlockTitle, setEditBlockTitle] = useState('');
+  const [showAddBlockForm, setShowAddBlockForm] = useState(false);
+  const [newBlockStart, setNewBlockStart] = useState('14:00');
+  const [newBlockEnd, setNewBlockEnd] = useState('15:00');
+  const [newBlockTitle, setNewBlockTitle] = useState('');
+  const [newBlockType, setNewBlockType] = useState<'study' | 'review' | 'break' | 'class'>('study');
+  const [showExplanation, setShowExplanation] = useState(true);
 
   // Counters
   const openTasks = tasks.filter(t => !t.completed);
@@ -106,9 +135,45 @@ export const TodayDashboard: React.FC = () => {
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const currentDayNum = new Date().getDay();
   const currentDayName = days[currentDayNum];
-  const liveSchedule = getLiveScheduleStatus(courses);
-  const todayClasses = liveSchedule.todayClasses;
-  const activeOrNext = liveSchedule.activeOrNextClass;
+  const isExamMode = activeAcademicMode === 'midterm' || activeAcademicMode === 'final';
+  const isHolidayOrSuspendedToday = isClassSuspendedOnDate(todayStr);
+
+  // Regular classes are suspended during Midterm Mode, Final Exam Mode, or University Holidays
+  const liveSchedule = getLiveScheduleStatus(isExamMode ? [] : courses);
+  const todayClasses = isExamMode
+    ? []
+    : liveSchedule.todayClasses.filter(cls => !isClassSuspendedOnDate(todayStr, cls.courseId));
+  const activeOrNext = isExamMode || isHolidayOrSuspendedToday
+    ? { status: 'none' as const, classItem: null, badgeLabel: '', subLabel: '' }
+    : liveSchedule.activeOrNextClass;
+
+  // Filtered exams for current mode or all upcoming exams
+  const modeExams = exams
+    .map(e => {
+      const exDate = new Date(e.date);
+      const exMidnight = new Date(exDate);
+      exMidnight.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((exMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
+      const course = courses.find(c => c.id === e.courseId);
+      return {
+        ...e,
+        diffDays,
+        courseCode: course?.code || 'Exam',
+        courseName: course?.name || '',
+        courseColor: course?.color || '#d97706'
+      };
+    })
+    .filter(e => {
+      if (activeAcademicMode === 'midterm') {
+        if (e.examType && e.examType !== 'midterm') return false;
+      } else if (activeAcademicMode === 'final') {
+        if (e.examType && e.examType !== 'final') return false;
+      }
+      return e.diffDays >= -1;
+    })
+    .sort((a, b) => a.diffDays - b.diffDays);
+
+  const todayExams = modeExams.filter(e => e.date === todayStr || e.diffDays === 0);
 
   // What should I do now
   const recommendation = getWhatShouldIDoNow(timeWindow);
@@ -162,6 +227,82 @@ export const TodayDashboard: React.FC = () => {
           >
             <Play className="w-3.5 h-3.5" />
             <span>Start 25m Focus</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ACADEMIC PERIOD / MODE BANNER & SWITCHER */}
+      <div className={`p-3.5 sm:p-4 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+        activeAcademicMode === 'midterm'
+          ? 'bg-amber-50/90 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800/80'
+          : activeAcademicMode === 'final'
+          ? 'bg-rose-50/90 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800/80'
+          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-2xs'
+      }`}>
+        <div className="flex items-start sm:items-center gap-3">
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 font-bold ${
+            activeAcademicMode === 'midterm'
+              ? 'bg-amber-600 text-white'
+              : activeAcademicMode === 'final'
+              ? 'bg-rose-600 text-white'
+              : 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+          }`}>
+            {activeAcademicMode === 'normal' ? <Calendar className="w-4 h-4" /> : <Award className="w-4 h-4" />}
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                {activeAcademicMode === 'midterm'
+                  ? 'Midterm Examination Week Mode'
+                  : activeAcademicMode === 'final'
+                  ? 'Final Examination Period Mode'
+                  : 'Normal Semester Teaching Mode'}
+              </span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                activeAcademicMode === 'midterm'
+                  ? 'bg-amber-200/80 text-amber-900 dark:bg-amber-900/80 dark:text-amber-100'
+                  : activeAcademicMode === 'final'
+                  ? 'bg-rose-200/80 text-rose-900 dark:bg-rose-900/80 dark:text-rose-100'
+                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+              }`}>
+                {academicConfig.modePreference === 'auto' ? 'Auto Date-Synced' : 'Manual Mode'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+              {activeAcademicMode === 'midterm'
+                ? 'Regular weekly lectures are temporarily suspended. Dashboard and AI planner are focused exclusively on your Midterm Exams & Revision.'
+                : activeAcademicMode === 'final'
+                ? 'Regular weekly lectures are temporarily suspended. Dashboard and AI planner are dedicated to your Final Examinations & Readiness.'
+                : 'Regular weekly class timetable is active. Switch modes anytime or configure exam week dates in Settings.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+          {([
+            { id: 'auto', label: 'Auto' },
+            { id: 'normal', label: 'Normal Semester' },
+            { id: 'midterm', label: 'Midterm Week' },
+            { id: 'final', label: 'Final Exams' }
+          ] as const).map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => updateAcademicConfig({ modePreference: opt.id })}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors border ${
+                academicConfig.modePreference === opt.id
+                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100'
+                  : 'bg-white/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+          <button
+            onClick={() => setActiveView('settings')}
+            className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900"
+            title="Configure Academic Calendar & Exam Period Dates"
+          >
+            <Settings className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -702,204 +843,690 @@ export const TodayDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* Plan My Day Table */}
-          <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Plan My Day — Study Timetable
-                </h2>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                  {dailyPlan.generatedBy === 'ai' ? 'AI Optimized' : 'Deterministic'}
-                </span>
+          {/* Plan My Day Table (Intelligent & Realistic AI Daily Planner) */}
+          <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Calendar className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Plan My Day — Intelligent Study Timetable
+                  </h2>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900 font-semibold">
+                    {activeAcademicMode === 'midterm'
+                      ? 'Midterm Revision Mode'
+                      : activeAcademicMode === 'final'
+                      ? 'Finals Revision Mode'
+                      : 'AI Conflict-Free Planner'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Respects class timetable, exam schedules, deadline weights, realistic breaks, and your AI memories.
+                </p>
               </div>
-              <button
-                onClick={regenerateDailyPlan}
-                className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 flex items-center gap-1"
-                title="Replan Remaining Day"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Replan</span>
-              </button>
+
+              {/* Adaptive Daily Planning & Replan Controls */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  onClick={() => adaptDailyPlan('completed_early')}
+                  className="px-2 py-1 text-[11px] font-medium rounded border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1 transition-colors"
+                  title="Finished a task early? Pull forward or suggest the next best task"
+                >
+                  <Zap className="w-3 h-3 text-emerald-600" />
+                  <span>Done Early</span>
+                </button>
+                <button
+                  onClick={() => adaptDailyPlan('missed_session')}
+                  className="px-2 py-1 text-[11px] font-medium rounded border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 flex items-center gap-1 transition-colors"
+                  title="Missed a study session? Reorganize remaining day around current time"
+                >
+                  <RotateCcw className="w-3 h-3 text-amber-600" />
+                  <span>Missed Session</span>
+                </button>
+                <button
+                  onClick={() => setShowAddBlockForm(prev => !prev)}
+                  className="px-2 py-1 text-[11px] font-medium rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 flex items-center gap-1 transition-colors"
+                  title="Manually add a block to today's plan"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Add Block</span>
+                </button>
+                <button
+                  onClick={regenerateDailyPlan}
+                  className="px-2.5 py-1 text-[11px] font-semibold rounded bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1 transition-colors"
+                  title="Generate fresh intelligent plan for today"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>Plan My Day</span>
+                </button>
+              </div>
             </div>
 
+            {/* Memory Transparency Banner */}
+            {(dailyPlan.explanation?.memoriesApplied && dailyPlan.explanation.memoriesApplied.length > 0) || aiMemories.length > 0 ? (
+              <div className="p-2.5 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60 flex items-start justify-between gap-2 text-[11px]">
+                <div className="flex items-start gap-2 text-blue-900 dark:text-blue-200">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold">Personalized using your preferences: </span>
+                    <span className="text-blue-800 dark:text-blue-300">
+                      {(dailyPlan.explanation?.memoriesApplied && dailyPlan.explanation.memoriesApplied.length > 0
+                        ? dailyPlan.explanation.memoriesApplied
+                        : aiMemories.slice(0, 3).map(m => m.fact)
+                      ).join(' • ')}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsAiDrawerOpen(true)}
+                  className="text-[10px] font-semibold text-blue-700 dark:text-blue-300 hover:underline shrink-0"
+                >
+                  Edit Memory
+                </button>
+              </div>
+            ) : null}
+
+            {/* Manual Add Block Form */}
+            {showAddBlockForm && (
+              <form
+                onSubmit={e => {
+                  e.preventDefault();
+                  if (!newBlockTitle.trim()) return;
+                  addCustomDailyPlanBlock({
+                    time: `${newBlockStart} - ${newBlockEnd}`,
+                    startTime: newBlockStart,
+                    endTime: newBlockEnd,
+                    title: newBlockTitle.trim(),
+                    type: newBlockType,
+                    completed: false,
+                    reason: 'Manually added by you'
+                  });
+                  setNewBlockTitle('');
+                  setShowAddBlockForm(false);
+                }}
+                className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 space-y-2.5 text-xs"
+              >
+                <div className="flex items-center justify-between font-semibold text-slate-800 dark:text-slate-200">
+                  <span>Add Custom Schedule Block</span>
+                  <button type="button" onClick={() => setShowAddBlockForm(false)} className="text-slate-400 hover:text-slate-600">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Activity or study topic..."
+                    value={newBlockTitle}
+                    onChange={e => setNewBlockTitle(e.target.value)}
+                    className="sm:col-span-2 px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                  />
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="time"
+                      value={newBlockStart}
+                      onChange={e => setNewBlockStart(e.target.value)}
+                      className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
+                    />
+                    <span className="text-slate-400">–</span>
+                    <input
+                      type="time"
+                      value={newBlockEnd}
+                      onChange={e => setNewBlockEnd(e.target.value)}
+                      className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={newBlockType}
+                      onChange={e => setNewBlockType(e.target.value as 'study' | 'review' | 'break' | 'class')}
+                      className="flex-1 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                    >
+                      <option value="study">Study</option>
+                      <option value="review">Revision</option>
+                      <option value="break">Break</option>
+                      <option value="class">Commitment</option>
+                    </select>
+                    <button
+                      type="submit"
+                      className="px-3 py-1.5 rounded bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
             {dailyPlan.blocks.length === 0 ? (
-              <div className="py-6 text-center text-xs text-slate-400">
-                No scheduled blocks yet. Add a course or task to generate your timetable plan.
+              <div className="py-6 text-center space-y-2 text-xs text-slate-400">
+                <p>No scheduled blocks yet. Click "Plan My Day" to generate a realistic, conflict-free schedule.</p>
+                <button
+                  onClick={regenerateDailyPlan}
+                  className="px-3 py-1.5 rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold text-xs inline-flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Generate Today's Plan</span>
+                </button>
               </div>
             ) : (
               <div className="divide-y divide-slate-100 dark:divide-slate-800 py-1">
-                {dailyPlan.blocks.map(block => (
-                  <div
-                    key={block.id}
-                    className={`py-2.5 px-2 flex items-center justify-between gap-3 text-xs rounded-md transition-colors ${
-                      block.completed ? 'opacity-50 line-through' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => toggleDailyPlanBlock(block.id)}
-                        className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                      >
-                        <CheckCircle2 className={`w-4 h-4 ${block.completed ? 'text-emerald-600' : 'text-slate-300'}`} />
-                      </button>
-                      <div>
-                        <span className="font-semibold text-slate-900 dark:text-slate-100">
-                          {block.title}
+                {dailyPlan.blocks.map((block, index) => {
+                  const isEditingThis = editingBlockId === block.id;
+                  return (
+                    <div
+                      key={block.id}
+                      className={`py-2.5 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs rounded-md transition-colors group ${
+                        block.completed ? 'opacity-50 bg-slate-50/40 dark:bg-slate-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                        <button
+                          onClick={() => toggleDailyPlanBlock(block.id)}
+                          className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 mt-0.5 sm:mt-0 shrink-0"
+                          title={block.completed ? 'Mark incomplete' : 'Mark completed'}
+                        >
+                          <CheckCircle2 className={`w-4 h-4 ${block.completed ? 'text-emerald-600' : 'text-slate-300'}`} />
+                        </button>
+
+                        {isEditingThis ? (
+                          <div className="flex flex-wrap items-center gap-2 flex-1">
+                            <input
+                              type="text"
+                              value={editBlockTime}
+                              onChange={e => setEditBlockTime(e.target.value)}
+                              className="w-28 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono text-[11px]"
+                              placeholder="09:00 - 10:00"
+                            />
+                            <input
+                              type="text"
+                              value={editBlockTitle}
+                              onChange={e => setEditBlockTitle(e.target.value)}
+                              className="flex-1 min-w-[160px] px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateDailyPlanBlock(block.id, {
+                                  time: editBlockTime.trim() || block.time,
+                                  title: editBlockTitle.trim() || block.title
+                                });
+                                setEditingBlockId(null);
+                              }}
+                              className="p-1 rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                              title="Save changes"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingBlockId(null)}
+                              className="p-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                              title="Cancel"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`font-semibold text-slate-900 dark:text-slate-100 ${block.completed ? 'line-through' : ''}`}>
+                                {block.title}
+                              </span>
+                              {block.priority === 'critical' && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                                  Priority
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5 flex-wrap">
+                              <span className="font-mono font-medium text-slate-600 dark:text-slate-400">{block.time}</span>
+                              {block.reason && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-slate-500 dark:text-slate-400 italic">{block.reason}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                        {!block.completed && (block.type === 'study' || block.type === 'review') && (
+                          <button
+                            onClick={() => startFocusTimer(block.durationMinutes || 45, block.taskId, block.courseId, block.title)}
+                            className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1"
+                            title="Start Focus Timer for this block"
+                          >
+                            <Play className="w-2.5 h-2.5 text-emerald-600" />
+                            <span>Focus</span>
+                          </button>
+                        )}
+
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium capitalize ${
+                          block.type === 'class' ? 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300' :
+                          block.type === 'exam' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold' :
+                          block.type === 'study' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' :
+                          block.type === 'review' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300' :
+                          'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {block.type}
                         </span>
-                        <div className="text-[11px] text-slate-500 font-mono">
-                          {block.time}
+
+                        {/* Manual Reorder / Edit / Delete Controls */}
+                        <div className="flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => moveDailyPlanBlock(block.id, 'up')}
+                            className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-30"
+                            title="Move earlier"
+                          >
+                            <ArrowUp className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === dailyPlan.blocks.length - 1}
+                            onClick={() => moveDailyPlanBlock(block.id, 'down')}
+                            className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-30"
+                            title="Move later"
+                          >
+                            <ArrowDown className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingBlockId(block.id);
+                              setEditBlockTime(block.time);
+                              setEditBlockTitle(block.title);
+                            }}
+                            className="p-1 rounded text-slate-400 hover:text-blue-600"
+                            title="Edit time or title"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteDailyPlanBlock(block.id)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600"
+                            title="Remove from today's plan"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
                         </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            )}
 
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium capitalize ${
-                      block.type === 'class' ? 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300' :
-                      block.type === 'study' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' :
-                      block.type === 'review' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300' :
-                      'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                    }`}>
-                      {block.type}
-                    </span>
+            {/* Plan Explanation Section (Why prioritized, Deadlines considered, What was postponed) */}
+            {dailyPlan.explanation && (
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowExplanation(prev => !prev)}
+                  className="w-full flex items-center justify-between text-left text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Why this schedule was generated (AI Reasoning & Prioritization)</span>
+                  </span>
+                  <span className="text-[11px] text-blue-600 dark:text-blue-400">
+                    {showExplanation ? 'Hide Details' : 'Show Details'}
+                  </span>
+                </button>
+
+                {showExplanation && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 space-y-3 text-[11px] text-slate-600 dark:text-slate-300">
+                    <div className="font-medium text-slate-800 dark:text-slate-200">
+                      {dailyPlan.explanation.summary}
+                    </div>
+                    {dailyPlan.explanation.academicModeReason && (
+                      <div className="p-2 rounded bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/50 text-amber-900 dark:text-amber-200">
+                        <strong>Academic Period Rule:</strong> {dailyPlan.explanation.academicModeReason}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {dailyPlan.explanation.prioritizationReasons.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider text-[10px]">
+                            Why Tasks Were Prioritized
+                          </div>
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400">
+                            {dailyPlan.explanation.prioritizationReasons.map((r, i) => (
+                              <li key={i}>{r}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {dailyPlan.explanation.deadlinesConsidered.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider text-[10px]">
+                            Deadlines & Exams Influencing Plan
+                          </div>
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400">
+                            {dailyPlan.explanation.deadlinesConsidered.map((d, i) => (
+                              <li key={i}>{d}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    {dailyPlan.explanation.postponedItems.length > 0 && (
+                      <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/60 space-y-1">
+                        <div className="font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider text-[10px]">
+                          Postponed to Prevent Daily Overload ({dailyPlan.explanation.postponedItems.length})
+                        </div>
+                        <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400">
+                          {dailyPlan.explanation.postponedItems.map((p, i) => (
+                            <li key={i}>{p}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* Right Column: Today's Classes & Daily Review */}
+        {/* Right Column: Mode-Aware Schedule (Midterm/Final Examination Hub OR Normal Classes) & Daily Review */}
         <div className="space-y-6">
-          {/* Next Class Banner & Countdown */}
-          <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
-            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-              {activeOrNext.status === 'happening_now' ? 'Class In Progress' : 'Next Scheduled Class'}
-            </div>
-            {activeOrNext.classItem ? (
-              <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 space-y-1.5">
+          {isExamMode ? (
+            <>
+              {/* MIDTERM / FINAL EXAMINATION MODE SCHEDULE CARD */}
+              <div className={`p-4 sm:p-5 rounded-xl border shadow-sm space-y-3 ${
+                activeAcademicMode === 'midterm'
+                  ? 'border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900'
+                  : 'border-rose-300 dark:border-rose-800 bg-white dark:bg-slate-900'
+              }`}>
                 <div className="flex items-center justify-between">
-                  <span className={`px-2 py-0.5 text-[10px] font-semibold rounded ${
-                    activeOrNext.status === 'happening_now'
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1.5'
-                      : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                    activeAcademicMode === 'midterm'
+                      ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-300'
                   }`}>
-                    {activeOrNext.status === 'happening_now' && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                    )}
-                    {activeOrNext.classItem.time}
+                    {activeAcademicMode === 'midterm' ? 'Midterm Week Active' : 'Final Exam Period Active'}
                   </span>
-                  <span className={`text-[10px] font-mono font-bold ${
-                    activeOrNext.status === 'happening_now' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'
-                  }`}>
-                    {activeOrNext.badgeLabel}
+                  <span className="text-[11px] font-medium text-slate-500">
+                    Regular Classes Suspended
                   </span>
                 </div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  {activeOrNext.classItem.courseCode} — {activeOrNext.classItem.location}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {activeOrNext.classItem.courseName}
-                </p>
-                <div className="text-[11px] text-slate-400 font-medium">
-                  {activeOrNext.subLabel}
+
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    {todayExams.length > 0
+                      ? `Today's Examination Schedule (${todayExams.length})`
+                      : activeAcademicMode === 'midterm'
+                      ? 'Midterm Examination Timetable'
+                      : 'Final Examination Timetable'}
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Weekly lectures are paused during this period and will automatically return when the exam period ends.
+                  </p>
                 </div>
-                <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500">
-                  <span>{activeOrNext.classItem.instructor}</span>
-                  <button
-                    onClick={() => navigateToCourse(activeOrNext.classItem!.courseId)}
-                    className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 font-medium"
-                  >
-                    <span>Open course</span>
-                    <ChevronRight className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="p-4 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
-                <Clock className="w-6 h-6 text-slate-300 dark:text-slate-700 mx-auto" />
-                <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  {courses.length === 0 ? 'No courses added yet' : 'No upcoming classes scheduled'}
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  {courses.length === 0
-                    ? 'Tell Ask AI what classes you have to build your timetable schedule.'
-                    : 'All sessions are complete for now. Check the Timetable tab for the rest of your week.'}
-                </p>
-                {courses.length === 0 && (
-                  <button
-                    onClick={() => setIsAiDrawerOpen(true)}
-                    className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
-                  >
-                    Ask AI to add a course
-                  </button>
+
+                {/* Today's Exams Highlight */}
+                {todayExams.length > 0 && (
+                  <div className="space-y-2 pt-1">
+                    {todayExams.map(ex => (
+                      <div
+                        key={ex.id}
+                        className="p-3 rounded-lg border-2 border-rose-500 bg-rose-50/70 dark:bg-rose-950/30 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white uppercase">
+                            Exam Today • {ex.startTime || '09:00'} – {ex.endTime || '11:00'}
+                          </span>
+                          <span className="text-[11px] font-mono font-bold text-rose-800 dark:text-rose-300">
+                            {ex.courseCode}
+                          </span>
+                        </div>
+                        <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                          {ex.name}
+                        </div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-2 flex-wrap">
+                          <span>📍 {ex.room || 'Main Exam Hall'}</span>
+                          {ex.building && <span>• {ex.building}</span>}
+                          {ex.instructions && <span>• Note: {ex.instructions}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </div>
-            )}
-          </div>
 
-          {/* Today's Classes List */}
-          <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
-                Today's Classes ({todayClasses.length})
-              </h2>
-              <button
-                onClick={() => setActiveView('schedule')}
-                className="text-[11px] text-blue-600 hover:underline"
-              >
-                Full Timetable
-              </button>
-            </div>
+                {/* Complete Midterm / Final Exam Schedule List */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    <span>Scheduled Examinations ({modeExams.length})</span>
+                    <button
+                      onClick={() => openQuickCreate('exam')}
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-semibold normal-case"
+                    >
+                      + Add Exam
+                    </button>
+                  </div>
 
-            {todayClasses.length === 0 ? (
-              <div className="py-4 text-center text-xs text-slate-400">
-                0 classes on {currentDayName}.
+                  {modeExams.length === 0 ? (
+                    <div className="p-4 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
+                      <Award className="w-6 h-6 text-amber-500 mx-auto" />
+                      <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                        No {activeAcademicMode === 'midterm' ? 'Midterm' : 'Final'} Exams Logged Yet
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Add your exam dates, times, rooms, and instructions so the AI planner can build your revision schedule.
+                      </p>
+                      <button
+                        onClick={() => openQuickCreate('exam')}
+                        className="px-3 py-1.5 rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-xs font-semibold"
+                      >
+                        + Add {activeAcademicMode === 'midterm' ? 'Midterm' : 'Final'} Exam
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                      {modeExams.map(ex => (
+                        <div
+                          key={ex.id}
+                          onClick={() => setActiveView('exams')}
+                          className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 hover:border-amber-400 transition-colors cursor-pointer space-y-1.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: ex.courseColor }}
+                              />
+                              <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
+                                {ex.courseCode}: {ex.name}
+                              </span>
+                            </div>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                              ex.diffDays === 0
+                                ? 'bg-rose-600 text-white'
+                                : ex.diffDays === 1
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300'
+                            }`}>
+                              {ex.diffDays === 0 ? 'Today' : ex.diffDays === 1 ? 'Tomorrow' : `In ${ex.diffDays}d`}
+                            </span>
+                          </div>
+
+                          <div className="text-[11px] text-slate-600 dark:text-slate-300 font-mono flex items-center justify-between">
+                            <span>{new Date(ex.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                            <span>{ex.startTime || '09:00'} – {ex.endTime || '11:00'}</span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] text-slate-500">
+                            <span className="flex items-center gap-1 truncate">
+                              <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span className="truncate">{ex.room || 'Exam Hall'}{ex.building ? ` (${ex.building})` : ''}</span>
+                            </span>
+                            <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                              Readiness: {ex.readinessPercent}%
+                            </span>
+                          </div>
+
+                          {/* Course Preparation Progress Bar */}
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="bg-emerald-600 h-full rounded-full transition-all"
+                              style={{ width: `${ex.readinessPercent || 20}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            ) : (
-              <div className="space-y-2">
-                {todayClasses.map((cls, idx) => (
-                  <div
-                    key={idx}
-                    onClick={() => navigateToCourse(cls.courseId)}
-                    className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-1 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition-colors group"
-                  >
+            </>
+          ) : (
+            <>
+              {/* Next Class Banner & Countdown (Normal Semester Mode) */}
+              <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                  {activeOrNext.status === 'happening_now' ? 'Class In Progress' : 'Next Scheduled Class'}
+                </div>
+                {activeOrNext.classItem ? (
+                  <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cls.color }} />
-                        <span className="font-semibold text-xs text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition-colors">
-                          {cls.courseCode}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {cls.status === 'in_progress' && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                            Live
-                          </span>
+                      <span className={`px-2 py-0.5 text-[10px] font-semibold rounded ${
+                        activeOrNext.status === 'happening_now'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1.5'
+                          : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                      }`}>
+                        {activeOrNext.status === 'happening_now' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
                         )}
-                        {cls.status === 'completed' && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
-                            Done
-                          </span>
-                        )}
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono capitalize">
-                          {cls.type}
-                        </span>
-                      </div>
+                        {activeOrNext.classItem.time}
+                      </span>
+                      <span className={`text-[10px] font-mono font-bold ${
+                        activeOrNext.status === 'happening_now' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'
+                      }`}>
+                        {activeOrNext.badgeLabel}
+                      </span>
                     </div>
-                    <div className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                      {cls.courseName}
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      {activeOrNext.classItem.courseCode} — {activeOrNext.classItem.location}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {activeOrNext.classItem.courseName}
+                    </p>
+                    <div className="text-[11px] text-slate-400 font-medium">
+                      {activeOrNext.subLabel}
                     </div>
-                    <div className="text-[11px] text-slate-400 font-mono flex items-center justify-between">
-                      <span>{cls.time}</span>
-                      <span>{cls.location}</span>
+                    <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>{activeOrNext.classItem.instructor}</span>
+                      <button
+                        onClick={() => navigateToCourse(activeOrNext.classItem!.courseId)}
+                        className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 font-medium"
+                      >
+                        <span>Open course</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
-                ))}
+                ) : (
+                  <div className="p-4 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
+                    <Clock className="w-6 h-6 text-slate-300 dark:text-slate-700 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      {isHolidayOrSuspendedToday
+                        ? 'University Holiday / Classes Cancelled Today'
+                        : courses.length === 0
+                        ? 'No courses added yet'
+                        : 'No upcoming classes scheduled'}
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      {isHolidayOrSuspendedToday
+                        ? 'Regular classes are suspended today per your Academic Calendar settings.'
+                        : courses.length === 0
+                        ? 'Tell Ask AI what classes you have to build your timetable schedule.'
+                        : 'All sessions are complete for now. Check the Timetable tab for the rest of your week.'}
+                    </p>
+                    {courses.length === 0 && (
+                      <button
+                        onClick={() => setIsAiDrawerOpen(true)}
+                        className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline"
+                      >
+                        Ask AI to add a course
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+
+              {/* Today's Classes List */}
+              <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                    Today's Classes ({todayClasses.length})
+                  </h2>
+                  <button
+                    onClick={() => setActiveView('schedule')}
+                    className="text-[11px] text-blue-600 hover:underline"
+                  >
+                    Full Timetable
+                  </button>
+                </div>
+
+                {todayClasses.length === 0 ? (
+                  <div className="py-4 text-center text-xs text-slate-400">
+                    0 classes on {currentDayName}.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {todayClasses.map((cls, idx) => (
+                      <div
+                        key={`${cls.courseId}_${cls.time}_${idx}`}
+                        onClick={() => navigateToCourse(cls.courseId)}
+                        className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-1 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition-colors group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cls.color }} />
+                            <span className="font-semibold text-xs text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition-colors">
+                              {cls.courseCode}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {cls.status === 'in_progress' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                                Live
+                              </span>
+                            )}
+                            {cls.status === 'completed' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
+                                Done
+                              </span>
+                            )}
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono capitalize">
+                              {cls.type}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-slate-600 dark:text-slate-400 truncate">
+                          {cls.courseName}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono flex items-center justify-between">
+                          <span>{cls.time}</span>
+                          <span>{cls.location}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           {/* Daily Review Card */}
           <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">

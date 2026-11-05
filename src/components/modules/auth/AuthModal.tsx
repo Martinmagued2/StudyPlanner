@@ -1,19 +1,21 @@
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
-import { Lock, Mail, User, Sparkles, Moon, Sun, ArrowRight, CheckCircle2, ShieldCheck, Smartphone, RefreshCw, KeyRound } from 'lucide-react';
+import { Lock, Mail, User, Sparkles, Moon, Sun, ArrowRight, CheckCircle2, ShieldCheck, Smartphone, RefreshCw, KeyRound, AtSign } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
-  const { login, loginDemo, theme, setTheme, loadFromCloud } = useApp();
+  const { registerAccount, authenticateUser, loginDemo, theme, setTheme, loadFromCloud } = useApp();
 
-  const [mode, setMode] = useState<'register' | 'login' | 'sync'>('register');
+  const [mode, setMode] = useState<'register' | 'login' | 'sync'>('login');
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [syncCode, setSyncCode] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -24,7 +26,6 @@ export const AuthModal: React.FC = () => {
         return;
       }
 
-      // If user pasted full link with ?sync=..., extract the code
       let extractedId = trimmed;
       if (trimmed.includes('sync=')) {
         const parts = trimmed.split('sync=');
@@ -39,7 +40,7 @@ export const AuthModal: React.FC = () => {
             setErrorMsg('Sync Code not found or expired. Please check the code on your laptop and try again.');
           }
         })
-        .catch(err => {
+        .catch(() => {
           setIsSyncing(false);
           setErrorMsg('Failed to connect to cloud sync. Please check your connection.');
         });
@@ -47,7 +48,7 @@ export const AuthModal: React.FC = () => {
     }
 
     if (!email.trim() || !password.trim()) {
-      setErrorMsg('Please enter both email and password.');
+      setErrorMsg('Please enter your email/username and password.');
       return;
     }
 
@@ -56,8 +57,22 @@ export const AuthModal: React.FC = () => {
       return;
     }
 
-    // Login or Register: uses deterministic user isolation based on email
-    login(email.trim(), mode === 'register' ? name.trim() : undefined);
+    setIsSubmitting(true);
+    try {
+      if (mode === 'register') {
+        const res = await registerAccount(name.trim(), email.trim(), password, username.trim() || undefined);
+        if (!res.success) {
+          setErrorMsg(res.error || 'Registration failed.');
+        }
+      } else {
+        const res = await authenticateUser(email.trim(), password);
+        if (!res.success) {
+          setErrorMsg(res.error || 'Invalid credentials.');
+        }
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -94,17 +109,6 @@ export const AuthModal: React.FC = () => {
           <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-semibold">
             <button
               type="button"
-              onClick={() => { setMode('register'); setErrorMsg(''); }}
-              className={`py-2 rounded-md transition-all ${
-                mode === 'register'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              Register
-            </button>
-            <button
-              type="button"
               onClick={() => { setMode('login'); setErrorMsg(''); }}
               className={`py-2 rounded-md transition-all ${
                 mode === 'login'
@@ -113,6 +117,17 @@ export const AuthModal: React.FC = () => {
               }`}
             >
               Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode('register'); setErrorMsg(''); }}
+              className={`py-2 rounded-md transition-all ${
+                mode === 'register'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              Register
             </button>
             <button
               type="button"
@@ -133,7 +148,7 @@ export const AuthModal: React.FC = () => {
             <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex items-start gap-2.5">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
               <div className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                <span className="font-semibold text-slate-900 dark:text-slate-100">Clean, Empty Workspace:</span> Your new account starts fresh with 0 courses and 0 coursework.
+                <span className="font-semibold text-slate-900 dark:text-slate-100">Isolated Personal Account:</span> Your account starts with a clean, private workspace and encrypted password verification.
               </div>
             </div>
           )}
@@ -178,36 +193,53 @@ export const AuthModal: React.FC = () => {
             ) : (
               <>
                 {mode === 'register' && (
-                  <div>
-                    <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                      Your Full Name
-                    </label>
-                    <div className="relative">
-                      <User className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        required
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        placeholder="e.g. Jordan Smith"
-                        className="w-full pl-9 pr-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-slate-900 dark:focus:border-slate-100"
-                      />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
+                        Full Name
+                      </label>
+                      <div className="relative">
+                        <User className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          required
+                          value={name}
+                          onChange={e => setName(e.target.value)}
+                          placeholder="e.g. Jordan Smith"
+                          className="w-full pl-9 pr-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-slate-900 dark:focus:border-slate-100"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
+                        Username (Optional)
+                      </label>
+                      <div className="relative">
+                        <AtSign className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={username}
+                          onChange={e => setUsername(e.target.value)}
+                          placeholder="e.g. jordans"
+                          className="w-full pl-9 pr-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-slate-900 dark:focus:border-slate-100"
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
 
                 <div>
                   <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">
-                    Email Address
+                    {mode === 'register' ? 'Email Address' : 'Email Address or Username'}
                   </label>
                   <div className="relative">
                     <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
-                      type="email"
+                      type={mode === 'register' ? 'email' : 'text'}
                       required
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      placeholder="student@university.edu"
+                      placeholder={mode === 'register' ? 'student@university.edu' : 'student@university.edu or username'}
                       className="w-full pl-9 pr-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-slate-900 dark:focus:border-slate-100"
                     />
                   </div>
@@ -234,17 +266,17 @@ export const AuthModal: React.FC = () => {
 
             <button
               type="submit"
-              disabled={isSyncing}
+              disabled={isSyncing || isSubmitting}
               className={`w-full py-2.5 rounded-md font-semibold transition-colors mt-2 flex items-center justify-center gap-2 ${
                 mode === 'sync'
                   ? 'bg-blue-600 text-white hover:bg-blue-700'
                   : 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white'
               }`}
             >
-              {isSyncing ? (
+              {isSyncing || isSubmitting ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Connecting & Restoring...</span>
+                  <span>{isSyncing ? 'Connecting & Restoring...' : 'Verifying Account...'}</span>
                 </>
               ) : mode === 'sync' ? (
                 <>
@@ -252,7 +284,7 @@ export const AuthModal: React.FC = () => {
                   <span>Connect & Load Data</span>
                 </>
               ) : mode === 'register' ? (
-                'Register & Start Empty Workspace'
+                'Create Isolated Account & Start'
               ) : (
                 'Sign In to Workspace'
               )}
@@ -279,7 +311,7 @@ export const AuthModal: React.FC = () => {
         {/* Footer Security Note */}
         <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 text-center px-4">
           <ShieldCheck className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-          <span>Cross-device cloud synchronization & local client-side data isolation.</span>
+          <span>Strict per-user account isolation, SHA-256 password verification & cloud database sync.</span>
         </div>
       </div>
     </div>

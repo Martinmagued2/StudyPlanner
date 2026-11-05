@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { X, CheckSquare, FileText, FileCheck2, Award, Calendar, Clock } from 'lucide-react';
-import { AssignmentType, PriorityLevel, EventType } from '../../types';
+import { AssignmentType, PriorityLevel, EventType, ExamPeriodType } from '../../types';
 
 export const QuickCreateModal: React.FC = () => {
   const {
@@ -30,6 +30,9 @@ export const QuickCreateModal: React.FC = () => {
   const [examWeight, setExamWeight] = useState(25);
   const [examStartTime, setExamStartTime] = useState('09:00');
   const [examEndTime, setExamEndTime] = useState('11:00');
+  const [examType, setExamType] = useState<ExamPeriodType>('midterm');
+  const [examBuilding, setExamBuilding] = useState('');
+  const [examOnline, setExamOnline] = useState(false);
   const [eventType, setEventType] = useState<EventType>('event');
   const [location, setLocation] = useState('');
 
@@ -54,7 +57,7 @@ export const QuickCreateModal: React.FC = () => {
     } else if (activeTab === 'note') {
       addNote({
         title,
-        content: description ? `<p>${description}</p>` : `<p>Lecture notes and key concepts...</p>`,
+        content: description ? `<p>${description}</p>` : `<p><br></p>`,
         courseId: courseId || undefined,
         tags: ['quick-note'],
         pinned: false,
@@ -75,15 +78,23 @@ export const QuickCreateModal: React.FC = () => {
       });
       setActiveView('assignments');
     } else if (activeTab === 'exam') {
+      const [sh, sm] = (examStartTime || '09:00').split(':').map(Number);
+      const [eh, em] = (examEndTime || '11:00').split(':').map(Number);
+      const calcDuration = !isNaN(sh) && !isNaN(eh) ? Math.max(30, (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0))) : 120;
       addExam({
         name: title,
         courseId: courseId || courses[0]?.id || 'course_cs302',
         date: dueDate ? dueDate.slice(0, 10) : new Date(Date.now() + 14 * 86400 * 1000).toISOString().slice(0, 10),
         startTime: examStartTime || '09:00',
         endTime: examEndTime || '11:00',
+        durationMinutes: calcDuration,
+        examType,
         weightPercentage: Number(examWeight) || 25,
         room: location || 'Exam Hall',
-        description: description || undefined
+        building: examBuilding || undefined,
+        isOnline: examOnline,
+        description: description || undefined,
+        instructions: description || undefined
       });
       setActiveView('exams');
     } else if (activeTab === 'event') {
@@ -270,7 +281,22 @@ export const QuickCreateModal: React.FC = () => {
 
           {activeTab === 'exam' && (
             <div className="space-y-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Exam Type
+                  </label>
+                  <select
+                    value={examType}
+                    onChange={e => setExamType(e.target.value as ExamPeriodType)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  >
+                    <option value="midterm">Midterm Exam</option>
+                    <option value="final">Final Exam</option>
+                    <option value="quiz">Quiz / Test</option>
+                    <option value="practical">Practical / Viva</option>
+                  </select>
+                </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Exam Date
@@ -295,6 +321,30 @@ export const QuickCreateModal: React.FC = () => {
                     className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Building / Campus
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Turing Building, Docklands"
+                    value={examBuilding}
+                    onChange={e => setExamBuilding(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 pt-4 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={examOnline}
+                    onChange={e => setExamOnline(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  <span>Online / Remote Examination</span>
+                </label>
               </div>
 
               {/* Exam Start & End Times */}

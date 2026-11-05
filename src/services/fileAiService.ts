@@ -466,71 +466,72 @@ Low  +-------------------------> Time
     };
   }
 
-  // Local Academic NLP Engine Fallback
+  // Local Academic NLP Engine Fallback — Document-Specific Extraction (never static boilerplate)
   const { keyTerms, paragraphs, sentences } = extractConceptsFromText(combinedText);
-  const sampleExcerpt = sentences.slice(0, 6).join(' ');
+  const allChunks = files.flatMap(f => f.chunks || []);
+  const overviewSentences = sentences.slice(0, 5).join(' ');
 
-  const localNotes = `# 🎓 Detailed Lecture Explanation: ${primaryTitle}
+  // Build unique term definitions from actual sentences in the document that mention each term
+  const termDefinitions = keyTerms.slice(0, 8).map((term, idx) => {
+    const matchingSentence = sentences.find(s => s.toLowerCase().includes(term.toLowerCase())) || sentences[idx + 2] || '';
+    const explanation = matchingSentence
+      ? matchingSentence.trim()
+      : `Core concept covered in ${primaryTitle}.`;
+    return `- **${term}**: ${explanation}`;
+  }).join('\n');
 
-> **Source Documents**: ${fileNames}  
+  // Build section-by-section breakdown from actual chunks or paragraphs
+  const sectionBlocks = allChunks.length > 0
+    ? allChunks.slice(0, 8).map((chunk, idx) => {
+        const cleanChunk = (chunk.content || '').replace(/\s+/g, ' ').trim();
+        return `### Section ${idx + 1} (Page/Slide ${chunk.page || chunk.slideNumber || idx + 1})\n${cleanChunk}`;
+      }).join('\n\n')
+    : paragraphs.slice(0, 6).map((p, idx) => `### Topic ${idx + 1}\n${p.trim()}`).join('\n\n');
+
+  const keyTakeaways = sentences
+    .filter((_, idx) => idx % 2 === 0)
+    .slice(0, 6)
+    .map(s => `- ${s.trim()}`)
+    .join('\n');
+
+  const localNotes = `# 🎓 Detailed Lecture Notes: ${primaryTitle}
+
+> **Source Document(s)**: ${fileNames}  
 > **Course Context**: ${options.courseCode || 'Academic Curriculum'}  
-> **Prepared by**: Nook Academic AI Assistant  
+> **Total Extracted Sections**: ${allChunks.length || paragraphs.length || 1}
 
 ---
 
-## 1. Executive Overview & Context
-This lecture establishes the critical theoretical framework and computational invariants underlying **${keyTerms.slice(0, 3).join(', ')}**. The primary objective is to equip students with both high-level conceptual intuition and rigorous analytical rigor.
-
-${sampleExcerpt || 'The lecture material details systemic models, algorithmic invariants, and operational boundary conditions required for problem solving in this academic module.'}
+## 1. Document Overview & Core Summary
+${overviewSentences || files.map(f => f.summary).filter(Boolean).join(' ') || `Comprehensive notes extracted directly from ${fileNames}.`}
 
 ---
 
-## 2. Fundamental Terminology & Core Invariants
-The document highlights several foundational concepts:
-
-${keyTerms.slice(0, 5).map(term => `- **${term}**: Represents a fundamental mechanism governing system stability, structural orientation, and complexity bounds. It ensures that system state transitions remain deterministic.`).join('\n')}
+## 2. Key Concepts & Extracted Definitions
+${termDefinitions || `- **${primaryTitle}**: Primary focus of this document.`}
 
 ---
 
-## 3. Step-by-Step Mechanism Breakdown
-When analyzing the lecture material, the workflow follows this logical progression:
-
-1. **Initial State & Problem Formulation**:
-   - The system begins by observing baseline inputs and identifying structural imbalances or edge conditions.
-2. **Algorithmic Execution & Invariant Preservation**:
-   - Every operation strictly adheres to governing constraints, maintaining asymptotic bounds and data integrity.
-3. **Termination & Convergence**:
-   - The sequence concludes with verifiable correctness proofs and optimal computational overhead.
+## 3. Section-by-Section Content Breakdown
+${sectionBlocks || combinedText.slice(0, 2500)}
 
 ---
 
-## 4. Worked Conceptual Example & Application
-Consider a representative scenario from the lecture:
-- **Input / State**: Initial parameters processed through the primary operational pipeline.
-- **Operational Rule**: Apply governing theorems to rebalance or transform intermediate representations.
-- **Resulting Guarantee**: Bounded worst-case performance and deterministic output consistency.
+## 4. Key Takeaways & Critical Points
+${keyTakeaways || `- Review all sections of ${fileNames} carefully.`}
 
 ---
 
-## 5. ⚠️ Critical Exam Traps & Common Fallacies
-- **Trap 1: Confusing Average-Case with Worst-Case**: Worst-case bounds must hold unconditionally, even when amortized or average costs appear lower.
-- **Trap 2: Ignoring Boundary & Edge Cases**: Watch out for zero-length inputs, single-node trees, or null parameter transitions.
-- **Trap 3: Misapplying Invariants**: Ensure all pre-conditions are verified before executing structural transformations.
-
----
-
-## 6. 📝 High-Yield Revision Checklist
-- [ ] Memorize the exact definitions of **${keyTerms.slice(0, 4).join(', ')}**.
-- [ ] Practice step-by-step execution traces on sample problem sets.
-- [ ] Review all formula derivations and formal invariant guarantees.
-- [ ] Test edge cases to ensure deep understanding before examination day.
+## 5. 📝 Revision Checklist for ${primaryTitle}
+${keyTerms.slice(0, 5).map(t => `- [ ] Master concept and application of **${t}**`).join('\n')}
+- [ ] Review all ${allChunks.length || 1} page/slide sections from ${fileNames}
 `;
 
   return {
-    title: `${primaryTitle} - Lecture Explanation & Notes`,
+    title: `${primaryTitle} — Lecture Notes`,
     content: localNotes,
     keyTerms,
-    summary: `Detailed lecture explanation generated from ${fileNames}. Covers core concepts, step-by-step breakdown, exam pitfalls, and checklist.`
+    summary: `Detailed lecture notes extracted from ${fileNames} covering ${keyTerms.slice(0, 4).join(', ')}.`
   };
 }
 

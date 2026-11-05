@@ -211,9 +211,11 @@ g++ -O2 -std=c++17 solution.cpp -o solution
 
   const editorRef = useRef<HTMLDivElement>(null);
   const lastLoadedNoteId = useRef<string | null>(null);
+  const activeEditingNoteIdRef = useRef<string | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedRange = useRef<Range | null>(null);
 
-  const selectedNote = notes.find(n => n.id === selectedNoteId) || activeNotes[0];
+  const selectedNote = activeNotes.find(n => n.id === selectedNoteId) || activeNotes[0];
 
   // Selection preservation
   const saveSelection = () => {
@@ -548,27 +550,37 @@ g++ -O2 -std=c++17 solution.cpp -o solution
     }
   };
 
+  // 1. When switching to a different note ID, decide preview vs edit mode cleanly
   useEffect(() => {
-    if (selectedNote) {
-      if (lastLoadedNoteId.current !== selectedNote.id) {
-        const isAcademicGuide =
-          selectedNote.content.includes('# ') ||
-          selectedNote.content.includes('---') ||
-          selectedNote.content.includes('🎓') ||
-          selectedNote.content.includes('``') ||
-          selectedNote.content.includes('[ ]') ||
-          selectedNote.content.includes('Executive Summary') ||
-          selectedNote.content.includes('1. ');
-        if (isAcademicGuide) {
-          setIsPreviewMode(true);
-        }
-        if (editorRef.current) {
-          editorRef.current.innerHTML = normalizeToHtml(selectedNote.content);
-        }
-        lastLoadedNoteId.current = selectedNote.id;
-      }
+    if (!selectedNote) return;
+    if (activeEditingNoteIdRef.current !== selectedNote.id) {
+      activeEditingNoteIdRef.current = selectedNote.id;
+      const trimmed = (selectedNote.content || '').trim();
+      const isRawMarkdownGuide =
+        !trimmed.startsWith('<') &&
+        (trimmed.startsWith('# ') || trimmed.includes('\n## ') || trimmed.includes('\n---\n'));
+      setIsPreviewMode(isRawMarkdownGuide);
+      lastLoadedNoteId.current = null;
     }
   }, [selectedNote?.id]);
+
+  // 2. Always synchronize editor DOM whenever note ID changes or user switches from Preview -> Edit
+  useEffect(() => {
+    if (!selectedNote || isPreviewMode) return;
+    if (editorRef.current) {
+      const targetLoadKey = `${selectedNote.id}_edit`;
+      if (lastLoadedNoteId.current !== targetLoadKey) {
+        editorRef.current.innerHTML = normalizeToHtml(selectedNote.content || '<p><br></p>');
+        lastLoadedNoteId.current = targetLoadKey;
+      } else if (document.activeElement !== editorRef.current) {
+        // Keep in sync if remote/external update arrived while editor is not focused
+        const normalized = normalizeToHtml(selectedNote.content || '<p><br></p>');
+        if (editorRef.current.innerHTML !== normalized) {
+          editorRef.current.innerHTML = normalized;
+        }
+      }
+    }
+  }, [selectedNote?.id, selectedNote?.content, isPreviewMode]);
 
   const filteredNotes = activeNotes.filter(n => {
     const matchesCourse = selectedCourseFilter === 'all' || n.courseId === selectedCourseFilter;
@@ -584,35 +596,51 @@ g++ -O2 -std=c++17 solution.cpp -o solution
 
   const handleTitleChange = (newTitle: string) => {
     if (!selectedNote) return;
-    updateNote(selectedNote.id, { title: newTitle });
+    const targetId = selectedNote.id;
+    updateNote(targetId, { title: newTitle });
     triggerAutosave();
   };
 
   const handleEditorInput = () => {
     if (!selectedNote || !editorRef.current) return;
+    const targetId = selectedNote.id;
     const htmlContent = editorRef.current.innerHTML;
-    updateNote(selectedNote.id, { content: htmlContent });
+    lastLoadedNoteId.current = `${targetId}_edit`;
+    updateNote(targetId, { content: htmlContent });
     triggerAutosave();
   };
 
   const triggerAutosave = () => {
     setSaveStatus('Saving changes...');
-    setTimeout(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
       setSaveStatus('All changes saved');
-    }, 400);
+    }, 550);
   };
 
   const handleCreateNewNote = () => {
+    const defaultCourseId = selectedCourseFilter !== 'all' ? selectedCourseFilter : courses[0]?.id;
     const newNote = addNote({
-      title: 'Untitled Lecture Note',
-      content: '<p>Start typing your lecture notes, questions, or ideas directly here...</p>',
-      courseId: courses[0]?.id,
-      tags: ['lecture'],
+      title: 'Untitled Note',
+      content: '<p><br></p>',
+      courseId: defaultCourseId,
+      tags: ['notes'],
       pinned: false,
       highlightedTerms: []
     });
-    setSelectedNoteId(newNote.id);
+    setIsPreviewMode(false);
     lastLoadedNoteId.current = null;
+    activeEditingNoteIdRef.current = newNote.id;
+    setSelectedNoteId(newNote.id);
+    setSaveStatus('All changes saved');
+    setTimeout(() => {
+      if (editorRef.current) {
+        editorRef.current.innerHTML = '<p><br></p>';
+        editorRef.current.focus();
+      }
+    }, 30);
   };
 
   // Document Metrics
@@ -1836,7 +1864,10 @@ Include:
 
               {/* The Live Document Body or Markdown/LaTeX Preview */}
               {isPreviewMode ? (
-                <div className="flex-1 w-full min-h-[500px] text-slate-800 dark:text-slate-200 p-4 sm:p-6 bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs">
+                <div
+                  key={`preview_${selectedNote.id}`}
+                  className="flex-1 w-full min-h-[500px] text-slate-800 dark:text-slate-200 p-4 sm:p-6 bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs"
+                >
                   <div className="mb-4 flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 text-xs text-slate-500">
                     <span className="flex items-center gap-1.5 font-semibold text-blue-600 dark:text-blue-400">
                       <Eye className="w-3.5 h-3.5" />
@@ -1855,6 +1886,7 @@ Include:
                 </div>
               ) : (
                 <div
+                  key={`editor_${selectedNote.id}`}
                   ref={editorRef}
                   contentEditable
                   suppressContentEditableWarning

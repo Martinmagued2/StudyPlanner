@@ -225,6 +225,8 @@ export interface RevisionSession {
   linkedTaskId?: string;
 }
 
+export type ExamPeriodType = 'midterm' | 'final' | 'quiz' | 'practical' | 'other';
+
 export interface Exam {
   id: string;
   name: string;
@@ -232,11 +234,49 @@ export interface Exam {
   date: string; // YYYY-MM-DD
   startTime?: string; // HH:mm e.g. "09:00"
   endTime?: string;   // HH:mm e.g. "11:30"
+  durationMinutes?: number;
+  examType?: ExamPeriodType;
   weightPercentage: number;
   readinessPercent: number;
   revisionSessions: RevisionSession[];
   room?: string;
+  building?: string;
+  campus?: string;
+  isOnline?: boolean;
   description?: string;
+  instructions?: string;
+}
+
+export type AcademicMode = 'normal' | 'midterm' | 'final';
+
+export interface AcademicHoliday {
+  id: string;
+  title?: string;
+  name?: string;
+  date?: string;      // YYYY-MM-DD
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;   // YYYY-MM-DD
+  type?: 'holiday' | 'reading_week' | 'special_day';
+}
+
+export interface CancelledClassEntry {
+  id: string;
+  courseId: string;
+  date: string; // YYYY-MM-DD
+  reason?: string;
+}
+
+export interface AcademicCalendarConfig {
+  modePreference: 'auto' | AcademicMode;
+  semesterName?: string;
+  semesterStartDate?: string; // YYYY-MM-DD
+  semesterEndDate?: string;   // YYYY-MM-DD
+  midtermStartDate?: string;  // YYYY-MM-DD
+  midtermEndDate?: string;    // YYYY-MM-DD
+  finalStartDate?: string;    // YYYY-MM-DD
+  finalEndDate?: string;      // YYYY-MM-DD
+  holidays: AcademicHoliday[];
+  cancelledClasses: CancelledClassEntry[];
 }
 
 export interface GradeItem {
@@ -261,11 +301,23 @@ export interface PreviousTermCourse {
   gradePoints?: number; // e.g. 4.0
 }
 
+export type AiMemoryCategory =
+  | 'preference'
+  | 'schedule'
+  | 'weakness'
+  | 'goal'
+  | 'habit'
+  | 'commitment'
+  | 'sleep';
+
 export interface AiMemory {
   id: string;
   fact: string;
-  category: 'preference' | 'schedule' | 'weakness' | 'goal';
+  content?: string;
+  category: AiMemoryCategory;
+  source?: 'explicit' | 'inferred';
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface AiActionProposal {
@@ -283,6 +335,7 @@ export interface ChatMessage {
   timestamp: string;
   reasoningSteps?: string[];
   actionProposals?: AiActionProposal[];
+  memoriesUsed?: string[];
   citations?: {
     file: string;
     page: number;
@@ -301,11 +354,28 @@ export interface ChatSession {
 export interface DailyPlanBlock {
   id: string;
   time: string; // "09:00 - 10:30"
+  startTime?: string; // "09:00"
+  endTime?: string;   // "10:30"
+  durationMinutes?: number;
   title: string;
-  type: 'class' | 'study' | 'break' | 'review';
+  type: 'class' | 'study' | 'break' | 'review' | 'revision' | 'assignment' | 'exam' | 'commitment';
   completed: boolean;
+  status?: 'planned' | 'pending' | 'completed' | 'missed' | 'postponed' | 'rescheduled' | 'approved';
+  priority?: PriorityLevel | 'critical';
   courseId?: string;
   taskId?: string;
+  assignmentId?: string;
+  examId?: string;
+  reason?: string;
+}
+
+export interface DailyPlanExplanation {
+  summary: string;
+  academicModeReason?: string;
+  prioritizationReasons: string[];
+  deadlinesConsidered: string[];
+  postponedItems: string[];
+  memoriesApplied: string[];
 }
 
 export interface DailyPlan {
@@ -313,6 +383,8 @@ export interface DailyPlan {
   blocks: DailyPlanBlock[];
   generatedBy: 'ai' | 'fallback';
   fallbackReason?: string;
+  academicMode?: AcademicMode;
+  explanation?: DailyPlanExplanation;
 }
 
 export interface ReminderLog {
@@ -376,7 +448,9 @@ export interface GitHubRepo {
 export interface UserAccount {
   id: string;
   name: string;
+  username?: string;
   email: string;
   avatarUrl?: string;
   isDemo: boolean;
+  createdAt?: string;
 }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   UserAccount,
   Course,
@@ -19,7 +19,9 @@ import {
   GradeItem,
   PreviousTermCourse,
   AiMemory,
+  AiMemoryCategory,
   DailyPlan,
+  DailyPlanExplanation,
   ReminderLog,
   AppNotification,
   IntegrationConnector,
@@ -30,7 +32,9 @@ import {
   DailyPlanBlock,
   RevisionSession,
   ChatSession,
-  MeetingSlot
+  MeetingSlot,
+  AcademicMode,
+  AcademicCalendarConfig
 } from '../types';
 import { uploadToCloud, fetchFromCloud, CloudWorkspacePayload } from '../services/cloudSync';
 import {
@@ -40,6 +44,8 @@ import {
   dbSaveAllTablesToDatabase,
   dbLoadAllTablesFromDatabase,
   subscribeToWorkspaceRealtime,
+  markLocalDbWrite,
+  isRecentLocalDbWrite,
   dbSaveNote,
   dbDeleteNote,
   dbSaveFile,
@@ -65,7 +71,11 @@ import {
   dbSavePreviousTermCourse,
   dbDeletePreviousTermCourse,
   dbSaveChatSession,
-  dbDeleteChatSession
+  dbDeleteChatSession,
+  dbSaveAiMemory,
+  dbDeleteAiMemory,
+  supabaseSignUp,
+  supabaseSignIn
 } from '../services/supabase';
 import { fetchRepoCommits, getGitHubToken } from '../services/githubService';
 import {
@@ -123,10 +133,18 @@ interface AppContextType {
   // User & Auth
   user: UserAccount | null;
   login: (email: string, name?: string) => void;
+  registerAccount: (name: string, email: string, password: string, username?: string) => Promise<{ success: boolean; error?: string }>;
+  authenticateUser: (emailOrUsername: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   loginDemo: () => void;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
+
+  // Academic Calendar & Modes
+  academicConfig: AcademicCalendarConfig;
+  updateAcademicConfig: (updates: Partial<AcademicCalendarConfig>) => void;
+  activeAcademicMode: AcademicMode;
+  isClassSuspendedOnDate: (dateStr: string, courseId?: string) => { suspended: boolean; reason?: string };
 
   // Navigation
   activeView: ActiveView;
@@ -164,7 +182,8 @@ interface AppContextType {
   isAiReasoning: boolean;
   setIsAiReasoning: (reasoning: boolean) => void;
   aiMemories: AiMemory[];
-  addAiMemory: (fact: string, category?: AiMemory['category']) => void;
+  addAiMemory: (content: string, category?: AiMemory['category'], source?: 'explicit' | 'inferred') => AiMemory;
+  updateAiMemory: (id: string, updates: Partial<AiMemory>) => void;
   deleteAiMemory: (id: string) => void;
   handleActionProposal: (actionId: string, confirm: boolean) => void;
 
@@ -262,6 +281,11 @@ interface AppContextType {
   dailyPlan: DailyPlan;
   regenerateDailyPlan: () => void;
   toggleDailyPlanBlock: (blockId: string) => void;
+  updateDailyPlanBlock: (blockId: string, updates: Partial<DailyPlanBlock>) => void;
+  deleteDailyPlanBlock: (blockId: string) => void;
+  moveDailyPlanBlock: (blockId: string, direction: 'up' | 'down') => void;
+  addCustomDailyPlanBlock: (block: Omit<DailyPlanBlock, 'id'>) => void;
+  adaptDailyPlan: (reason: 'completed_early' | 'missed_session' | 'rebalance') => void;
 
   integrations: IntegrationConnector[];
   toggleIntegrationConnection: (provider: IntegrationConnector['provider']) => void;
@@ -490,6 +514,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return f;
     });
   });
+  const defaultAcademicConfig: AcademicCalendarConfig = {
+    semesterName: 'Academic Semester',
+    semesterStartDate: '2026-09-01',
+    semesterEndDate: '2026-12-20',
+    midtermStartDate: '',
+    midtermEndDate: '',
+    finalStartDate: '',
+    finalEndDate: '',
+    modePreference: 'auto',
+    holidays: [],
+    cancelledClasses: []
+  };
+
+  const generateUniqueId = (prefix: string) =>
+    `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const isApplyingRemoteRef = useRef<boolean>(false);
+
   const [flashcards, setFlashcards] = useState<Flashcard[]>(() => loadStored('flashcards', []));
   const [flashcardDecks, setFlashcardDecks] = useState<FlashcardDeck[]>(() => loadStored('flashcard_decks', []));
   const [focusSessions, setFocusSessions] = useState<FocusSession[]>(() => loadStored('focus_sessions', []));
@@ -498,6 +540,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [gradeItems, setGradeItems] = useState<GradeItem[]>(() => loadStored('grade_items', []));
   const [previousTermCourses, setPreviousTermCourses] = useState<PreviousTermCourse[]>(() => loadStored('previous_term_courses', []));
   const [aiMemories, setAiMemories] = useState<AiMemory[]>(() => loadStored('ai_memories', []));
+  const [academicConfig, setAcademicConfig] = useState<AcademicCalendarConfig>(() =>
+    loadStored('academic_config', defaultAcademicConfig)
+  );
   const [dailyPlan, setDailyPlan] = useState<DailyPlan>(() => loadStored('daily_plan', {
     date: new Date().toISOString().slice(0, 10),
     generatedBy: 'ai',
@@ -516,6 +561,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   ]));
   const [reminderLogs, setReminderLogs] = useState<ReminderLog[]>(() => loadStored('reminder_logs', []));
+
+  const updateAcademicConfig = useCallback((updates: Partial<AcademicCalendarConfig>) => {
+    setAcademicConfig(prev => {
+      const next = { ...prev, ...updates };
+      try {
+        localStorage.setItem(`${storageKey}_academic_config`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [storageKey]);
+
+  // Compute active Academic Mode ('normal' | 'midterm' | 'final')
+  const activeAcademicMode: AcademicMode = useMemo(() => {
+    if (academicConfig.modePreference && academicConfig.modePreference !== 'auto') {
+      return academicConfig.modePreference;
+    }
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (
+      academicConfig.finalStartDate &&
+      academicConfig.finalEndDate &&
+      todayStr >= academicConfig.finalStartDate &&
+      todayStr <= academicConfig.finalEndDate
+    ) {
+      return 'final';
+    }
+    if (
+      academicConfig.midtermStartDate &&
+      academicConfig.midtermEndDate &&
+      todayStr >= academicConfig.midtermStartDate &&
+      todayStr <= academicConfig.midtermEndDate
+    ) {
+      return 'midterm';
+    }
+    return 'normal';
+  }, [academicConfig]);
+
+  // Determine whether regular classes are suspended on a given date (YYYY-MM-DD) without deleting them
+  const isClassSuspendedOnDate = useCallback(
+    (dateStr: string, courseId?: string): { suspended: boolean; reason?: string } => {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // 1. Check explicit manual override if querying today
+      if (dateStr === todayStr) {
+        if (activeAcademicMode === 'midterm') {
+          return { suspended: true, reason: 'Midterm Examination Week — Regular lectures suspended' };
+        }
+        if (activeAcademicMode === 'final') {
+          return { suspended: true, reason: 'Final Examination Period — Regular lectures suspended' };
+        }
+      }
+      // 2. Check configured Final Exam date range
+      if (
+        academicConfig.finalStartDate &&
+        academicConfig.finalEndDate &&
+        dateStr >= academicConfig.finalStartDate &&
+        dateStr <= academicConfig.finalEndDate
+      ) {
+        return { suspended: true, reason: 'Final Examination Period — Regular lectures suspended' };
+      }
+      // 3. Check configured Midterm Week date range
+      if (
+        academicConfig.midtermStartDate &&
+        academicConfig.midtermEndDate &&
+        dateStr >= academicConfig.midtermStartDate &&
+        dateStr <= academicConfig.midtermEndDate
+      ) {
+        return { suspended: true, reason: 'Midterm Examination Week — Regular lectures suspended' };
+      }
+      // 4. Check University Holidays
+      const holiday = (academicConfig.holidays || []).find(h => {
+        const start = h.date || h.startDate || '';
+        const end = h.endDate || start;
+        return Boolean(start) && dateStr >= start && dateStr <= end;
+      });
+      if (holiday) {
+        return { suspended: true, reason: `University Holiday: ${holiday.name || holiday.title || 'Holiday'}` };
+      }
+      // 5. Check individual Cancelled Classes
+      if (courseId) {
+        const cancelled = (academicConfig.cancelledClasses || []).find(
+          c => c.date === dateStr && c.courseId === courseId
+        );
+        if (cancelled) {
+          return { suspended: true, reason: cancelled.reason || 'Class session cancelled' };
+        }
+      }
+      return { suspended: false };
+    },
+    [academicConfig, activeAcademicMode]
+  );
 
   // Global AI Multi-Session Chat History
   const defaultInitialWelcome: ChatMessage = {
@@ -571,6 +705,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => { saveStored('grade_items', gradeItems); }, [gradeItems, storageKey]);
   useEffect(() => { saveStored('previous_term_courses', previousTermCourses); }, [previousTermCourses, storageKey]);
   useEffect(() => { saveStored('ai_memories', aiMemories); }, [aiMemories, storageKey]);
+  useEffect(() => { saveStored('academic_config', academicConfig); }, [academicConfig, storageKey]);
   useEffect(() => { saveStored('daily_plan', dailyPlan); }, [dailyPlan, storageKey]);
   useEffect(() => { saveStored('integrations', integrations); }, [integrations, storageKey]);
   useEffect(() => { saveStored('repos', githubRepos); }, [githubRepos, storageKey]);
@@ -786,7 +921,375 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => clearInterval(interval);
   }, [focusState.isRunning, focusState.timeLeft]);
 
-  // Auth Operations
+  // Auth & Account Isolation Helpers
+  const hashPassword = async (password: string): Promise<string> => {
+    const clean = password.trim();
+    try {
+      if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+        const msgBuffer = new TextEncoder().encode(`nook_salt_v1_${clean}`);
+        const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+    } catch {}
+    // Fallback deterministic hash if SubtleCrypto is unavailable
+    let h = 2166136261;
+    const str = `nook_salt_v1_${clean}`;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return `fnv_${(h >>> 0).toString(16)}`;
+  };
+
+  interface StoredAccountRecord {
+    id: string;
+    name: string;
+    email: string;
+    username: string;
+    passwordHash: string;
+    createdAt: string;
+  }
+
+  const getRegisteredAccounts = (): StoredAccountRecord[] => {
+    try {
+      const raw = localStorage.getItem('nook_registered_accounts');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveRegisteredAccounts = (accounts: StoredAccountRecord[]) => {
+    try {
+      localStorage.setItem('nook_registered_accounts', JSON.stringify(accounts));
+    } catch {}
+  };
+
+  // Strictly load only the target user's isolated workspace data and clear any previous user's state from memory
+  const hydrateUserIsolatedWorkspace = (userId: string, isBrandNewRegistration: boolean = false) => {
+    isApplyingRemoteRef.current = true;
+    const userStorageKey = `nook_workspace_${userId}`;
+
+    const readUserKey = <T,>(suffix: string, fallback: T): T => {
+      if (isBrandNewRegistration) return fallback;
+      try {
+        const raw = localStorage.getItem(`${userStorageKey}_${suffix}`);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch {
+        return fallback;
+      }
+    };
+
+    const freshSession: ChatSession = {
+      id: `session_${Date.now()}`,
+      title: 'Study Assistant',
+      messages: [
+        {
+          id: `msg_init_${Date.now()}`,
+          sender: 'assistant',
+          content: `Hello! I'm your Nook Academic Assistant. Your workspace is isolated to your account. Tell me what courses you're taking, ask me to plan your day, or share your study preferences!`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Immediately set every state slice to this user's isolated storage (or empty arrays for a new user)
+    setCourses(readUserKey('courses', []));
+    setAssignments(readUserKey('assignments', []));
+    setTasks(readUserKey('tasks', []));
+    setNotes(readUserKey('notes', []));
+    setEvents(readUserKey('events', []));
+    setInboxItems(readUserKey('inbox', []));
+    setFiles(readUserKey('files', []));
+    setFlashcards(readUserKey('flashcards', []));
+    setFlashcardDecks(readUserKey('flashcard_decks', []));
+    setFocusSessions(readUserKey('focus_sessions', []));
+    setQuizzes(readUserKey('quizzes', []));
+    setExams(readUserKey('exams', []));
+    setGradeItems(readUserKey('grade_items', []));
+    setPreviousTermCourses(readUserKey('previous_term_courses', []));
+    setAiMemories(readUserKey('ai_memories', []));
+    setAcademicConfig(readUserKey('academic_config', defaultAcademicConfig));
+    setDailyPlan(
+      readUserKey('daily_plan', {
+        date: new Date().toISOString().slice(0, 10),
+        generatedBy: 'ai',
+        blocks: []
+      })
+    );
+    setIntegrations(readUserKey('integrations', initialIntegrations));
+    setGithubRepos(readUserKey('repos', []));
+    const savedSessions = readUserKey<ChatSession[]>('chat_sessions', [freshSession]);
+    const validSessions = savedSessions.length > 0 ? savedSessions : [freshSession];
+    setChatSessions(validSessions);
+    setActiveChatSessionId(readUserKey('active_chat_session_id', validSessions[0].id));
+    setNotifications(
+      readUserKey('notifications', [
+        {
+          id: `notif_${Date.now()}`,
+          title: 'Account Workspace Active',
+          message: 'Your personal academic workspace is loaded and isolated to your account.',
+          type: 'system',
+          timestamp: 'Just now',
+          read: false
+        }
+      ])
+    );
+    setReminderLogs(readUserKey('reminder_logs', []));
+
+    setTimeout(() => {
+      isApplyingRemoteRef.current = false;
+    }, 300);
+
+    // Fetch authoritative user-isolated data from Supabase if configured (and not a brand new registration)
+    if (isSupabaseConfigured() && !isBrandNewRegistration) {
+      dbLoadAllTablesFromDatabase(userId)
+        .then(dbData => {
+          if (!dbData) return;
+          isApplyingRemoteRef.current = true;
+          if (Array.isArray(dbData.courses)) setCourses(dbData.courses);
+          if (Array.isArray(dbData.assignments)) setAssignments(dbData.assignments);
+          if (Array.isArray(dbData.tasks)) setTasks(dbData.tasks);
+          if (Array.isArray(dbData.notes)) setNotes(dbData.notes);
+          if (Array.isArray(dbData.files)) setFiles(dbData.files);
+          if (Array.isArray(dbData.exams)) setExams(dbData.exams);
+          if (Array.isArray(dbData.events)) setEvents(dbData.events);
+          if (Array.isArray(dbData.inboxItems)) setInboxItems(dbData.inboxItems);
+          if (Array.isArray(dbData.flashcards)) setFlashcards(dbData.flashcards);
+          if (Array.isArray(dbData.flashcardDecks)) setFlashcardDecks(dbData.flashcardDecks);
+          if (Array.isArray(dbData.gradeItems)) setGradeItems(dbData.gradeItems);
+          if (Array.isArray(dbData.previousTermCourses)) setPreviousTermCourses(dbData.previousTermCourses);
+          if (Array.isArray(dbData.chatSessions) && dbData.chatSessions.length > 0) {
+            setChatSessions(dbData.chatSessions);
+            if (dbData.activeChatSessionId) setActiveChatSessionId(dbData.activeChatSessionId);
+          }
+          if (dbData.dailyPlan) setDailyPlan(dbData.dailyPlan);
+          if (dbData.academicConfig) setAcademicConfig(dbData.academicConfig);
+          if (Array.isArray(dbData.integrations)) setIntegrations(dbData.integrations);
+          if (Array.isArray(dbData.githubRepos)) setGithubRepos(dbData.githubRepos);
+          if (Array.isArray(dbData.aiMemories)) setAiMemories(dbData.aiMemories);
+          if (Array.isArray(dbData.notifications)) setNotifications(dbData.notifications);
+          if (Array.isArray(dbData.reminderLogs)) setReminderLogs(dbData.reminderLogs);
+          setTimeout(() => {
+            isApplyingRemoteRef.current = false;
+          }, 300);
+        })
+        .catch(err => console.warn('Supabase DB fetch on login error:', err));
+    }
+  };
+
+  const registerAccount = async (
+    name: string,
+    email: string,
+    password: string,
+    username?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanName = name.trim() || cleanEmail.split('@')[0];
+    const cleanUsername = (username || cleanEmail.split('@')[0]).toLowerCase().trim();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    if (!password || password.trim().length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters long.' };
+    }
+
+    const accounts = getRegisteredAccounts();
+    const duplicate = accounts.find(
+      a => a.email.toLowerCase() === cleanEmail || (cleanUsername && a.username.toLowerCase() === cleanUsername)
+    );
+    if (duplicate) {
+      return {
+        success: false,
+        error:
+          duplicate.email.toLowerCase() === cleanEmail
+            ? 'An account with this email already exists. Please sign in instead.'
+            : 'This username is already taken. Please choose another username or sign in.'
+      };
+    }
+
+    const userId = 'usr_' + encodeURIComponent(cleanEmail).replace(/[^a-zA-Z0-9]/g, '_');
+    const passwordHash = await hashPassword(password);
+
+    // Check if an existing workspace in Supabase already has a different password hash for this userId
+    if (isSupabaseConfigured()) {
+      try {
+        const existingRemote = await dbLoadAllTablesFromDatabase(userId);
+        if (existingRemote && existingRemote.user && (existingRemote.user as any).passwordHash) {
+          return {
+            success: false,
+            error: 'An account with this email is already registered in the cloud database. Please sign in.'
+          };
+        }
+      } catch {}
+    }
+
+    const newRecord: StoredAccountRecord = {
+      id: userId,
+      name: cleanName,
+      email: cleanEmail,
+      username: cleanUsername,
+      passwordHash,
+      createdAt: new Date().toISOString()
+    };
+    saveRegisteredAccounts([...accounts, newRecord]);
+
+    const newUser: UserAccount = {
+      id: userId,
+      name: cleanName,
+      username: cleanUsername,
+      email: cleanEmail,
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+      isDemo: false,
+      createdAt: newRecord.createdAt
+    };
+
+    // Also store passwordHash on user object for cloud snapshot credential verification across devices
+    (newUser as any).passwordHash = passwordHash;
+
+    // Clear any stale local keys for this userId before initializing fresh workspace
+    const userStorageKey = `nook_workspace_${userId}`;
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(userStorageKey)) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+
+    hydrateUserIsolatedWorkspace(userId, true);
+    setUser(newUser);
+    localStorage.setItem('nook_current_user', JSON.stringify(newUser));
+
+    if (isSupabaseConfigured()) {
+      supabaseSignUp(cleanEmail, password, cleanName).catch(() => {});
+    }
+
+    return { success: true };
+  };
+
+  const authenticateUser = async (
+    emailOrUsername: string,
+    password: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const identifier = emailOrUsername.toLowerCase().trim();
+    if (!identifier) {
+      return { success: false, error: 'Please enter your email or username.' };
+    }
+    if (!password) {
+      return { success: false, error: 'Please enter your password.' };
+    }
+
+    const inputHash = await hashPassword(password);
+    const accounts = getRegisteredAccounts();
+    const matchedLocal = accounts.find(
+      a => a.email.toLowerCase() === identifier || a.username.toLowerCase() === identifier
+    );
+
+    if (matchedLocal) {
+      if (matchedLocal.passwordHash !== inputHash) {
+        return { success: false, error: 'Incorrect password. Please check your password and try again.' };
+      }
+
+      const loggedInUser: UserAccount = {
+        id: matchedLocal.id,
+        name: matchedLocal.name,
+        username: matchedLocal.username,
+        email: matchedLocal.email,
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+        isDemo: false,
+        createdAt: matchedLocal.createdAt
+      };
+      (loggedInUser as any).passwordHash = matchedLocal.passwordHash;
+
+      hydrateUserIsolatedWorkspace(matchedLocal.id, false);
+      setUser(loggedInUser);
+      localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
+      return { success: true };
+    }
+
+    // Check if account exists in Supabase workspaces or localStorage from before password registry was added
+    const candidateEmail = identifier.includes('@') ? identifier : `${identifier}@university.edu`;
+    const candidateUserId = 'usr_' + encodeURIComponent(identifier).replace(/[^a-zA-Z0-9]/g, '_');
+
+    if (isSupabaseConfigured()) {
+      try {
+        const remoteData = await dbLoadAllTablesFromDatabase(candidateUserId);
+        if (remoteData && remoteData.user) {
+          const remoteHash = (remoteData.user as any).passwordHash;
+          if (remoteHash && remoteHash !== inputHash) {
+            return { success: false, error: 'Incorrect password for this account.' };
+          }
+          // Save to local registry for fast future logins
+          const recoveredRecord: StoredAccountRecord = {
+            id: candidateUserId,
+            name: remoteData.user.name || identifier.split('@')[0],
+            email: remoteData.user.email || candidateEmail,
+            username: remoteData.user.username || identifier.split('@')[0],
+            passwordHash: remoteHash || inputHash,
+            createdAt: remoteData.user.createdAt || new Date().toISOString()
+          };
+          saveRegisteredAccounts([...accounts, recoveredRecord]);
+
+          const loggedInUser: UserAccount = {
+            id: candidateUserId,
+            name: recoveredRecord.name,
+            username: recoveredRecord.username,
+            email: recoveredRecord.email,
+            avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+            isDemo: false,
+            createdAt: recoveredRecord.createdAt
+          };
+          (loggedInUser as any).passwordHash = recoveredRecord.passwordHash;
+
+          hydrateUserIsolatedWorkspace(candidateUserId, false);
+          setUser(loggedInUser);
+          localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
+          return { success: true };
+        }
+      } catch {}
+    }
+
+    // Check if legacy local workspace exists for this email on this browser
+    const legacyCourses = localStorage.getItem(`nook_workspace_${candidateUserId}_courses`);
+    if (legacyCourses !== null) {
+      const recoveredRecord: StoredAccountRecord = {
+        id: candidateUserId,
+        name: identifier.split('@')[0],
+        email: candidateEmail,
+        username: identifier.split('@')[0],
+        passwordHash: inputHash,
+        createdAt: new Date().toISOString()
+      };
+      saveRegisteredAccounts([...accounts, recoveredRecord]);
+      const loggedInUser: UserAccount = {
+        id: candidateUserId,
+        name: recoveredRecord.name,
+        username: recoveredRecord.username,
+        email: recoveredRecord.email,
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+        isDemo: false,
+        createdAt: recoveredRecord.createdAt
+      };
+      (loggedInUser as any).passwordHash = inputHash;
+      hydrateUserIsolatedWorkspace(candidateUserId, false);
+      setUser(loggedInUser);
+      localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
+      return { success: true };
+    }
+
+    return {
+      success: false,
+      error: 'No account found with that email or username. Please register a new account first.'
+    };
+  };
+
+  // Legacy direct login helper (used when restoring session)
   const login = (email: string, name?: string) => {
     const sanitizedEmail = email.toLowerCase().trim();
     const userId = 'usr_' + encodeURIComponent(sanitizedEmail).replace(/[^a-zA-Z0-9]/g, '_');
@@ -798,140 +1301,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
       isDemo: false
     };
+    hydrateUserIsolatedWorkspace(userId, false);
     setUser(newUser);
     localStorage.setItem('nook_current_user', JSON.stringify(newUser));
-
-    // Check if user already has saved workspace in this browser
-    const userStorageKey = `nook_workspace_${userId}`;
-    const savedCoursesStr = localStorage.getItem(`${userStorageKey}_courses`);
-    let hasLocalData = false;
-    if (savedCoursesStr) {
-      try {
-        const parsedCourses = JSON.parse(savedCoursesStr);
-        if (Array.isArray(parsedCourses) && parsedCourses.length > 0) {
-          hasLocalData = true;
-          setCourses(parsedCourses);
-          const a = localStorage.getItem(`${userStorageKey}_assignments`);
-          if (a) setAssignments(JSON.parse(a));
-          const t = localStorage.getItem(`${userStorageKey}_tasks`);
-          if (t) setTasks(JSON.parse(t));
-          const n = localStorage.getItem(`${userStorageKey}_notes`);
-          if (n) setNotes(JSON.parse(n));
-          const ev = localStorage.getItem(`${userStorageKey}_events`);
-          if (ev) setEvents(JSON.parse(ev));
-          const ex = localStorage.getItem(`${userStorageKey}_exams`);
-          if (ex) setExams(JSON.parse(ex));
-          const g = localStorage.getItem(`${userStorageKey}_grade_items`);
-          if (g) setGradeItems(JSON.parse(g));
-          const p = localStorage.getItem(`${userStorageKey}_previous_term_courses`);
-          if (p) setPreviousTermCourses(JSON.parse(p));
-          const ch = localStorage.getItem(`${userStorageKey}_chat_sessions`);
-          if (ch) setChatSessions(JSON.parse(ch));
-          const ach = localStorage.getItem(`${userStorageKey}_active_chat_session_id`);
-          if (ach) setActiveChatSessionId(JSON.parse(ach));
-          const dp = localStorage.getItem(`${userStorageKey}_daily_plan`);
-          if (dp) setDailyPlan(JSON.parse(dp));
-          const ig = localStorage.getItem(`${userStorageKey}_integrations`);
-          if (ig) setIntegrations(JSON.parse(ig));
-          const gh = localStorage.getItem(`${userStorageKey}_repos`);
-          if (gh) setGithubRepos(JSON.parse(gh));
-          const mem = localStorage.getItem(`${userStorageKey}_ai_memories`);
-          if (mem) setAiMemories(JSON.parse(mem));
-        }
-      } catch (err) {
-        console.warn('Failed restoring user local workspace:', err);
-      }
-    }
-
-    // Always fetch fresh authoritative data from PostgreSQL database if configured!
-    if (isSupabaseConfigured()) {
-      dbLoadAllTablesFromDatabase(userId).then(dbData => {
-        if (dbData) {
-          if (Array.isArray(dbData.courses) && dbData.courses.length > 0) setCourses(dbData.courses);
-          if (Array.isArray(dbData.assignments) && dbData.assignments.length > 0) setAssignments(dbData.assignments);
-          if (Array.isArray(dbData.tasks) && dbData.tasks.length > 0) setTasks(dbData.tasks);
-          if (Array.isArray(dbData.notes) && dbData.notes.length > 0) setNotes(dbData.notes);
-          if (Array.isArray(dbData.files) && dbData.files.length > 0) setFiles(dbData.files);
-          if (Array.isArray(dbData.exams) && dbData.exams.length > 0) setExams(dbData.exams);
-          if (Array.isArray(dbData.events) && dbData.events.length > 0) setEvents(dbData.events);
-          if (Array.isArray(dbData.inboxItems) && dbData.inboxItems.length > 0) setInboxItems(dbData.inboxItems);
-          if (Array.isArray(dbData.flashcards) && dbData.flashcards.length > 0) setFlashcards(dbData.flashcards);
-          if (Array.isArray(dbData.flashcardDecks) && dbData.flashcardDecks.length > 0) setFlashcardDecks(dbData.flashcardDecks);
-          if (Array.isArray(dbData.gradeItems) && dbData.gradeItems.length > 0) setGradeItems(dbData.gradeItems);
-          if (Array.isArray(dbData.previousTermCourses) && dbData.previousTermCourses.length > 0) setPreviousTermCourses(dbData.previousTermCourses);
-          if (Array.isArray(dbData.chatSessions) && dbData.chatSessions.length > 0) {
-            setChatSessions(dbData.chatSessions);
-            if (dbData.activeChatSessionId) setActiveChatSessionId(dbData.activeChatSessionId);
-          }
-          if (dbData.dailyPlan) setDailyPlan(dbData.dailyPlan);
-          if (Array.isArray(dbData.integrations)) setIntegrations(dbData.integrations);
-          if (Array.isArray(dbData.githubRepos)) setGithubRepos(dbData.githubRepos);
-          if (Array.isArray(dbData.aiMemories)) setAiMemories(dbData.aiMemories);
-          if (Array.isArray(dbData.notifications)) setNotifications(dbData.notifications);
-          if (Array.isArray(dbData.reminderLogs)) setReminderLogs(dbData.reminderLogs);
-        }
-      }).catch(err => console.warn('Supabase DB fetch on login error:', err));
-    }
-
-    if (!hasLocalData && !isSupabaseConfigured()) {
-      // Fresh registration with no database
-      setCourses([]);
-      setAssignments([]);
-      setTasks([]);
-      setEvents([]);
-      setInboxItems([]);
-      setFiles([]);
-      setFlashcards([]);
-      setFlashcardDecks([]);
-      setFocusSessions([]);
-      setQuizzes([]);
-      setExams([]);
-      setGradeItems([]);
-      setPreviousTermCourses([]);
-      setAiMemories([]);
-      setGithubRepos([]);
-      setDailyPlan({
-        date: new Date().toISOString().slice(0, 10),
-        generatedBy: 'ai',
-        blocks: []
-      });
-      setNotes([]);
-      setNotifications([
-        {
-          id: `notif_${Date.now()}`,
-          title: 'Account Ready',
-          message: 'Your workspace is 100% clean and ready. Add courses manually or chat with Ask AI to set up your subjects and timetable.',
-          type: 'system',
-          timestamp: 'Just now',
-          read: false
-        }
-      ]);
-    }
   };
 
   const logout = () => {
+    isApplyingRemoteRef.current = true;
     setUser(null);
     localStorage.removeItem('nook_current_user');
+    // Reset in-memory state so previous account's data never leaks into the next login
+    setCourses([]);
+    setAssignments([]);
+    setTasks([]);
+    setNotes([]);
+    setEvents([]);
+    setInboxItems([]);
+    setFiles([]);
+    setFlashcards([]);
+    setFlashcardDecks([]);
+    setFocusSessions([]);
+    setQuizzes([]);
+    setExams([]);
+    setGradeItems([]);
+    setPreviousTermCourses([]);
+    setAiMemories([]);
+    setAcademicConfig(defaultAcademicConfig);
+    setDailyPlan({
+      date: new Date().toISOString().slice(0, 10),
+      generatedBy: 'ai',
+      blocks: []
+    });
+    setGithubRepos([]);
+    setTimeout(() => {
+      isApplyingRemoteRef.current = false;
+    }, 200);
   };
 
   const loginDemo = () => {
+    const demoUserId = `usr_demo_${Date.now()}`;
     const freshUser: UserAccount = {
-      id: `usr_${Date.now()}`,
-      name: 'Scholar Workspace',
-      email: 'scholar@university.edu',
+      id: demoUserId,
+      name: 'Guest Workspace',
+      email: 'guest@university.edu',
       avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
       isDemo: true
     };
+    hydrateUserIsolatedWorkspace(demoUserId, true);
     setUser(freshUser);
     localStorage.setItem('nook_current_user', JSON.stringify(freshUser));
-    clearAllWorkspaceData();
   };
 
-  // CRUD Implementations
+  // CRUD Implementations (Using guaranteed unique IDs)
   const addCourse = (courseData: Omit<Course, 'id'>) => {
     const newCourse: Course = {
       ...courseData,
-      id: `course_${Date.now()}`
+      id: generateUniqueId('course')
     };
     setCourses(prev => [...prev, newCourse]);
     if (user && isSupabaseConfigured()) {
@@ -973,7 +1398,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addAssignment = (asgData: Omit<Assignment, 'id' | 'steps'>) => {
     const newAsg: Assignment = {
       ...asgData,
-      id: `asg_${Date.now()}`,
+      id: generateUniqueId('asg'),
       steps: [],
       isBrokenDown: false
     };
@@ -1048,7 +1473,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setNotifications(prev => [
       {
-        id: `notif_${Date.now()}`,
+        id: generateUniqueId('notif'),
         title: 'Assignment AI Breakdown Complete',
         message: `Generated ${generatedSteps.length} actionable study tasks for "${asg.title}".`,
         type: 'assignment',
@@ -1084,7 +1509,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addTask = (taskData: Omit<Task, 'id' | 'subtasks'>) => {
     const newTask: Task = {
       ...taskData,
-      id: `task_${Date.now()}`,
+      id: generateUniqueId('task'),
       subtasks: []
     };
     setTasks(prev => [newTask, ...prev]);
@@ -1137,7 +1562,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (t.id !== taskId) return t;
         return {
           ...t,
-          subtasks: [...t.subtasks, { id: `st_${Date.now()}`, title, completed: false }]
+          subtasks: [...t.subtasks, { id: generateUniqueId('st'), title, completed: false }]
         };
       });
       const target = updated.find(t => t.id === taskId);
@@ -1165,11 +1590,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  // Notes
+  // Notes (Guaranteed unique IDs and isolated updates)
   const addNote = (noteData: Omit<Note, 'id' | 'createdAt' | 'updatedAt' | 'inTrash'>) => {
     const newNote: Note = {
       ...noteData,
-      id: `note_${Date.now()}`,
+      id: generateUniqueId('note'),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       inTrash: false
@@ -2018,159 +2443,738 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { neededScore, status, currentGrade };
   }, [gradeItems]);
 
-  // Daily Plan Operations: Intelligent, Realistic & Sensible Academic Scheduling
-  const regenerateDailyPlan = () => {
+  // Helper time converters for non-overlapping scheduling
+  const timeToMinutes = (t: string): number => {
+    const clean = (t || '09:00').trim();
+    const parts = clean.split(':');
+    const h = parseInt(parts[0], 10) || 0;
+    const m = parseInt(parts[1], 10) || 0;
+    return h * 60 + m;
+  };
+
+  const minutesToTime = (mins: number): string => {
+    const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(mins)));
+    const h = Math.floor(clamped / 60);
+    const m = clamped % 60;
+    return `${h < 10 ? '0' : ''}${h}:${m < 10 ? '0' : ''}${m}`;
+  };
+
+  // Parse user's saved AI memories into actionable scheduling constraints
+  const parseSchedulingMemories = useCallback(() => {
+    let dayStartMin = 9 * 60; // 09:00 default
+    let dayEndMin = 20 * 60 + 30; // 20:30 default
+    let preferredSessionMins = 50;
+    let preferredBreakMins = 15;
+    let maxDailyStudySessions = 4;
+    const memoriesApplied: string[] = [];
+    const noStudyDays: number[] = []; // 0=Sun..6=Sat
+    const focusKeywords: string[] = [];
+
+    aiMemories.forEach(mem => {
+      const text = (mem.content || mem.fact || '').trim();
+      if (!text) return;
+      const lower = text.toLowerCase();
+
+      // Study time of day preferences
+      if (lower.includes('night') || lower.includes('evening') || lower.includes('late')) {
+        dayStartMin = Math.max(dayStartMin, 15 * 60); // Prefer 15:00 - 22:30
+        dayEndMin = 22 * 60 + 30;
+        memoriesApplied.push(text);
+      } else if (lower.includes('morning') || lower.includes('early')) {
+        dayStartMin = 8 * 60;
+        dayEndMin = 17 * 60 + 30;
+        memoriesApplied.push(text);
+      } else if (lower.includes('afternoon')) {
+        dayStartMin = 12 * 60;
+        dayEndMin = 20 * 60;
+        memoriesApplied.push(text);
+      }
+
+      // Session duration preference (e.g., "45 minutes", "45-minute", "60 mins")
+      const sessionMatch = lower.match(/(\d{2,3})\s*(?:-|\s)?\s*(?:min|minute)\s*(?:study|session|block|focus|pomodoro)/);
+      const revSessionMatch = lower.match(/(?:study|session|sessions|blocks?)\s*(?:of|should be|for)?\s*(\d{2,3})\s*(?:min|minute)/);
+      const matchedDur = sessionMatch ? parseInt(sessionMatch[1], 10) : revSessionMatch ? parseInt(revSessionMatch[1], 10) : null;
+      if (matchedDur && matchedDur >= 20 && matchedDur <= 120) {
+        preferredSessionMins = matchedDur;
+        if (!memoriesApplied.includes(text)) memoriesApplied.push(text);
+      }
+
+      // Break duration preference (e.g., "10-minute breaks", "15 min break")
+      const breakMatch = lower.match(/(\d{1,2})\s*(?:-|\s)?\s*(?:min|minute)s?\s*break/);
+      if (breakMatch) {
+        const bDur = parseInt(breakMatch[1], 10);
+        if (bDur >= 5 && bDur <= 45) {
+          preferredBreakMins = bDur;
+          if (!memoriesApplied.includes(text)) memoriesApplied.push(text);
+        }
+      }
+
+      // Sleep schedule
+      if (mem.category === 'sleep' || lower.includes('sleep') || lower.includes('bed')) {
+        if (lower.includes('10 pm') || lower.includes('22:00') || lower.includes('10pm')) {
+          dayEndMin = Math.min(dayEndMin, 21 * 60 + 30);
+        } else if (lower.includes('11 pm') || lower.includes('23:00') || lower.includes('11pm')) {
+          dayEndMin = Math.min(dayEndMin, 22 * 60 + 15);
+        }
+        if (!memoriesApplied.includes(text)) memoriesApplied.push(text);
+      }
+
+      // Days off / commitments
+      const dayMap: Record<string, number> = {
+        sunday: 0,
+        monday: 1,
+        tuesday: 2,
+        wednesday: 3,
+        thursday: 4,
+        friday: 5,
+        saturday: 6
+      };
+      if (lower.includes("don't study") || lower.includes('do not study') || lower.includes('no study') || lower.includes('day off')) {
+        Object.entries(dayMap).forEach(([dName, dIdx]) => {
+          if (lower.includes(dName)) {
+            noStudyDays.push(dIdx);
+            if (!memoriesApplied.includes(text)) memoriesApplied.push(text);
+          }
+        });
+      }
+
+      // Weaknesses or goals
+      if (mem.category === 'weakness' || mem.category === 'goal' || lower.includes('struggle') || lower.includes('focus on') || lower.includes('prioritize')) {
+        focusKeywords.push(lower);
+        if (!memoriesApplied.includes(text)) memoriesApplied.push(text);
+      }
+    });
+
+    return {
+      dayStartMin,
+      dayEndMin,
+      preferredSessionMins,
+      preferredBreakMins,
+      maxDailyStudySessions,
+      noStudyDays,
+      focusKeywords,
+      memoriesApplied
+    };
+  }, [aiMemories]);
+
+  // Daily Plan Operations: Intelligent, Realistic, Mode-Aware & Non-Overlapping Academic Scheduling
+  const regenerateDailyPlan = useCallback(() => {
     const today = new Date();
     const todayIsoDate = today.toISOString().slice(0, 10);
     const currentDay = today.getDay(); // 0 = Sunday, 1 = Monday, ...
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const currentDayName = dayNames[currentDay];
 
-    // 1. Find actual classes scheduled for today across all enrolled courses
-    const todayClasses: Array<{ course: Course; slot: MeetingSlot }> = [];
-    courses.forEach(c => {
-      (c.meetingSlots || []).forEach(slot => {
-        if (slot.day === currentDay) {
-          todayClasses.push({ course: c, slot });
-        }
-      });
-    });
-    todayClasses.sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime));
+    const memPrefs = parseSchedulingMemories();
+    const prioritizationReasons: string[] = [];
+    const deadlinesConsidered: string[] = [];
+    const postponedItems: string[] = [];
 
-    // 2. Identify urgent assignments due soon or overdue
-    const urgentAssignments = assignments
-      .filter(a => a.status !== 'completed' && a.dueDate)
-      .map(a => {
-        const dueTime = new Date(a.dueDate).getTime();
-        const diffDays = Math.round((dueTime - today.getTime()) / (86400 * 1000));
-        return { ...a, diffDays };
-      })
-      .filter(a => a.diffDays <= 4)
-      .sort((a, b) => a.diffDays - b.diffDays);
-
-    // 3. Identify near exams within 14 days
-    const upcomingExamsList = exams
-      .map(e => {
-        const diffDays = Math.round((new Date(e.date).getTime() - today.getTime()) / (86400 * 1000));
-        return { ...e, diffDays };
-      })
-      .filter(e => e.diffDays >= 0 && e.diffDays <= 14)
-      .sort((a, b) => a.diffDays - b.diffDays);
-
-    // 4. Open tasks sorted by priority
-    const priorityTasks = tasks
-      .filter(t => !t.completed)
-      .sort((a, b) => {
-        const pOrder: Record<string, number> = { high: 3, medium: 2, low: 1 };
-        return (pOrder[b.priority] || 1) - (pOrder[a.priority] || 1);
-      });
+    // Occupied intervals in minutes [startMin, endMin] to strictly prevent overlapping activities
+    const occupiedIntervals: Array<{ start: number; end: number; label: string }> = [];
+    const isIntervalFree = (start: number, end: number): boolean => {
+      return !occupiedIntervals.some( iv => start < iv.end && end > iv.start );
+    };
+    const reserveInterval = (start: number, end: number, label: string) => {
+      occupiedIntervals.push({ start, end, label });
+      occupiedIntervals.sort((a, b) => a.start - b.start);
+    };
 
     const blocks: DailyPlanBlock[] = [];
     let bIdx = 1;
 
-    // A. Morning Foundation Block (08:30 - 09:30 or before first class)
-    if (todayClasses.length > 0 && todayClasses[0].slot.startTime >= '10:00') {
-      const urgentAsg = urgentAssignments[0];
+    // 1. Check Academic Mode & Class Suspension Rules
+    const suspensionCheck = isClassSuspendedOnDate(todayIsoDate);
+    let academicModeReason = 'Normal Semester Mode — Regular weekly lecture timetable is active.';
+    if (activeAcademicMode === 'midterm') {
+      academicModeReason =
+        'Midterm Examination Mode Active — Regular lectures are temporarily suspended so your schedule focuses 100% on midterm exams and revision.';
+    } else if (activeAcademicMode === 'final') {
+      academicModeReason =
+        'Final Examination Mode Active — Regular lectures are temporarily suspended so your schedule focuses 100% on final exams and high-yield revision.';
+    } else if (suspensionCheck.suspended && suspensionCheck.reason) {
+      academicModeReason = suspensionCheck.reason;
+    }
+
+    // 2. Schedule Today's Actual Exams (Fixed Non-Negotiable Blocks)
+    const todayExams = exams.filter(e => e.date === todayIsoDate);
+    todayExams.forEach(ex => {
+      const course = courses.find(c => c.id === ex.courseId);
+      const startStr = ex.startTime || '09:30';
+      const dur = ex.durationMinutes || 120;
+      const startMin = timeToMinutes(startStr);
+      const endMin = ex.endTime ? timeToMinutes(ex.endTime) : startMin + dur;
+      const endStr = minutesToTime(endMin);
+
+      // Reserve 30m before and 15m after exam for travel/preparation
+      reserveInterval(Math.max(0, startMin - 30), endMin + 15, ex.name);
       blocks.push({
         id: `b_${Date.now()}_${bIdx++}`,
-        time: '08:45 - 09:45',
-        title: urgentAsg
-          ? `Priority Deep Work: ${urgentAsg.title} (${urgentAsg.diffDays <= 0 ? 'Overdue!' : `Due in ${urgentAsg.diffDays}d`})`
-          : priorityTasks[0]
-          ? `Focus Block: ${priorityTasks[0].title}`
-          : 'Morning Lecture Prep & Concept Warm-up',
-        type: 'study',
+        time: `${startStr} - ${endStr}`,
+        startTime: startStr,
+        endTime: endStr,
+        durationMinutes: endMin - startMin,
+        title: `🎓 EXAM: ${ex.name} (${course?.code || 'Course'})${ex.room ? ` — ${ex.room}` : ''}`,
+        type: 'exam',
+        status: 'pending',
+        priority: 'high',
         completed: false,
-        taskId: priorityTasks[0]?.id
+        courseId: ex.courseId,
+        examId: ex.id,
+        reason: `Scheduled ${ex.examType || 'academic'} examination today at ${startStr}. Includes 30m pre-exam buffer.`
+      });
+      deadlinesConsidered.push(`Today's Exam: ${ex.name} (${startStr} - ${endStr})`);
+    });
+
+    // 3. Schedule Today's University Classes (ONLY if not suspended by Midterm Mode, Final Mode, Holiday, or Cancellation)
+    const todayClasses: Array<{ course: Course; slot: MeetingSlot }> = [];
+    if (activeAcademicMode === 'normal' && !suspensionCheck.suspended) {
+      courses.filter(c => !c.isArchived).forEach(c => {
+        const courseSuspended = isClassSuspendedOnDate(todayIsoDate, c.id);
+        if (courseSuspended.suspended) return;
+        (c.meetingSlots || []).forEach(slot => {
+          if (slot.day === currentDay) {
+            todayClasses.push({ course: c, slot });
+          }
+        });
+      });
+      todayClasses.sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime));
+
+      todayClasses.forEach(({ course, slot }) => {
+        const startMin = timeToMinutes(slot.startTime);
+        const endMin = timeToMinutes(slot.endTime);
+        if (isIntervalFree(startMin, endMin)) {
+          reserveInterval(startMin, endMin + 10, `${course.code} Class`); // +10m transition buffer
+          blocks.push({
+            id: `b_${Date.now()}_${bIdx++}`,
+            time: `${slot.startTime} - ${slot.endTime}`,
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            durationMinutes: endMin - startMin,
+            title: `🏫 ${course.code}: ${course.name} (${slot.location || course.location || 'Campus'})`,
+            type: 'class',
+            status: 'pending',
+            priority: 'high',
+            completed: false,
+            courseId: course.id,
+            reason: `Regular weekly ${slot.type || 'lecture'} on ${currentDayName}.`
+          });
+        }
       });
     }
 
-    // B. Insert Real Scheduled Classes for Today
-    todayClasses.forEach(item => {
-      blocks.push({
-        id: `b_${Date.now()}_${bIdx++}`,
-        time: `${item.slot.startTime} - ${item.slot.endTime}`,
-        title: `${item.course.code}: ${item.course.name} (${item.slot.location || item.course.location || 'Main Campus'})`,
-        type: 'class',
-        completed: false,
-        courseId: item.course.id
+    // 4. Reserve Meal / Rest Break around midday (between 12:00 and 14:30)
+    for (let cand = 12 * 60 + 30; cand <= 14 * 60; cand += 15) {
+      if (isIntervalFree(cand, cand + 45)) {
+        const bStart = minutesToTime(cand);
+        const bEnd = minutesToTime(cand + 45);
+        reserveInterval(cand, cand + 45, 'Lunch & Rest');
+        blocks.push({
+          id: `b_${Date.now()}_${bIdx++}`,
+          time: `${bStart} - ${bEnd}`,
+          startTime: bStart,
+          endTime: bEnd,
+          durationMinutes: 45,
+          title: '🍱 Midday Meal & Cognitive Recharge Break',
+          type: 'break',
+          status: 'pending',
+          completed: false,
+          reason: 'Protected 45-minute midday break to prevent burnout and maintain focus.'
+        });
+        break;
+      }
+    }
+
+    // 5. Build Prioritized Queue of Candidate Study Items (Exams, Assignments, Tasks)
+    interface CandidateWorkItem {
+      id: string;
+      title: string;
+      type: 'study' | 'revision' | 'assignment';
+      priority: 'high' | 'medium' | 'low';
+      score: number;
+      estimatedMinutes: number;
+      courseId?: string;
+      taskId?: string;
+      assignmentId?: string;
+      examId?: string;
+      reason: string;
+      deadlineLabel?: string;
+    }
+
+    const candidates: CandidateWorkItem[] = [];
+
+    // 5A. Upcoming Exams within 14 days (Weighted heavily by proximity, academic mode, and readiness gap)
+    exams.forEach(ex => {
+      const diffDays = Math.ceil((new Date(ex.date).getTime() - today.getTime()) / (86400 * 1000));
+      if (diffDays > 0 && diffDays <= 14) {
+        const course = courses.find(c => c.id === ex.courseId);
+        const readinessGap = Math.max(10, 100 - (ex.readinessPercent || 40));
+        let urgencyScore = 0;
+        if (diffDays === 1) urgencyScore = 200;
+        else if (diffDays <= 3) urgencyScore = 165;
+        else if (diffDays <= 7) urgencyScore = 125;
+        else urgencyScore = 75;
+
+        if (activeAcademicMode === 'midterm' || activeAcademicMode === 'final') {
+          urgencyScore += 35;
+        }
+        urgencyScore += Math.round(readinessGap * 0.35);
+
+        // Boost if user memory mentions this course
+        if (
+          course &&
+          memPrefs.focusKeywords.some(
+            k => k.includes(course.code.toLowerCase()) || k.includes(course.name.toLowerCase())
+          )
+        ) {
+          urgencyScore += 25;
+        }
+
+        const deadlineLabel = `${ex.name} (${course?.code || 'Exam'}) in ${diffDays} day${diffDays === 1 ? '' : 's'} (${ex.date})`;
+        deadlinesConsidered.push(deadlineLabel);
+
+        candidates.push({
+          id: `cand_exam_${ex.id}`,
+          title: `Revision: ${ex.name} (${course?.code || 'Course'}) — Active Recall & Problem Drill`,
+          type: 'revision',
+          priority: diffDays <= 5 ? 'high' : 'medium',
+          score: urgencyScore,
+          estimatedMinutes: memPrefs.preferredSessionMins,
+          courseId: ex.courseId,
+          examId: ex.id,
+          reason: `Prioritized because ${ex.name} is in ${diffDays} day${diffDays === 1 ? '' : 's'} (Readiness: ${ex.readinessPercent || 40}%, Weight: ${ex.weightPercentage || 25}%).`,
+          deadlineLabel
+        });
+
+        // If exam is within 3 days or we are in Midterm/Final mode, add a second focused practice block for it
+        if (diffDays <= 3 || activeAcademicMode !== 'normal') {
+          candidates.push({
+            id: `cand_exam_practice_${ex.id}`,
+            title: `Exam Practice Papers & Weak Topics: ${ex.name}`,
+            type: 'revision',
+            priority: 'high',
+            score: urgencyScore - 15,
+            estimatedMinutes: memPrefs.preferredSessionMins,
+            courseId: ex.courseId,
+            examId: ex.id,
+            reason: `Intensive practice session for approaching ${ex.examType || activeAcademicMode} exam in ${diffDays} day${diffDays === 1 ? '' : 's'}.`
+          });
+        }
+      }
+    });
+
+    // 5B. Pending Assignments (Weighted by due date urgency)
+    assignments
+      .filter(a => a.status !== 'completed')
+      .forEach(asg => {
+        const diffDays = asg.dueDate
+          ? Math.ceil((new Date(asg.dueDate).getTime() - today.getTime()) / (86400 * 1000))
+          : 10;
+        if (diffDays < -7) return; // Skip ancient overdue items unless recent
+        const course = courses.find(c => c.id === asg.courseId);
+
+        let urgencyScore = 50;
+        if (diffDays <= 0) urgencyScore = 190; // Due today or overdue
+        else if (diffDays === 1) urgencyScore = 175; // Due tomorrow
+        else if (diffDays <= 3) urgencyScore = 140;
+        else if (diffDays <= 7) urgencyScore = 95;
+        else urgencyScore = 45;
+
+        if (asg.priority === 'high') urgencyScore += 20;
+
+        const dueLabel =
+          diffDays < 0
+            ? `Overdue (${Math.abs(diffDays)}d ago)`
+            : diffDays === 0
+            ? 'Due Today'
+            : diffDays === 1
+            ? 'Due Tomorrow'
+            : `Due in ${diffDays} days`;
+
+        if (diffDays <= 7) {
+          deadlinesConsidered.push(`Assignment: "${asg.title}" (${dueLabel})`);
+        }
+
+        candidates.push({
+          id: `cand_asg_${asg.id}`,
+          title: `Coursework: ${asg.title}${course ? ` (${course.code})` : ''} [${dueLabel}]`,
+          type: 'assignment',
+          priority: diffDays <= 2 || asg.priority === 'high' ? 'high' : 'medium',
+          score: urgencyScore,
+          estimatedMinutes: Math.min(memPrefs.preferredSessionMins, asg.estimatedMinutes || memPrefs.preferredSessionMins),
+          courseId: asg.courseId,
+          assignmentId: asg.id,
+          reason: `Scheduled because "${asg.title}" is ${dueLabel.toLowerCase()} (${asg.priority} priority).`,
+          deadlineLabel: `${asg.title} (${dueLabel})`
+        });
       });
-    });
 
-    // C. Dedicated Lunch & Energy Break (12:30 - 13:30 or appropriate gap)
-    const hasClassAtNoon = todayClasses.some(c => c.slot.startTime <= '13:00' && c.slot.endTime >= '12:30');
-    blocks.push({
-      id: `b_${Date.now()}_${bIdx++}`,
-      time: hasClassAtNoon ? '13:30 - 14:15' : '12:30 - 13:30',
-      title: '🍱 Lunch & Mental Rest Interval',
-      type: 'break',
-      completed: false
-    });
+    // 5C. Pending Tasks (Excluding completed tasks!)
+    tasks
+      .filter(t => !t.completed)
+      .forEach(task => {
+        const diffDays = task.dueDate
+          ? Math.ceil((new Date(task.dueDate).getTime() - today.getTime()) / (86400 * 1000))
+          : 14;
+        const course = courses.find(c => c.id === task.courseId);
 
-    // D. Afternoon Focus / Urgent Deadline Block
-    const targetTask = priorityTasks[1] || priorityTasks[0];
-    const topUrgentAsg = urgentAssignments.length > 1 ? urgentAssignments[1] : urgentAssignments[0];
+        let score = task.priority === 'high' ? 110 : task.priority === 'medium' ? 75 : 40;
+        if (diffDays <= 0) score += 65;
+        else if (diffDays === 1) score += 50;
+        else if (diffDays <= 3) score += 30;
 
-    blocks.push({
-      id: `b_${Date.now()}_${bIdx++}`,
-      time: hasClassAtNoon ? '14:30 - 16:00' : '14:00 - 15:30',
-      title: topUrgentAsg
-        ? `Coursework Push: ${topUrgentAsg.title}`
-        : targetTask
-        ? `Task Execution: ${targetTask.title}`
-        : 'Deep Academic Reading & Problem Sets',
-      type: 'study',
-      completed: false,
-      taskId: targetTask?.id
-    });
+        if (
+          course &&
+          memPrefs.focusKeywords.some(
+            k => k.includes(course.code.toLowerCase()) || k.includes(course.name.toLowerCase())
+          )
+        ) {
+          score += 20;
+        }
 
-    // E. Exam Revision Block (if student has upcoming exams)
-    if (upcomingExamsList.length > 0) {
-      const nearExam = upcomingExamsList[0];
-      blocks.push({
-        id: `b_${Date.now()}_${bIdx++}`,
-        time: '16:00 - 17:00',
-        title: `⚡ Exam Prep: ${nearExam.name} (In ${nearExam.diffDays} days - Flashcards & Formula Sheets)`,
-        type: 'study',
-        completed: false,
-        courseId: nearExam.courseId
+        candidates.push({
+          id: `cand_task_${task.id}`,
+          title: `Task: ${task.title}${course ? ` (${course.code})` : ''}`,
+          type: 'study',
+          priority: task.priority,
+          score,
+          estimatedMinutes: memPrefs.preferredSessionMins,
+          courseId: task.courseId,
+          taskId: task.id,
+          reason: `${task.priority.toUpperCase()} priority task${task.dueDate ? ` due ${task.dueDate.slice(0, 10)}` : ''}.`
+        });
       });
-    } else {
-      // General flashcard spaced repetition block
-      blocks.push({
-        id: `b_${Date.now()}_${bIdx++}`,
-        time: '16:00 - 17:00',
-        title: 'Active Recall Flashcards (SM-2 Spaced Repetition)',
-        type: 'study',
-        completed: false
+
+    // Sort candidates strictly by intelligence score (highest priority first — never equal distribution!)
+    candidates.sort((a, b) => b.score - a.score);
+
+    // 6. Schedule Top Candidates into Non-Overlapping Available Slots with Realistic Breaks
+    const isDayOff = memPrefs.noStudyDays.includes(currentDay);
+    const maxStudyBlocksToday = isDayOff ? 1 : memPrefs.maxDailyStudySessions;
+    let scheduledStudyCount = 0;
+
+    // Find next free slot of `durationMins` between `memPrefs.dayStartMin` and `memPrefs.dayEndMin`
+    const findNextAvailableSlot = (durationMins: number, earliestMin: number): number | null => {
+      for (let t = Math.max(earliestMin, memPrefs.dayStartMin); t + durationMins <= memPrefs.dayEndMin; t += 15) {
+        if (isIntervalFree(t, t + durationMins)) {
+          return t;
+        }
+      }
+      return null;
+    };
+
+    let cursorMin = memPrefs.dayStartMin;
+
+    // If user has no candidates at all, schedule 2 sensible foundational study blocks if not a day off
+    if (candidates.length === 0 && !isDayOff) {
+      candidates.push({
+        id: 'cand_default_1',
+        title:
+          activeAcademicMode === 'normal'
+            ? 'Lecture Notes Review & Active Recall Synthesis'
+            : `Focused ${activeAcademicMode === 'midterm' ? 'Midterm' : 'Final'} Exam Revision Block`,
+        type: activeAcademicMode === 'normal' ? 'study' : 'revision',
+        priority: 'medium',
+        score: 80,
+        estimatedMinutes: memPrefs.preferredSessionMins,
+        reason: 'Foundational study block scheduled during your preferred study window.'
       });
     }
 
-    // F. End of Day Review & Slipped Task Rebalancing
-    blocks.push({
-      id: `b_${Date.now()}_${bIdx++}`,
-      time: '17:30 - 18:00',
-      title: 'Daily Review, Inbox Capture & Tomorrow Plan',
-      type: 'review',
-      completed: false
+    candidates.forEach(cand => {
+      if (scheduledStudyCount >= maxStudyBlocksToday) {
+        postponedItems.push(
+          `${cand.title} — Postponed to tomorrow to avoid overloading today's schedule (daily cap of ${maxStudyBlocksToday} deep focus blocks reached).`
+        );
+        return;
+      }
+
+      const dur = cand.estimatedMinutes || memPrefs.preferredSessionMins;
+      const slotStart = findNextAvailableSlot(dur, cursorMin);
+      if (slotStart === null) {
+        postponedItems.push(
+          `${cand.title} — Postponed because no non-overlapping ${dur}-minute window remains within your available hours (${minutesToTime(memPrefs.dayStartMin)}–${minutesToTime(memPrefs.dayEndMin)}).`
+        );
+        return;
+      }
+
+      const slotEnd = slotStart + dur;
+      const startStr = minutesToTime(slotStart);
+      const endStr = minutesToTime(slotEnd);
+
+      // Reserve the study block AND a realistic break right after it
+      reserveInterval(slotStart, slotEnd, cand.title);
+      blocks.push({
+        id: `b_${Date.now()}_${bIdx++}`,
+        time: `${startStr} - ${endStr}`,
+        startTime: startStr,
+        endTime: endStr,
+        durationMinutes: dur,
+        title: cand.title,
+        type: cand.type,
+        status: 'pending',
+        priority: cand.priority,
+        completed: false,
+        courseId: cand.courseId,
+        taskId: cand.taskId,
+        assignmentId: cand.assignmentId,
+        examId: cand.examId,
+        reason: cand.reason
+      });
+
+      prioritizationReasons.push(`${cand.title}: ${cand.reason}`);
+      scheduledStudyCount++;
+
+      // Insert an explicit short break block after study session if another session will follow
+      const breakDur = memPrefs.preferredBreakMins;
+      if (scheduledStudyCount < maxStudyBlocksToday && isIntervalFree(slotEnd, slotEnd + breakDur)) {
+        reserveInterval(slotEnd, slotEnd + breakDur, 'Study Break');
+        blocks.push({
+          id: `b_${Date.now()}_${bIdx++}`,
+          time: `${minutesToTime(slotEnd)} - ${minutesToTime(slotEnd + breakDur)}`,
+          startTime: minutesToTime(slotEnd),
+          endTime: minutesToTime(slotEnd + breakDur),
+          durationMinutes: breakDur,
+          title: `☕ ${breakDur}-Min Rest & Stretch Break`,
+          type: 'break',
+          status: 'pending',
+          completed: false,
+          reason: `Scheduled ${breakDur}-minute recovery break between study blocks.`
+        });
+        cursorMin = slotEnd + breakDur;
+      } else {
+        cursorMin = slotEnd + breakDur;
+      }
     });
 
-    // Sort all blocks chronologically
-    blocks.sort((a, b) => a.time.localeCompare(b.time));
+    // Sort all blocks chronologically by start time
+    blocks.sort((a, b) => (a.startTime || a.time).localeCompare(b.startTime || b.time));
+
+    const explanation: DailyPlanExplanation = {
+      summary:
+        activeAcademicMode === 'normal'
+          ? `Realistic plan for ${currentDayName}: ${todayClasses.length} class(es), ${todayExams.length} exam(s), and ${scheduledStudyCount} prioritized study session(s) (${memPrefs.preferredSessionMins}m blocks with ${memPrefs.preferredBreakMins}m breaks).`
+          : `${activeAcademicMode === 'midterm' ? 'Midterm Week' : 'Final Exam'} Revision Plan for ${currentDayName}: Regular classes are suspended. Scheduled ${todayExams.length} exam(s) and ${scheduledStudyCount} high-priority revision session(s).`,
+      academicModeReason,
+      prioritizationReasons:
+        prioritizationReasons.length > 0
+          ? prioritizationReasons
+          : ['Balanced workload across your active courses with realistic breaks and zero overlapping sessions.'],
+      deadlinesConsidered:
+        deadlinesConsidered.length > 0
+          ? deadlinesConsidered
+          : ['No urgent 48-hour deadlines — focused on steady academic progress.'],
+      postponedItems,
+      memoriesApplied: memPrefs.memoriesApplied
+    };
 
     setDailyPlan({
       date: todayIsoDate,
       generatedBy: 'ai',
-      fallbackReason: `Custom plan optimized for ${currentDayName}: Includes ${todayClasses.length} lecture(s), ${urgentAssignments.length} urgent deadline(s), and targeted exam preparation.`,
+      academicMode: activeAcademicMode,
+      fallbackReason: explanation.summary,
+      explanation,
       blocks
     });
-  };
+  }, [
+    courses,
+    assignments,
+    tasks,
+    exams,
+    activeAcademicMode,
+    isClassSuspendedOnDate,
+    parseSchedulingMemories
+  ]);
 
   const toggleDailyPlanBlock = (blockId: string) => {
     setDailyPlan(prev => ({
       ...prev,
-      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, completed: !b.completed } : b)
+      blocks: prev.blocks.map(b => {
+        if (b.id !== blockId) return b;
+        const nextComp = !b.completed;
+        if (b.taskId) {
+          updateTask(b.taskId, {
+            completed: nextComp,
+            completedAt: nextComp ? new Date().toISOString() : undefined
+          });
+        }
+        return {
+          ...b,
+          completed: nextComp,
+          status: nextComp ? 'completed' : 'pending'
+        };
+      })
     }));
+  };
+
+  const updateDailyPlanBlock = (blockId: string, updates: Partial<DailyPlanBlock>) => {
+    setDailyPlan(prev => {
+      const updatedBlocks = prev.blocks.map(b => {
+        if (b.id !== blockId) return b;
+        const merged = { ...b, ...updates };
+        if (updates.startTime || updates.endTime) {
+          const st = updates.startTime || b.startTime || b.time.split(' - ')[0] || '09:00';
+          const et = updates.endTime || b.endTime || b.time.split(' - ')[1] || '10:00';
+          merged.time = `${st} - ${et}`;
+          merged.durationMinutes = Math.max(5, timeToMinutes(et) - timeToMinutes(st));
+        }
+        return merged;
+      });
+      updatedBlocks.sort((a, b) => (a.startTime || a.time).localeCompare(b.startTime || b.time));
+      return { ...prev, blocks: updatedBlocks };
+    });
+  };
+
+  const deleteDailyPlanBlock = (blockId: string) => {
+    setDailyPlan(prev => ({
+      ...prev,
+      blocks: prev.blocks.filter(b => b.id !== blockId)
+    }));
+  };
+
+  const moveDailyPlanBlock = (blockId: string, direction: 'up' | 'down') => {
+    setDailyPlan(prev => {
+      const idx = prev.blocks.findIndex(b => b.id === blockId);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= prev.blocks.length) return prev;
+      const nextBlocks = [...prev.blocks];
+      // Swap time slots between the two adjacent blocks if both are movable study/break blocks
+      const currentBlock = { ...nextBlocks[idx] };
+      const neighborBlock = { ...nextBlocks[targetIdx] };
+      const tempTime = currentBlock.time;
+      const tempStart = currentBlock.startTime;
+      const tempEnd = currentBlock.endTime;
+
+      currentBlock.time = neighborBlock.time;
+      currentBlock.startTime = neighborBlock.startTime;
+      currentBlock.endTime = neighborBlock.endTime;
+
+      neighborBlock.time = tempTime;
+      neighborBlock.startTime = tempStart;
+      neighborBlock.endTime = tempEnd;
+
+      nextBlocks[idx] = neighborBlock;
+      nextBlocks[targetIdx] = currentBlock;
+      return { ...prev, blocks: nextBlocks };
+    });
+  };
+
+  const addCustomDailyPlanBlock = (blockData: Omit<DailyPlanBlock, 'id'>) => {
+    const newBlock: DailyPlanBlock = {
+      ...blockData,
+      id: generateUniqueId('plan_block')
+    };
+    setDailyPlan(prev => {
+      const nextBlocks = [...prev.blocks, newBlock];
+      nextBlocks.sort((a, b) => (a.startTime || a.time).localeCompare(b.startTime || b.time));
+      return { ...prev, blocks: nextBlocks };
+    });
+  };
+
+  // Adaptive Daily Planning: Reorganize remaining schedule when user completes a task early or misses a session
+  const adaptDailyPlan = (reason: 'completed_early' | 'missed_session' | 'rebalance') => {
+    const now = new Date();
+    const currentMin = Math.max(8 * 60, now.getHours() * 60 + now.getMinutes());
+    const memPrefs = parseSchedulingMemories();
+
+    setDailyPlan(prev => {
+      const completedOrFixed = prev.blocks.filter(
+        b => b.completed || b.type === 'class' || b.type === 'exam'
+      );
+      const pendingStudyBlocks = prev.blocks.filter(
+        b => !b.completed && b.type !== 'class' && b.type !== 'exam' && b.type !== 'break'
+      );
+
+      // Reserve fixed blocks
+      const occupied: Array<{ start: number; end: number }> = completedOrFixed.map(b => {
+        const parts = b.time.split(' - ');
+        return {
+          start: timeToMinutes(b.startTime || parts[0] || '09:00'),
+          end: timeToMinutes(b.endTime || parts[1] || '10:00')
+        };
+      });
+      const isFree = (s: number, e: number) => !occupied.some(o => s < o.end && e > o.start);
+
+      const rescheduled: DailyPlanBlock[] = [...completedOrFixed];
+      const newlyPostponed: string[] = [...(prev.explanation?.postponedItems || [])];
+
+      let cursor = reason === 'completed_early' ? currentMin + 5 : Math.max(currentMin + 15, memPrefs.dayStartMin);
+      // Round cursor to next 15m
+      cursor = Math.ceil(cursor / 15) * 15;
+
+      // If completed early and there are postponed items or open tasks not yet in plan, pull one in!
+      if (reason === 'completed_early') {
+        const unscheduledTask = tasks.find(
+          t => !t.completed && !prev.blocks.some(b => b.taskId === t.id)
+        );
+        if (unscheduledTask) {
+          pendingStudyBlocks.push({
+            id: generateUniqueId('b_adapt'),
+            time: '15:00 - 15:50',
+            durationMinutes: memPrefs.preferredSessionMins,
+            title: `⚡ Pulled Forward: ${unscheduledTask.title}`,
+            type: 'study',
+            priority: unscheduledTask.priority,
+            completed: false,
+            taskId: unscheduledTask.id,
+            courseId: unscheduledTask.courseId,
+            reason: 'Suggested next because you completed your earlier study block ahead of schedule!'
+          });
+        }
+      }
+
+      pendingStudyBlocks.forEach(b => {
+        const dur = b.durationMinutes || memPrefs.preferredSessionMins;
+        let placed = false;
+        for (let t = cursor; t + dur <= memPrefs.dayEndMin; t += 15) {
+          if (isFree(t, t + dur)) {
+            const st = minutesToTime(t);
+            const et = minutesToTime(t + dur);
+            occupied.push({ start: t, end: t + dur });
+            rescheduled.push({
+              ...b,
+              time: `${st} - ${et}`,
+              startTime: st,
+              endTime: et,
+              status: reason === 'missed_session' ? 'rescheduled' : 'pending',
+              reason:
+                reason === 'missed_session'
+                  ? `Automatically reorganized into your remaining available hours (${st}–${et}).`
+                  : b.reason
+            });
+            cursor = t + dur + memPrefs.preferredBreakMins;
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          newlyPostponed.push(
+            `${b.title} — Deferred to tomorrow so your evening remains realistic and uncrowded.`
+          );
+        }
+      });
+
+      rescheduled.sort((a, b) => (a.startTime || a.time).localeCompare(b.startTime || b.time));
+
+      const adaptSummary =
+        reason === 'completed_early'
+          ? 'Adapted Plan: Pulled your next highest-priority study block forward since you finished early!'
+          : 'Adapted Plan: Reorganized remaining study sessions around your current time and deferred overflow tasks.';
+
+      return {
+        ...prev,
+        fallbackReason: adaptSummary,
+        explanation: prev.explanation
+          ? {
+              ...prev.explanation,
+              summary: adaptSummary,
+              postponedItems: Array.from(new Set(newlyPostponed))
+            }
+          : undefined,
+        blocks: rescheduled
+      };
+    });
   };
 
   // What Should I Do Now? Deterministic Algorithm
@@ -2237,16 +3241,186 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [tasks, exams, courses]);
 
+  // AI Memory Management (Persistent, Deduplicated, Categorized & User-Isolated)
+  const addAiMemory = useCallback(
+    (
+      content: string,
+      category: AiMemory['category'] = 'preference',
+      source: 'explicit' | 'inferred' = 'explicit'
+    ): AiMemory => {
+      const cleanContent = content.trim();
+      const lowerNew = cleanContent.toLowerCase();
+      const nowIso = new Date().toISOString();
+
+      let savedMemory: AiMemory = {
+        id: generateUniqueId('mem'),
+        category,
+        content: cleanContent,
+        fact: cleanContent,
+        source,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+
+      setAiMemories(prev => {
+        // Check for duplicate or contradictory study-time preference
+        const isStudyTimePref =
+          lowerNew.includes('prefer studying') ||
+          lowerNew.includes('study at night') ||
+          lowerNew.includes('study in the morning') ||
+          lowerNew.includes('study in the afternoon') ||
+          lowerNew.includes('study in the evening');
+
+        const existingIdx = prev.findIndex(m => {
+          const existingText = (m.content || m.fact || '').toLowerCase();
+          if (existingText === lowerNew) return true;
+          if (
+            isStudyTimePref &&
+            (existingText.includes('prefer studying') ||
+              existingText.includes('study at night') ||
+              existingText.includes('study in the morning') ||
+              existingText.includes('study in the afternoon') ||
+              existingText.includes('study in the evening'))
+          ) {
+            return true;
+          }
+          return false;
+        });
+
+        let next: AiMemory[];
+        if (existingIdx !== -1) {
+          savedMemory = {
+            ...prev[existingIdx],
+            category,
+            content: cleanContent,
+            fact: cleanContent,
+            source,
+            updatedAt: nowIso
+          };
+          next = prev.map((m, idx) => (idx === existingIdx ? savedMemory : m));
+        } else {
+          next = [savedMemory, ...prev];
+        }
+
+        if (user && isSupabaseConfigured()) {
+          dbSaveAiMemory(user.id, savedMemory).catch(err => console.warn('DB save memory:', err));
+        }
+        return next;
+      });
+
+      return savedMemory;
+    },
+    [user]
+  );
+
+  const updateAiMemory = useCallback(
+    (id: string, updates: Partial<AiMemory>) => {
+      setAiMemories(prev => {
+        const next: AiMemory[] = prev.map(m => {
+          if (m.id !== id) return m;
+          const updatedContent = updates.content ?? updates.fact ?? m.content ?? m.fact ?? '';
+          return {
+            ...m,
+            ...updates,
+            content: updatedContent,
+            fact: updatedContent,
+            updatedAt: new Date().toISOString()
+          };
+        });
+        const target = next.find(m => m.id === id);
+        if (target && user && isSupabaseConfigured()) {
+          dbSaveAiMemory(user.id, target).catch(err => console.warn('DB update memory:', err));
+        }
+        return next;
+      });
+    },
+    [user]
+  );
+
+  const deleteAiMemory = useCallback(
+    (id: string) => {
+      setAiMemories(prev => prev.filter(m => m.id !== id));
+      if (user && isSupabaseConfigured()) {
+        dbDeleteAiMemory(user.id, id).catch(err => console.warn('DB delete memory:', err));
+      }
+    },
+    [user]
+  );
+
+  // Automatic Explicit Preference Detector from User Chat Messages
+  const detectAndSaveExplicitMemories = (text: string): AiMemory[] => {
+    const detected: AiMemory[] = [];
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
+
+    const patterns: Array<{ regex: RegExp; category: AiMemoryCategory }> = [
+      {
+        regex: /\b(?:i prefer|i like|i love|i work best|i study best)\s+([^.?!]+)/i,
+        category: 'preference'
+      },
+      {
+        regex: /\b(?:my study sessions? should be|study blocks? should be|i want\s+\d+\s*(?:min|minute)\s*sessions?)\s*([^.?!]*)/i,
+        category: 'habit'
+      },
+      {
+        regex: /\b(?:i don't study on|i do not study on|never schedule on|i'm busy on|i work on)\s+([^.?!]+)/i,
+        category: 'commitment'
+      },
+      {
+        regex: /\b(?:i sleep from|i go to bed at|i wake up at|my sleep schedule is)\s+([^.?!]+)/i,
+        category: 'sleep'
+      },
+      {
+        regex: /\b(?:i struggle with|i find .* difficult|my weak subject is|i need more help with)\s+([^.?!]+)/i,
+        category: 'weakness'
+      },
+      {
+        regex: /\b(?:my goal is|i'm aiming for|i want to achieve|remember that i)\s+([^.?!]+)/i,
+        category: 'goal'
+      }
+    ];
+
+    for (const p of patterns) {
+      if (p.regex.test(trimmed)) {
+        const mem = addAiMemory(trimmed, p.category, 'explicit');
+        detected.push(mem);
+        break;
+      }
+    }
+
+    // Also catch standalone explicit study time statements like "I study at night"
+    if (
+      detected.length === 0 &&
+      (lower.includes('i study at night') ||
+        lower.includes('i study in the morning') ||
+        lower.includes('with 10-minute breaks') ||
+        lower.includes('with 15-minute breaks'))
+    ) {
+      detected.push(addAiMemory(trimmed, 'preference', 'explicit'));
+    }
+
+    return detected;
+  };
+
   // AI Assistant Chat & Actions
   const sendAiMessage = (text: string) => {
     const userMsg: ChatMessage = {
-      id: `msg_${Date.now()}`,
+      id: generateUniqueId('msg_usr'),
       sender: 'user',
       content: text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
     setAiMessages(prev => [...prev, userMsg]);
+
+    // Detect & persist any explicit preferences the user stated in this message
+    const newlySavedMemories = detectAndSaveExplicitMemories(text);
+    const activeMemoryStrings: string[] = [
+      ...newlySavedMemories.map(m => m.content || m.fact || ''),
+      ...aiMemories.map(m => m.content || m.fact || '')
+    ]
+      .filter((s): s is string => Boolean(s))
+      .slice(0, 6);
 
     const currentSession = chatSessions.find(s => s.id === activeChatSessionId);
     if (currentSession && (currentSession.title === 'New Chat' || currentSession.title === 'Study Assistant')) {
@@ -2273,14 +3447,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const candidateModels = [
           'gemini-2.0-flash',
           'gemini-1.5-flash',
-          'gemini-2.5-flash',
-          'gemini-3.5-flash-lite',
-          'gemini-3.5-flash',
-          'gemini-3.1-flash-lite',
-          'gemini-3.8-flash'
+          'gemini-2.5-flash'
         ];
 
-        const academicPrompt = buildGeminiAcademicPrompt(scheduleCtx, courses, text);
+        const memoryContextBlock =
+          activeMemoryStrings.length > 0
+            ? `\n\nUSER SAVED PREFERENCES & AI MEMORY (Strictly respect these and never invent preferences not listed here):\n${activeMemoryStrings.map(m => `- ${m}`).join('\n')}`
+            : '\n\nUSER SAVED PREFERENCES: None saved yet. Do not assume or hallucinate unstated preferences.';
+
+        const modeContextBlock = `\nCURRENT ACADEMIC MODE: ${activeAcademicMode.toUpperCase()} MODE (${
+          activeAcademicMode === 'normal'
+            ? 'Regular weekly classes active'
+            : 'Regular weekly lectures are SUSPENDED; only examinations and revision take place'
+        }).`;
+
+        const academicPrompt =
+          buildGeminiAcademicPrompt(scheduleCtx, courses, text) + memoryContextBlock + modeContextBlock;
 
         for (const model of candidateModels) {
           try {
@@ -2293,11 +3475,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   contents: [
                     {
                       role: 'user',
-                      parts: [
-                        {
-                          text: academicPrompt
-                        }
-                      ]
+                      parts: [{ text: academicPrompt }]
                     }
                   ]
                 })
@@ -2306,21 +3484,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const data = await resp.json();
             const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (geminiText) {
-              // Guard against evasive hallucination where model claims it doesn't have access to calendar
               const isEvasive =
                 geminiText.toLowerCase().includes('does not currently have access') ||
                 geminiText.toLowerCase().includes('do not currently have access') ||
                 geminiText.toLowerCase().includes('reply with the specific day of the week');
 
-              const finalText = isEvasive ? generateScheduleAnswer(text, scheduleCtx, courses) : geminiText;
+              let finalText = isEvasive ? generateScheduleAnswer(text, scheduleCtx, courses) : geminiText;
+              if (newlySavedMemories.length > 0) {
+                finalText = `🧠 *Saved to your AI Memory: "${newlySavedMemories[0].content}"*\n\n` + finalText;
+              }
 
               setAiMessages(prev => [
                 ...prev,
                 {
-                  id: `msg_${Date.now() + 1}`,
+                  id: generateUniqueId('msg_ai'),
                   sender: 'assistant',
                   content: finalText,
-                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  memoriesUsed: activeMemoryStrings.length > 0 ? activeMemoryStrings.slice(0, 3) : undefined
                 }
               ]);
               return;
@@ -2331,25 +3512,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         // Fallback to local heuristic engine on all errors
-        runLocalAiResponse(text);
+        runLocalAiResponse(text, newlySavedMemories, activeMemoryStrings);
       })();
       return;
     }
 
-    runLocalAiResponse(text);
+    runLocalAiResponse(text, newlySavedMemories, activeMemoryStrings);
   };
 
-  const runLocalAiResponse = (text: string) => {
+  const runLocalAiResponse = (
+    text: string,
+    newlySavedMemories: AiMemory[] = [],
+    activeMemoryStrings: string[] = []
+  ) => {
     setTimeout(() => {
       const lower = text.toLowerCase();
       let reasoningSteps: string[] = [];
       let replyContent = '';
       let proposals: AiActionProposal[] = [];
 
-      // Check if user is asking about schedule, tomorrow, today, timetable, or upcoming classes
-      if (isScheduleOrDateQuery(text)) {
+      if (newlySavedMemories.length > 0 && lower.split(' ').length < 18 && !lower.includes('?')) {
+        replyContent = `🧠 **Preference Saved to AI Memory!**\n\nI have recorded: *"${newlySavedMemories[0].content}"*.\n\nI will automatically apply this preference whenever I generate your **Daily Study Plan**, schedule revision sessions, or give study recommendations. You can view, edit, or delete your saved memories anytime in the **Memories** tab above.`;
+      } else if (isScheduleOrDateQuery(text)) {
         const scheduleCtx = getAcademicScheduleContext(courses, assignments, tasks, events, exams);
         replyContent = generateScheduleAnswer(text, scheduleCtx, courses);
+        if (activeAcademicMode !== 'normal') {
+          replyContent =
+            `> 📌 **${activeAcademicMode === 'midterm' ? 'Midterm Week' : 'Final Exam'} Mode Active**: Regular weekly classes are temporarily suspended during this examination period.\n\n` +
+            replyContent;
+        }
+      } else if (
+        lower.includes('plan my day') ||
+        lower.includes('daily plan') ||
+        lower.includes('study plan')
+      ) {
+        regenerateDailyPlan();
+        replyContent = `I have regenerated your **Intelligent Daily Plan** for today in **${
+          activeAcademicMode === 'normal'
+            ? 'Normal Semester Mode'
+            : activeAcademicMode === 'midterm'
+            ? 'Midterm Exam Mode (Regular Classes Suspended)'
+            : 'Final Exam Mode (Regular Classes Suspended)'
+        }**.\n\n${
+          activeMemoryStrings.length > 0
+            ? `✨ *Personalized using your preferences: ${activeMemoryStrings.slice(0, 2).join(' • ')}*\n\n`
+            : ''
+        }Open the **Today** dashboard to view the full non-overlapping timeline, prioritization breakdown, and adaptive controls.`;
       } else if (
         lower.includes('how to use') ||
         lower.includes('how do i use') ||
@@ -2358,55 +3566,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lower.includes('button') ||
         lower.includes('start')
       ) {
-        replyContent = `### How to use the **Ask AI** button:
+        replyContent = `### How to use the **Ask AI** Assistant:
 
-I am your proactive academic assistant and study partner. Here are the 5 things you can do right here:
+1. 🧠 **Personalize Your AI Memory:**
+   Tell me your habits and constraints (e.g. *"I prefer studying at night"*, *"My study sessions should be 45 minutes with 10-minute breaks"*, or *"I don't study on Fridays"*). I will remember them across sessions and apply them to your Daily Plan!
 
-1. 🏫 **Create Courses & Timetable Slots via Chat:**
-   Tell me: *"I am taking Computer Science 101 on Mon and Wed at 10 AM"* or *"Add Biology 200"*. I will parse it and provide a 1-click **Confirm & Create** button!
+2. 🏫 **Create Courses & Timetable Slots:**
+   Tell me: *"I am taking Computer Science 101 on Mon and Wed at 10 AM"*.
 
-2. 📝 **Create Coursework & Auto-Breakdown:**
-   Tell me: *"I have a 2,000-word Research Essay due next Friday"*. I will schedule it and break it down into 4–7 actionable steps with focus timers.
+3. 📝 **Create Coursework & Auto-Breakdown:**
+   Tell me: *"I have a Research Essay due next Friday"*.
 
-3. 📅 **Plan Your Day & Focus Sessions:**
-   Tell me: *"Schedule a 45-minute focus session for tonight at 7 PM"* and I'll add it directly to your timetable and calendar.
-
-4. 🧠 **Concept Explanations & Tutoring:**
-   Ask any academic question! E.g. *"Explain recursion in programming"* or *"How does photosynthesis work?"*.
-
-5. 📄 **Document QA with Citations:**
-   Upload lecture slides or PDFs in the **Files** tab, then ask me anything about the document — I provide exact page numbers and quotes.
-
-Try it right now! Click **Confirm & Create** on the sample course card below, or type what courses you are taking!`;
-
-        proposals.push({
-          id: `prop_${Date.now()}`,
-          type: 'create_course',
-          payload: {
-            name: 'Introduction to Computer Science',
-            code: 'CS 101',
-            instructor: 'Dr. Alan Turing',
-            room: 'Turing Hall 101',
-            color: '#0284c7',
-            credits: 4,
-            scheduleSlots: [
-              { day: 'Mon', startTime: '10:00', endTime: '11:30', room: 'Turing Hall 101', type: 'lecture' },
-              { day: 'Wed', startTime: '10:00', endTime: '11:30', room: 'Turing Hall 101', type: 'lecture' }
-            ]
-          },
-          reasoning: 'Sample course setup card: click Confirm to immediately add CS 101 to your timetable!',
-          status: 'pending'
-        });
+4. 📅 **Intelligent Daily Planning & Academic Modes:**
+   Ask me to *"Plan my day"* — I respect your classes, Midterm/Final exam modes, assignment deadlines, and saved preferences.`;
       } else if (
         (lower.startsWith('add course') ||
-         lower.startsWith('create course') ||
-         lower.startsWith('new course') ||
-         lower.includes('i am taking') ||
-         lower.includes("i'm taking") ||
-         lower.includes('enrolled in')) &&
+          lower.startsWith('create course') ||
+          lower.startsWith('new course') ||
+          lower.includes('i am taking') ||
+          lower.includes("i'm taking") ||
+          lower.includes('enrolled in')) &&
         !isScheduleOrDateQuery(text)
       ) {
-        // Natural language course creation
         let courseName = 'New Academic Course';
         let courseCode = 'CRS 101';
         let day = 'Mon';
@@ -2428,7 +3609,6 @@ Try it right now! Click **Confirm & Create** on the sample course card below, or
           courseName = 'World History & Civilizations';
           courseCode = 'HIST 110';
         } else {
-          // Extract title if possible
           const cleanText = text.replace(/(add|create|course|class|taking|i am|i'm|enrolled in)/gi, '').trim();
           if (cleanText) {
             courseName = cleanText.split(' ')[0].toUpperCase() + ' ' + (cleanText.split(' ').slice(1).join(' ') || 'Course');
@@ -2446,10 +3626,10 @@ Try it right now! Click **Confirm & Create** on the sample course card below, or
         else if (lower.includes('13') || lower.includes('1pm') || lower.includes('1:00')) time = '13:00';
         else if (lower.includes('14') || lower.includes('2pm') || lower.includes('2:00')) time = '14:00';
 
-        replyContent = `I have drafted the course **${courseName} (${courseCode})** with a weekly lecture slot on ${day}s at ${time}. Click **Confirm & Create** below to instantly add it to your workspace and timetable!`;
+        replyContent = `I have drafted the course **${courseName} (${courseCode})** with a weekly lecture slot on ${day}s at ${time}. Click **Confirm & Create** below to add it to your timetable!`;
 
         proposals.push({
-          id: `prop_${Date.now()}`,
+          id: generateUniqueId('prop'),
           type: 'create_course',
           payload: {
             name: courseName,
@@ -2467,10 +3647,10 @@ Try it right now! Click **Confirm & Create** on the sample course card below, or
         });
       } else if (lower.includes('assignment') || lower.includes('essay') || lower.includes('homework') || lower.includes('project due') || lower.includes('due')) {
         const title = text.replace(/(create|add|assignment|essay|due|homework|project)/gi, '').trim() || 'Coursework Assignment';
-        replyContent = `I have drafted the assignment **"${title}"** with a due date in 7 days. Once created, you can use the AI 4-7 step breakdown to turn it into manageable study tasks. Click below to add it to your assignments!`;
-        
+        replyContent = `I have drafted the assignment **"${title}"** with a due date in 7 days. Click below to add it to your assignments!`;
+
         proposals.push({
-          id: `prop_${Date.now()}`,
+          id: generateUniqueId('prop'),
           type: 'create_assignment',
           payload: {
             title: title.charAt(0).toUpperCase() + title.slice(1),
@@ -2482,60 +3662,47 @@ Try it right now! Click **Confirm & Create** on the sample course card below, or
           reasoning: `Coursework deadline proposal due in 7 days.`,
           status: 'pending'
         });
-      } else if (lower.includes('avl') || lower.includes('tree') || lower.includes('cs 302')) {
-        replyContent = `In an **AVL tree**, the balance factor of every node must be in {-1, 0, 1}. For Left-Right (LR) zigzag insertions, you must perform a double rotation (single Left on child, then single Right on parent) to restore balance within O(log n) time.`;
-      } else if (courses.length === 0) {
-        // Empty workspace friendly response
-        replyContent = `Hello! Your workspace is currently fresh with **0 courses**. 
-
-To use the **Ask AI** button:
-- Tell me what courses you're taking (e.g. *"I am taking Biology on Mondays at 10am"*).
-- Tell me your homework (e.g. *"Essay due next Friday"*).
-- Ask any academic question!
-
-Or click **How do I use Ask AI?** in the suggestions below for a complete guide.`;
       } else {
-        replyContent = `I've analyzed your academic workspace. You have ${courses.length} active course${courses.length > 1 ? 's' : ''} and ${tasks.filter(t => !t.completed).length} open tasks. 
-        
-How would you like me to assist you with your studies right now?`;
+        const memoryAck =
+          newlySavedMemories.length > 0
+            ? `🧠 *Saved to your AI Memory: "${newlySavedMemories[0].content}"*\n\n`
+            : '';
+        replyContent =
+          memoryAck +
+          `I've analyzed your workspace (${
+            activeAcademicMode === 'normal'
+              ? 'Normal Semester Mode'
+              : activeAcademicMode === 'midterm'
+              ? 'Midterm Exam Mode'
+              : 'Final Exam Mode'
+          }): you have **${courses.length}** active course(s), **${
+            tasks.filter(t => !t.completed).length
+          }** open task(s), and **${exams.length}** scheduled exam(s).\n\nHow would you like me to help with your study plan, notes, or coursework today?`;
       }
 
       const assistantMsg: ChatMessage = {
-        id: `msg_${Date.now() + 1}`,
+        id: generateUniqueId('msg_ai'),
         sender: 'assistant',
         content: replyContent,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         reasoningSteps,
+        memoriesUsed: activeMemoryStrings.length > 0 ? activeMemoryStrings.slice(0, 3) : undefined,
         actionProposals: proposals.length > 0 ? proposals : undefined
       };
 
       setAiMessages(prev => [...prev, assistantMsg]);
-    }, 600);
+    }, 350);
   };
 
   const clearAiChat = () => {
     setAiMessages([
       {
-        id: `msg_cleared_${Date.now()}`,
+        id: generateUniqueId('msg_cleared'),
         sender: 'assistant',
-        content: `Chat history cleared. I'm ready to assist with your courses, notes, document QA, and study planning!`,
+        content: `Chat history cleared. Your saved AI Memories (${aiMemories.length}) remain intact. How can I help you today?`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
-  };
-
-  const addAiMemory = (fact: string, category: AiMemory['category'] = 'preference') => {
-    const newMem: AiMemory = {
-      id: `mem_${Date.now()}`,
-      fact,
-      category,
-      createdAt: new Date().toISOString().slice(0, 10)
-    };
-    setAiMemories(prev => [newMem, ...prev]);
-  };
-
-  const deleteAiMemory = (id: string) => {
-    setAiMemories(prev => prev.filter(m => m.id !== id));
   };
 
   const handleActionProposal = (actionId: string, confirm: boolean) => {
@@ -3137,7 +4304,8 @@ How would you like me to assist you with your studies right now?`;
       return { success: false, error: 'Database is not configured or user is not logged in.' };
     }
     try {
-      const payload: CloudWorkspacePayload = {
+      markLocalDbWrite();
+      const payload: CloudWorkspacePayload & { academicConfig?: AcademicCalendarConfig } = {
         version: '1.0.0',
         syncedAt: new Date().toISOString(),
         user,
@@ -3147,7 +4315,7 @@ How would you like me to assist you with your studies right now?`;
         notes,
         events,
         inboxItems,
-        files, // 100% of file data including rawText and slide chunks stored directly in DB
+        files,
         flashcards,
         flashcardDecks,
         focusSessions,
@@ -3156,6 +4324,7 @@ How would you like me to assist you with your studies right now?`;
         gradeItems,
         previousTermCourses,
         aiMemories,
+        academicConfig,
         dailyPlan,
         integrations,
         githubRepos,
@@ -3165,7 +4334,6 @@ How would you like me to assist you with your studies right now?`;
         activeChatSessionId,
         theme
       };
-      // Persist across all 15 relational PostgreSQL tables and atomic snapshot
       await dbSaveAllTablesToDatabase(user.id, payload);
       return { success: true };
     } catch (e: any) {
@@ -3174,34 +4342,56 @@ How would you like me to assist you with your studies right now?`;
     }
   };
 
+  // Helper to apply remote arrays only if their content genuinely differs (prevents unnecessary re-renders & shuffling)
+  const applyRemoteDataSafely = useCallback((data: any) => {
+    if (!data) return;
+    isApplyingRemoteRef.current = true;
+    const setIfChanged = <T,>(setter: React.Dispatch<React.SetStateAction<T>>, incoming: T | undefined) => {
+      if (incoming === undefined || incoming === null) return;
+      setter(prev => {
+        try {
+          if (JSON.stringify(prev) === JSON.stringify(incoming)) return prev;
+        } catch {}
+        return incoming;
+      });
+    };
+
+    if (Array.isArray(data.courses)) setIfChanged(setCourses, data.courses);
+    if (Array.isArray(data.assignments)) setIfChanged(setAssignments, data.assignments);
+    if (Array.isArray(data.tasks)) setIfChanged(setTasks, data.tasks);
+    if (Array.isArray(data.notes)) setIfChanged(setNotes, data.notes);
+    if (Array.isArray(data.events)) setIfChanged(setEvents, data.events);
+    if (Array.isArray(data.inboxItems)) setIfChanged(setInboxItems, data.inboxItems);
+    if (Array.isArray(data.files)) setIfChanged(setFiles, data.files);
+    if (Array.isArray(data.flashcards)) setIfChanged(setFlashcards, data.flashcards);
+    if (Array.isArray(data.flashcardDecks)) setIfChanged(setFlashcardDecks, data.flashcardDecks);
+    if (Array.isArray(data.focusSessions)) setIfChanged(setFocusSessions, data.focusSessions);
+    if (Array.isArray(data.quizzes)) setIfChanged(setQuizzes, data.quizzes);
+    if (Array.isArray(data.exams)) setIfChanged(setExams, data.exams);
+    if (Array.isArray(data.gradeItems)) setIfChanged(setGradeItems, data.gradeItems);
+    if (Array.isArray(data.previousTermCourses)) setIfChanged(setPreviousTermCourses, data.previousTermCourses);
+    if (Array.isArray(data.aiMemories)) setIfChanged(setAiMemories, data.aiMemories);
+    if (data.academicConfig) setIfChanged(setAcademicConfig, data.academicConfig);
+    if (data.dailyPlan) setIfChanged(setDailyPlan, data.dailyPlan);
+    if (Array.isArray(data.integrations)) setIfChanged(setIntegrations, data.integrations);
+    if (Array.isArray(data.githubRepos)) setIfChanged(setGithubRepos, data.githubRepos);
+    if (Array.isArray(data.chatSessions) && data.chatSessions.length > 0) {
+      setIfChanged(setChatSessions, data.chatSessions);
+    }
+    if (Array.isArray(data.notifications)) setIfChanged(setNotifications, data.notifications);
+    if (Array.isArray(data.reminderLogs)) setIfChanged(setReminderLogs, data.reminderLogs);
+
+    setTimeout(() => {
+      isApplyingRemoteRef.current = false;
+    }, 400);
+  }, []);
+
   const loadFromDatabase = async (): Promise<boolean> => {
     if (!user || !isSupabaseConfigured()) return false;
     try {
       const data = await dbLoadAllTablesFromDatabase(user.id);
       if (!data) return false;
-      if (Array.isArray(data.courses)) setCourses(data.courses);
-      if (Array.isArray(data.assignments)) setAssignments(data.assignments);
-      if (Array.isArray(data.tasks)) setTasks(data.tasks);
-      if (Array.isArray(data.notes)) setNotes(data.notes);
-      if (Array.isArray(data.events)) setEvents(data.events);
-      if (Array.isArray(data.inboxItems)) setInboxItems(data.inboxItems);
-      if (Array.isArray(data.files)) setFiles(data.files);
-      if (Array.isArray(data.flashcards)) setFlashcards(data.flashcards);
-      if (Array.isArray(data.flashcardDecks)) setFlashcardDecks(data.flashcardDecks);
-      if (Array.isArray(data.focusSessions)) setFocusSessions(data.focusSessions);
-      if (Array.isArray(data.quizzes)) setQuizzes(data.quizzes);
-      if (Array.isArray(data.exams)) setExams(data.exams);
-      if (Array.isArray(data.gradeItems)) setGradeItems(data.gradeItems);
-      if (Array.isArray(data.previousTermCourses)) setPreviousTermCourses(data.previousTermCourses);
-      if (Array.isArray(data.aiMemories)) setAiMemories(data.aiMemories);
-      if (data.dailyPlan) setDailyPlan(data.dailyPlan);
-      if (Array.isArray(data.integrations)) setIntegrations(data.integrations);
-      if (Array.isArray(data.githubRepos)) setGithubRepos(data.githubRepos);
-      if (Array.isArray(data.chatSessions)) setChatSessions(data.chatSessions);
-      if (data.activeChatSessionId) setActiveChatSessionId(data.activeChatSessionId);
-      if (data.theme) setTheme(data.theme);
-      if (Array.isArray(data.notifications)) setNotifications(data.notifications);
-      if (Array.isArray(data.reminderLogs)) setReminderLogs(data.reminderLogs);
+      applyRemoteDataSafely(data);
       return true;
     } catch (e) {
       console.warn('Failed loading from Supabase database:', e);
@@ -3209,50 +4399,49 @@ How would you like me to assist you with your studies right now?`;
     }
   };
 
-  // Realtime WebSocket Subscription to Supabase Postgres
+  // Realtime WebSocket Subscription to Supabase Postgres (Suppressed during local writes to eliminate shuffling)
   useEffect(() => {
     if (!user || !isSupabaseConfigured()) return;
 
-    // Load initial snapshot from database
     loadFromDatabase().catch(err => console.warn('Initial DB load warning:', err));
 
-    // Subscribe to Postgres Realtime changes
     const unsubscribe = subscribeToWorkspaceRealtime(user.id, remoteData => {
+      if (isRecentLocalDbWrite() || isApplyingRemoteRef.current) return;
       if (remoteData) {
-        if (Array.isArray(remoteData.courses)) setCourses(remoteData.courses);
-        if (Array.isArray(remoteData.assignments)) setAssignments(remoteData.assignments);
-        if (Array.isArray(remoteData.tasks)) setTasks(remoteData.tasks);
-        if (Array.isArray(remoteData.notes)) setNotes(remoteData.notes);
-        if (Array.isArray(remoteData.events)) setEvents(remoteData.events);
-        if (Array.isArray(remoteData.inboxItems)) setInboxItems(remoteData.inboxItems);
-        if (Array.isArray(remoteData.files)) setFiles(remoteData.files);
-        if (Array.isArray(remoteData.flashcards)) setFlashcards(remoteData.flashcards);
-        if (Array.isArray(remoteData.flashcardDecks)) setFlashcardDecks(remoteData.flashcardDecks);
-        if (Array.isArray(remoteData.exams)) setExams(remoteData.exams);
-        if (Array.isArray(remoteData.gradeItems)) setGradeItems(remoteData.gradeItems);
-        if (Array.isArray(remoteData.previousTermCourses)) setPreviousTermCourses(remoteData.previousTermCourses);
-        if (remoteData.dailyPlan) setDailyPlan(remoteData.dailyPlan);
-        if (Array.isArray(remoteData.chatSessions)) setChatSessions(remoteData.chatSessions);
-        if (Array.isArray(remoteData.notifications)) setNotifications(remoteData.notifications);
-        if (Array.isArray(remoteData.reminderLogs)) setReminderLogs(remoteData.reminderLogs);
+        applyRemoteDataSafely(remoteData);
       }
     });
 
     return () => {
       unsubscribe();
     };
-  }, [user?.id]);
+  }, [user?.id, applyRemoteDataSafely]);
 
-  // Debounced auto-save to Supabase PostgreSQL database whenever data changes!
+  // Debounced auto-save to Supabase PostgreSQL database ONLY on genuine local edits!
   useEffect(() => {
-    if (!user || !isSupabaseConfigured()) return;
+    if (!user || !isSupabaseConfigured() || isApplyingRemoteRef.current) return;
     const timer = setTimeout(() => {
+      if (isApplyingRemoteRef.current) return;
       saveToDatabase().catch(err => console.warn('Auto DB sync failed:', err));
-    }, 2500);
+    }, 3000);
     return () => clearTimeout(timer);
-  }, [courses, assignments, tasks, notes, exams, gradeItems, flashcards, flashcardDecks, dailyPlan, user?.id]);
+  }, [
+    courses,
+    assignments,
+    tasks,
+    notes,
+    exams,
+    gradeItems,
+    flashcards,
+    flashcardDecks,
+    aiMemories,
+    academicConfig,
+    dailyPlan,
+    user?.id
+  ]);
 
   const clearAllWorkspaceData = () => {
+    isApplyingRemoteRef.current = true;
     setCourses([]);
     setAssignments([]);
     setTasks([]);
@@ -3268,6 +4457,7 @@ How would you like me to assist you with your studies right now?`;
     setGradeItems([]);
     setPreviousTermCourses([]);
     setAiMemories([]);
+    setAcademicConfig(defaultAcademicConfig);
     setDailyPlan({
       date: new Date().toISOString().slice(0, 10),
       generatedBy: 'ai',
@@ -3276,7 +4466,7 @@ How would you like me to assist you with your studies right now?`;
     setGithubRepos([]);
     setNotifications([
       {
-        id: `notif_${Date.now()}`,
+        id: generateUniqueId('notif'),
         title: 'Fresh Workspace Ready',
         message: 'Your workspace is 100% clean and ready for your own courses, schedule, and notes.',
         type: 'system',
@@ -3286,15 +4476,18 @@ How would you like me to assist you with your studies right now?`;
     ]);
     setReminderLogs([]);
 
-    // Clear all localStorage keys starting with nook_
+    // Clear only current user's workspace keys (never wipe other users' accounts!)
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && (k.startsWith('nook_workspace') || k.startsWith('nook_data') || k.startsWith('nook_notes'))) {
+      if (k && k.startsWith(storageKey)) {
         keysToRemove.push(k);
       }
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
+    setTimeout(() => {
+      isApplyingRemoteRef.current = false;
+    }, 300);
   };
 
   const resetAllDemoData = () => {
@@ -3306,10 +4499,16 @@ How would you like me to assist you with your studies right now?`;
       value={{
         user,
         login,
+        registerAccount,
+        authenticateUser,
         logout,
         loginDemo,
         theme,
         setTheme,
+        academicConfig,
+        updateAcademicConfig,
+        activeAcademicMode,
+        isClassSuspendedOnDate,
         activeView,
         setActiveView,
         selectedCourseId,
@@ -3342,6 +4541,7 @@ How would you like me to assist you with your studies right now?`;
         setIsAiReasoning,
         aiMemories,
         addAiMemory,
+        updateAiMemory,
         deleteAiMemory,
         handleActionProposal,
         focusState,
@@ -3416,6 +4616,11 @@ How would you like me to assist you with your studies right now?`;
         dailyPlan,
         regenerateDailyPlan,
         toggleDailyPlanBlock,
+        updateDailyPlanBlock,
+        deleteDailyPlanBlock,
+        moveDailyPlanBlock,
+        addCustomDailyPlanBlock,
+        adaptDailyPlan,
         integrations,
         toggleIntegrationConnection,
         syncIntegration,

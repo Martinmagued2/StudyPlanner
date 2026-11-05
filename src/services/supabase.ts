@@ -18,7 +18,8 @@ import {
   Exam,
   GradeItem,
   PreviousTermCourse,
-  ChatSession
+  ChatSession,
+  AiMemory
 } from '../types';
 
 export interface SupabaseConfig {
@@ -237,6 +238,15 @@ export async function testDatabaseReadWrite(
   }
 }
 
+// Track local database writes to suppress Realtime WebSocket self-echo loops
+let lastLocalDbWriteAt = 0;
+export function markLocalDbWrite(): void {
+  lastLocalDbWriteAt = Date.now();
+}
+export function isRecentLocalDbWrite(windowMs: number = 6500): boolean {
+  return Date.now() - lastLocalDbWriteAt < windowMs;
+}
+
 // ==============================================================================
 // 100% COMPLETE DATABASE PERSISTENCE (Stores Every Table in PostgreSQL)
 // ==============================================================================
@@ -244,6 +254,7 @@ export async function testDatabaseReadWrite(
 export async function dbSaveAllTablesToDatabase(userId: string, data: any): Promise<boolean> {
   const client = getSupabaseClient();
   if (!client || !userId) return false;
+  markLocalDbWrite();
 
   try {
     // 1. Fast comprehensive snapshot in workspaces table
@@ -534,11 +545,38 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
       await client.from('inbox_items').upsert(records, { onConflict: 'id' });
     }
 
+    // AI Memories
+    if (Array.isArray(data.aiMemories) && data.aiMemories.length > 0) {
+      const records = data.aiMemories.map((m: any) => ({
+        id: m.id,
+        user_id: userId,
+        fact: m.fact,
+        category: m.category || 'preference',
+        created_at: m.createdAt || new Date().toISOString()
+      }));
+      await client.from('ai_memories').upsert(records, { onConflict: 'id' });
+    }
+
     return true;
   } catch (err) {
     console.warn('Error saving all tables to Supabase:', err);
     return false;
   }
+}
+
+// Helper to preserve the user's exact array order from the workspace snapshot
+function preserveSnapshotOrder<T extends { id: string }>(items: T[], snapshotItems?: T[]): T[] {
+  if (!Array.isArray(snapshotItems) || snapshotItems.length === 0) return items;
+  const orderMap = new Map<string, number>();
+  snapshotItems.forEach((item, index) => {
+    if (item && item.id) orderMap.set(item.id, index);
+  });
+  return [...items].sort((a, b) => {
+    const idxA = orderMap.has(a.id) ? orderMap.get(a.id)! : Number.MAX_SAFE_INTEGER;
+    const idxB = orderMap.has(b.id) ? orderMap.get(b.id)! : Number.MAX_SAFE_INTEGER;
+    if (idxA !== idxB) return idxA - idxB;
+    return a.id.localeCompare(b.id);
+  });
 }
 
 /**
@@ -556,7 +594,7 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       .eq('user_id', userId)
       .maybeSingle();
 
-    // 2. Fetch individual tables with stable deterministic ordering to ensure 100% latest data and no shuffling
+    // 2. Fetch individual tables with deterministic secondary ID ordering to prevent PostgreSQL MVCC heap shuffling
     const [
       coursesRes,
       notesRes,
@@ -572,28 +610,30 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       chatsRes,
       eventsRes,
       focusRes,
-      inboxRes
+      inboxRes,
+      memoriesRes
     ] = await Promise.all([
-      client.from('courses').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      client.from('notes').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-      client.from('files').select('*').eq('user_id', userId).order('uploaded_at', { ascending: false }),
-      client.from('tasks').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      client.from('assignments').select('*').eq('user_id', userId).order('due_date', { ascending: true }),
-      client.from('exams').select('*').eq('user_id', userId).order('date', { ascending: true }),
-      client.from('flashcard_decks').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      client.from('flashcards').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      client.from('quizzes').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      client.from('grade_items').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      client.from('previous_term_courses').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      client.from('chat_sessions').select('*').eq('user_id', userId).order('updated_at', { ascending: false }),
-      client.from('calendar_events').select('*').eq('user_id', userId).order('start_time', { ascending: true }),
-      client.from('focus_sessions').select('*').eq('user_id', userId).order('timestamp', { ascending: false }),
-      client.from('inbox_items').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+      client.from('courses').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('notes').select('*').eq('user_id', userId).order('created_at', { ascending: false }).order('id', { ascending: true }),
+      client.from('files').select('*').eq('user_id', userId).order('uploaded_at', { ascending: false }).order('id', { ascending: true }),
+      client.from('tasks').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('assignments').select('*').eq('user_id', userId).order('due_date', { ascending: true }).order('id', { ascending: true }),
+      client.from('exams').select('*').eq('user_id', userId).order('date', { ascending: true }).order('id', { ascending: true }),
+      client.from('flashcard_decks').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('flashcards').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('quizzes').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('grade_items').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('previous_term_courses').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('chat_sessions').select('*').eq('user_id', userId).order('updated_at', { ascending: false }).order('id', { ascending: true }),
+      client.from('calendar_events').select('*').eq('user_id', userId).order('start_time', { ascending: true }).order('id', { ascending: true }),
+      client.from('focus_sessions').select('*').eq('user_id', userId).order('timestamp', { ascending: false }).order('id', { ascending: true }),
+      client.from('inbox_items').select('*').eq('user_id', userId).order('created_at', { ascending: false }).order('id', { ascending: true }),
+      client.from('ai_memories').select('*').eq('user_id', userId).order('created_at', { ascending: false }).order('id', { ascending: true })
     ]);
 
     const baseData = snapshot?.data || {};
 
-    const courses: Course[] = (coursesRes.data && coursesRes.data.length > 0)
+    const rawCourses: Course[] = (coursesRes.data && coursesRes.data.length > 0)
       ? coursesRes.data.map(c => ({
           id: c.id,
           name: c.name,
@@ -609,8 +649,9 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
           meetingSlots: c.meeting_slots || []
         }))
       : baseData.courses || [];
+    const courses = preserveSnapshotOrder(rawCourses, baseData.courses);
 
-    const notes: Note[] = (notesRes.data && notesRes.data.length > 0)
+    const rawNotes: Note[] = (notesRes.data && notesRes.data.length > 0)
       ? notesRes.data.map(n => ({
           id: n.id,
           courseId: n.course_id,
@@ -624,8 +665,9 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
           updatedAt: n.updated_at || new Date().toISOString()
         }))
       : baseData.notes || [];
+    const notes = preserveSnapshotOrder(rawNotes, baseData.notes);
 
-    const files: DocumentFile[] = (filesRes.data && filesRes.data.length > 0)
+    const rawFiles: DocumentFile[] = (filesRes.data && filesRes.data.length > 0)
       ? filesRes.data.map(f => ({
           id: f.id,
           name: f.name,
@@ -641,8 +683,9 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
           uploadedAt: f.uploaded_at || new Date().toISOString()
         }))
       : baseData.files || [];
+    const files = preserveSnapshotOrder(rawFiles, baseData.files);
 
-    const tasks: Task[] = (tasksRes.data && tasksRes.data.length > 0)
+    const rawTasks: Task[] = (tasksRes.data && tasksRes.data.length > 0)
       ? tasksRes.data.map(t => ({
           id: t.id,
           title: t.title,
@@ -659,8 +702,9 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
           source: t.source || 'user'
         }))
       : baseData.tasks || [];
+    const tasks = preserveSnapshotOrder(rawTasks, baseData.tasks);
 
-    const assignments: Assignment[] = (assignmentsRes.data && assignmentsRes.data.length > 0)
+    const rawAssignments: Assignment[] = (assignmentsRes.data && assignmentsRes.data.length > 0)
       ? assignmentsRes.data.map(a => ({
           id: a.id,
           title: a.title,
@@ -677,22 +721,35 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
           isBrokenDown: a.is_broken_down || false
         }))
       : baseData.assignments || [];
+    const assignments = preserveSnapshotOrder(rawAssignments, baseData.assignments);
 
-    const exams: Exam[] = (examsRes.data && examsRes.data.length > 0)
-      ? examsRes.data.map(e => ({
-          id: e.id,
-          name: e.name,
-          courseId: e.course_id,
-          date: e.date,
-          startTime: e.start_time || undefined,
-          endTime: e.end_time || undefined,
-          weightPercentage: Number(e.weight_percentage) || 25,
-          readinessPercent: Number(e.readiness_percent) || 0,
-          room: e.room || '',
-          description: e.description || '',
-          revisionSessions: e.revision_sessions || []
-        }))
+    const snapshotExamsMap = new Map<string, Exam>();
+    if (Array.isArray(baseData.exams)) {
+      baseData.exams.forEach((ex: Exam) => {
+        if (ex && ex.id) snapshotExamsMap.set(ex.id, ex);
+      });
+    }
+
+    const rawExams: Exam[] = (examsRes.data && examsRes.data.length > 0)
+      ? examsRes.data.map(e => {
+          const snapEx = snapshotExamsMap.get(e.id);
+          return {
+            ...(snapEx || {}),
+            id: e.id,
+            name: e.name,
+            courseId: e.course_id,
+            date: e.date,
+            startTime: e.start_time || snapEx?.startTime || undefined,
+            endTime: e.end_time || snapEx?.endTime || undefined,
+            weightPercentage: Number(e.weight_percentage) || 25,
+            readinessPercent: Number(e.readiness_percent) || 0,
+            room: e.room || snapEx?.room || '',
+            description: e.description || snapEx?.description || '',
+            revisionSessions: e.revision_sessions || snapEx?.revisionSessions || []
+          };
+        })
       : baseData.exams || [];
+    const exams = preserveSnapshotOrder(rawExams, baseData.exams);
 
     const flashcardDecks: FlashcardDeck[] = (decksRes.data && decksRes.data.length > 0)
       ? decksRes.data.map(d => ({
@@ -813,6 +870,15 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
         }))
       : baseData.inboxItems || [];
 
+    const aiMemories: AiMemory[] = (memoriesRes && memoriesRes.data && memoriesRes.data.length > 0)
+      ? memoriesRes.data.map((m: any) => ({
+          id: m.id,
+          category: m.category || 'preference',
+          content: m.content || '',
+          createdAt: m.created_at || new Date().toISOString()
+        }))
+      : baseData.aiMemories || [];
+
     return {
       ...baseData,
       courses,
@@ -830,7 +896,9 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       activeChatSessionId: baseData.activeChatSessionId || chatSessions[0]?.id || 'session_default',
       events,
       focusSessions,
-      inboxItems
+      inboxItems,
+      aiMemories,
+      academicConfig: baseData.academicConfig || undefined
     };
   } catch (err) {
     console.warn('Error loading all tables from Supabase:', err);
@@ -849,6 +917,7 @@ export async function dbSaveNote(userId: string, note: Note): Promise<void> {
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('notes').upsert({
       id: note.id,
       user_id: userId,
@@ -870,6 +939,7 @@ export async function dbDeleteNote(userId: string, noteId: string): Promise<void
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('notes').delete().eq('id', noteId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting note from DB:', err);
@@ -880,6 +950,7 @@ export async function dbSaveFile(userId: string, file: DocumentFile): Promise<vo
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('files').upsert({
       id: file.id,
       user_id: userId,
@@ -904,6 +975,7 @@ export async function dbDeleteFile(userId: string, fileId: string): Promise<void
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('files').delete().eq('id', fileId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting file from DB:', err);
@@ -914,6 +986,7 @@ export async function dbSaveCourse(userId: string, course: Course): Promise<void
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('courses').upsert({
       id: course.id,
       user_id: userId,
@@ -939,6 +1012,7 @@ export async function dbDeleteCourse(userId: string, courseId: string): Promise<
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('courses').delete().eq('id', courseId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting course from DB:', err);
@@ -949,6 +1023,7 @@ export async function dbSaveTask(userId: string, task: Task): Promise<void> {
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('tasks').upsert({
       id: task.id,
       user_id: userId,
@@ -974,6 +1049,7 @@ export async function dbDeleteTask(userId: string, taskId: string): Promise<void
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('tasks').delete().eq('id', taskId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting task from DB:', err);
@@ -984,6 +1060,7 @@ export async function dbSaveAssignment(userId: string, assignment: Assignment): 
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('assignments').upsert({
       id: assignment.id,
       user_id: userId,
@@ -1009,6 +1086,7 @@ export async function dbDeleteAssignment(userId: string, assignmentId: string): 
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('assignments').delete().eq('id', assignmentId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting assignment from DB:', err);
@@ -1019,6 +1097,7 @@ export async function dbSaveExam(userId: string, exam: Exam): Promise<void> {
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('exams').upsert({
       id: exam.id,
       user_id: userId,
@@ -1042,6 +1121,7 @@ export async function dbDeleteExam(userId: string, examId: string): Promise<void
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('exams').delete().eq('id', examId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting exam from DB:', err);
@@ -1052,6 +1132,7 @@ export async function dbSaveFlashcard(userId: string, card: Flashcard): Promise<
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('flashcards').upsert({
       id: card.id,
       user_id: userId,
@@ -1076,6 +1157,7 @@ export async function dbDeleteFlashcard(userId: string, cardId: string): Promise
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('flashcards').delete().eq('id', cardId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting flashcard from DB:', err);
@@ -1086,6 +1168,7 @@ export async function dbSaveDeck(userId: string, deck: FlashcardDeck): Promise<v
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('flashcard_decks').upsert({
       id: deck.id,
       user_id: userId,
@@ -1103,6 +1186,7 @@ export async function dbDeleteDeck(userId: string, deckId: string): Promise<void
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('flashcard_decks').delete().eq('id', deckId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting deck from DB:', err);
@@ -1113,6 +1197,7 @@ export async function dbSaveQuiz(userId: string, quiz: Quiz): Promise<void> {
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('quizzes').upsert({
       id: quiz.id,
       user_id: userId,
@@ -1133,6 +1218,7 @@ export async function dbDeleteQuiz(userId: string, quizId: string): Promise<void
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('quizzes').delete().eq('id', quizId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting quiz from DB:', err);
@@ -1143,6 +1229,7 @@ export async function dbSaveEvent(userId: string, event: CalendarEvent): Promise
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('calendar_events').upsert({
       id: event.id,
       user_id: userId,
@@ -1165,6 +1252,7 @@ export async function dbDeleteEvent(userId: string, eventId: string): Promise<vo
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('calendar_events').delete().eq('id', eventId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting event from DB:', err);
@@ -1175,6 +1263,7 @@ export async function dbSaveGradeItem(userId: string, item: GradeItem): Promise<
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('grade_items').upsert({
       id: item.id,
       user_id: userId,
@@ -1196,6 +1285,7 @@ export async function dbDeleteGradeItem(userId: string, itemId: string): Promise
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('grade_items').delete().eq('id', itemId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting grade item from DB:', err);
@@ -1206,6 +1296,7 @@ export async function dbSavePreviousTermCourse(userId: string, item: PreviousTer
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('previous_term_courses').upsert({
       id: item.id,
       user_id: userId,
@@ -1226,6 +1317,7 @@ export async function dbDeletePreviousTermCourse(userId: string, itemId: string)
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('previous_term_courses').delete().eq('id', itemId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting previous term course from DB:', err);
@@ -1236,6 +1328,7 @@ export async function dbSaveChatSession(userId: string, session: ChatSession): P
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('chat_sessions').upsert({
       id: session.id,
       user_id: userId,
@@ -1252,6 +1345,7 @@ export async function dbDeleteChatSession(userId: string, sessionId: string): Pr
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('chat_sessions').delete().eq('id', sessionId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting chat session from DB:', err);
@@ -1262,6 +1356,7 @@ export async function dbSaveInboxItem(userId: string, item: InboxItem): Promise<
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('inbox_items').upsert({
       id: item.id,
       user_id: userId,
@@ -1283,6 +1378,7 @@ export async function dbDeleteInboxItem(userId: string, itemId: string): Promise
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('inbox_items').delete().eq('id', itemId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting inbox item from DB:', err);
@@ -1293,6 +1389,7 @@ export async function dbSaveFocusSession(userId: string, session: FocusSession):
   const client = getSupabaseClient();
   if (!client || !userId) return;
   try {
+    markLocalDbWrite();
     await client.from('focus_sessions').upsert({
       id: session.id,
       user_id: userId,
@@ -1308,8 +1405,37 @@ export async function dbSaveFocusSession(userId: string, session: FocusSession):
   }
 }
 
+export async function dbSaveAiMemory(userId: string, memory: AiMemory): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    markLocalDbWrite();
+    await client.from('ai_memories').upsert({
+      id: memory.id,
+      user_id: userId,
+      category: memory.category,
+      content: memory.content,
+      created_at: memory.createdAt || new Date().toISOString()
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Failed saving AI memory to DB:', err);
+  }
+}
+
+export async function dbDeleteAiMemory(userId: string, memoryId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    markLocalDbWrite();
+    await client.from('ai_memories').delete().eq('id', memoryId).eq('user_id', userId);
+  } catch (err) {
+    console.warn('Failed deleting AI memory from DB:', err);
+  }
+}
+
 /**
  * Subscribes to Realtime WebSocket changes across all core tables
+ * Suppresses echoes from our own local writes so background sync never causes shuffling or re-render loops.
  */
 export function subscribeToWorkspaceRealtime(
   userId: string,
@@ -1317,6 +1443,19 @@ export function subscribeToWorkspaceRealtime(
 ): () => void {
   const client = getSupabaseClient();
   if (!client || !userId) return () => {};
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const triggerDebouncedReload = () => {
+    if (isRecentLocalDbWrite()) return;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      if (isRecentLocalDbWrite()) return;
+      const full = await dbLoadAllTablesFromDatabase(userId);
+      if (full && !isRecentLocalDbWrite()) {
+        onRemoteUpdate(full);
+      }
+    }, 1500);
+  };
 
   const channel = client
     .channel(`realtime_${userId}`)
@@ -1329,6 +1468,7 @@ export function subscribeToWorkspaceRealtime(
         filter: `user_id=eq.${userId}`
       },
       payload => {
+        if (isRecentLocalDbWrite()) return;
         if (payload.new && (payload.new as any).data) {
           onRemoteUpdate((payload.new as any).data);
         }
@@ -1342,10 +1482,7 @@ export function subscribeToWorkspaceRealtime(
         table: 'notes',
         filter: `user_id=eq.${userId}`
       },
-      async () => {
-        const full = await dbLoadAllTablesFromDatabase(userId);
-        if (full) onRemoteUpdate(full);
-      }
+      triggerDebouncedReload
     )
     .on(
       'postgres_changes',
@@ -1355,10 +1492,7 @@ export function subscribeToWorkspaceRealtime(
         table: 'courses',
         filter: `user_id=eq.${userId}`
       },
-      async () => {
-        const full = await dbLoadAllTablesFromDatabase(userId);
-        if (full) onRemoteUpdate(full);
-      }
+      triggerDebouncedReload
     )
     .on(
       'postgres_changes',
@@ -1368,10 +1502,7 @@ export function subscribeToWorkspaceRealtime(
         table: 'tasks',
         filter: `user_id=eq.${userId}`
       },
-      async () => {
-        const full = await dbLoadAllTablesFromDatabase(userId);
-        if (full) onRemoteUpdate(full);
-      }
+      triggerDebouncedReload
     )
     .on(
       'postgres_changes',
@@ -1381,14 +1512,12 @@ export function subscribeToWorkspaceRealtime(
         table: 'files',
         filter: `user_id=eq.${userId}`
       },
-      async () => {
-        const full = await dbLoadAllTablesFromDatabase(userId);
-        if (full) onRemoteUpdate(full);
-      }
+      triggerDebouncedReload
     )
     .subscribe();
 
   return () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     client.removeChannel(channel);
   };
 }

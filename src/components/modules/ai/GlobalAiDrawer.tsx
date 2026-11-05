@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../../../context/AppContext';
+import { AiMemoryCategory } from '../../../types';
 import {
   Sparkles,
   X,
@@ -17,7 +18,8 @@ import {
   Layers,
   Key,
   ExternalLink,
-  Maximize2
+  Maximize2,
+  Edit2
 } from 'lucide-react';
 import { MarkdownRenderer } from '../../common/MarkdownRenderer';
 
@@ -33,6 +35,7 @@ export const GlobalAiDrawer: React.FC = () => {
     setIsAiReasoning,
     aiMemories,
     addAiMemory,
+    updateAiMemory,
     deleteAiMemory,
     handleActionProposal,
     setActiveView
@@ -41,6 +44,10 @@ export const GlobalAiDrawer: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'chat' | 'memory' | 'guide'>('chat');
   const [inputText, setInputText] = useState('');
   const [newMemoryText, setNewMemoryText] = useState('');
+  const [newMemoryCategory, setNewMemoryCategory] = useState<AiMemoryCategory>('preference');
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editMemoryText, setEditMemoryText] = useState('');
+  const [editMemoryCategory, setEditMemoryCategory] = useState<AiMemoryCategory>('preference');
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [geminiApiKey, setGeminiApiKey] = useState(() => ((import.meta as any).env?.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '');
   const [apiKeySavedStatus, setApiKeySavedStatus] = useState('');
@@ -122,8 +129,14 @@ export const GlobalAiDrawer: React.FC = () => {
   const handleAddMemory = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMemoryText.trim()) return;
-    addAiMemory(newMemoryText);
+    addAiMemory(newMemoryText.trim(), newMemoryCategory, 'explicit');
     setNewMemoryText('');
+  };
+
+  const handleSaveMemoryEdit = (id: string) => {
+    if (!editMemoryText.trim()) return;
+    updateAiMemory(id, { content: editMemoryText.trim(), category: editMemoryCategory });
+    setEditingMemoryId(null);
   };
 
   const toggleThinking = (id: string) => {
@@ -276,7 +289,17 @@ export const GlobalAiDrawer: React.FC = () => {
                       {msg.content}
                     </div>
                   ) : (
-                    <MarkdownRenderer content={msg.content} />
+                    <>
+                      <MarkdownRenderer content={msg.content} />
+                      {msg.memoriesUsed && msg.memoriesUsed.length > 0 && (
+                        <div className="mt-2.5 pt-2 border-t border-slate-200/70 dark:border-slate-700/70 flex items-start gap-1.5 text-[10px] text-blue-600 dark:text-blue-400">
+                          <Brain className="w-3 h-3 shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Personalized using your preferences:</strong> {msg.memoriesUsed.join(' • ')}
+                          </span>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {/* Document Citations */}
@@ -362,35 +385,21 @@ export const GlobalAiDrawer: React.FC = () => {
                 </button>
                 <button
                   type="button"
+                  onClick={() => sendAiMessage("I prefer studying at night in 45-minute sessions with 10-minute breaks")}
+                  className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                >
+                  🧠 Save study preference
+                </button>
+                <button
+                  type="button"
                   onClick={() => sendAiMessage("I am taking CS 101 on Mondays at 10 AM")}
                   className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
                 >
                   🏫 Add CS 101 Mon 10am
                 </button>
-                <button
-                  type="button"
-                  onClick={() => sendAiMessage("I have an Essay due next Friday")}
-                  className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
-                >
-                  📝 Create Essay assignment
-                </button>
-                <button
-                  type="button"
-                  onClick={() => sendAiMessage("Explain what recursion means")}
-                  className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
-                >
-                  🧠 Ask concept explanation
-                </button>
               </>
             ) : (
               <>
-                <button
-                  type="button"
-                  onClick={() => sendAiMessage("What should I focus on right now?")}
-                  className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 shrink-0"
-                >
-                  What should I do now?
-                </button>
                 <button
                   type="button"
                   onClick={() => sendAiMessage("Plan my study timetable for today")}
@@ -400,10 +409,17 @@ export const GlobalAiDrawer: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => sendAiMessage("How do I use Ask AI?")}
+                  onClick={() => sendAiMessage("I prefer studying in 45-minute sessions with 10-minute breaks")}
                   className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 shrink-0"
                 >
-                  Help & Capabilities
+                  🧠 Set 45m / 10m break rule
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sendAiMessage("What should I focus on right now?")}
+                  className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 shrink-0"
+                >
+                  What should I do now?
                 </button>
               </>
             )}
@@ -415,7 +431,7 @@ export const GlobalAiDrawer: React.FC = () => {
               type="text"
               value={inputText}
               onChange={e => setInputText(e.target.value)}
-              placeholder="Ask about your courses, timetable, exams, or documents..."
+              placeholder="Ask questions or state a preference (e.g. 'I prefer studying at night')..."
               className="flex-1 px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-slate-900 dark:focus:ring-slate-100"
             />
             <button
@@ -427,52 +443,174 @@ export const GlobalAiDrawer: React.FC = () => {
           </form>
         </>
       ) : activeTab === 'memory' ? (
-        /* Memory Tab */
+        /* Persistent AI Memory & Personalization Tab */
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <div className="p-3 rounded-md bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-200">
-            <strong>Assistant Memory</strong> stores personal study preferences, schedule constraints, and academic goals that persist across your workspace.
+          <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-200 space-y-1">
+            <div className="font-bold flex items-center gap-1.5">
+              <Brain className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span>Persistent AI Memory & Personalization</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-blue-800 dark:text-blue-300">
+              Preferences saved here (or stated in chat) automatically personalize your <strong>Plan My Day</strong> schedule, session durations, break intervals, and study advice across all sessions.
+            </p>
           </div>
 
-          <form onSubmit={handleAddMemory} className="flex gap-2">
+          {/* Quick 1-Click Preference Presets */}
+          <div className="space-y-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              Quick Add Common Preferences
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { label: '🌙 Study at night', text: 'I prefer studying at night (after 3 PM)', cat: 'preference' as AiMemoryCategory },
+                { label: '☀️ Study in morning', text: 'I prefer studying in the morning', cat: 'preference' as AiMemoryCategory },
+                { label: '⏱️ 45m sessions + 10m breaks', text: 'My study sessions should be 45 minutes with 10-minute breaks', cat: 'habit' as AiMemoryCategory },
+                { label: '🗓️ No study on Fridays', text: "I don't study on Fridays", cat: 'commitment' as AiMemoryCategory },
+                { label: '😴 Sleep by 11 PM', text: 'I go to bed at 11 PM', cat: 'sleep' as AiMemoryCategory }
+              ].map(preset => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => addAiMemory(preset.text, preset.cat, 'explicit')}
+                  className="px-2 py-1 text-[11px] rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-slate-700 dark:text-slate-300 transition-colors"
+                >
+                  + {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <form onSubmit={handleAddMemory} className="space-y-2 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+            <div className="flex items-center gap-2">
+              <select
+                value={newMemoryCategory}
+                onChange={e => setNewMemoryCategory(e.target.value as AiMemoryCategory)}
+                className="px-2 py-1.5 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+              >
+                <option value="preference">Study Preference</option>
+                <option value="habit">Session / Break Habit</option>
+                <option value="schedule">Availability / Schedule</option>
+                <option value="sleep">Sleep Schedule</option>
+                <option value="commitment">Personal Commitment</option>
+                <option value="weakness">Course Weakness</option>
+                <option value="goal">Academic Goal</option>
+              </select>
+              <button
+                type="submit"
+                className="ml-auto px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800"
+              >
+                Save Memory
+              </button>
+            </div>
             <input
               type="text"
               value={newMemoryText}
               onChange={e => setNewMemoryText(e.target.value)}
-              placeholder="e.g. Needs extra revision on Eigenvalues..."
-              className="flex-1 px-3 py-1.5 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+              placeholder="e.g. I prefer 45-minute study sessions with 10-minute breaks..."
+              className="w-full px-3 py-1.5 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
             />
-            <button
-              type="submit"
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-            >
-              Add Fact
-            </button>
           </form>
 
           <div className="space-y-2">
             <h4 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              Learned Facts ({aiMemories.length})
+              Saved User Memories ({aiMemories.length})
             </h4>
-            {aiMemories.map(mem => (
-              <div
-                key={mem.id}
-                className="p-2.5 rounded-md border border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 text-xs"
-              >
-                <div className="space-y-0.5">
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 capitalize">
-                    {mem.category}
-                  </span>
-                  <p className="text-slate-800 dark:text-slate-200 mt-1">{mem.fact}</p>
-                </div>
-                <button
-                  onClick={() => deleteAiMemory(mem.id)}
-                  className="p-1 text-slate-400 hover:text-rose-600"
-                  title="Remove memory"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+            {aiMemories.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-lg">
+                No memories saved yet. Add a preference above or tell the AI in chat!
               </div>
-            ))}
+            ) : (
+              aiMemories.map(mem => {
+                const memContent = mem.content || mem.fact || '';
+                const isEditing = editingMemoryId === mem.id;
+                return (
+                  <div
+                    key={mem.id}
+                    className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col gap-2 text-xs shadow-2xs"
+                  >
+                    {isEditing ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={editMemoryCategory}
+                            onChange={e => setEditMemoryCategory(e.target.value as AiMemoryCategory)}
+                            className="px-2 py-1 text-[11px] rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                          >
+                            <option value="preference">Preference</option>
+                            <option value="habit">Habit</option>
+                            <option value="schedule">Schedule</option>
+                            <option value="sleep">Sleep</option>
+                            <option value="commitment">Commitment</option>
+                            <option value="weakness">Weakness</option>
+                            <option value="goal">Goal</option>
+                          </select>
+                          <div className="ml-auto flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleSaveMemoryEdit(mem.id)}
+                              className="px-2 py-0.5 rounded bg-blue-600 text-white text-[11px] font-medium"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingMemoryId(null)}
+                              className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 text-[11px]"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                        <input
+                          type="text"
+                          value={editMemoryText}
+                          onChange={e => setEditMemoryText(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 capitalize font-semibold">
+                              {mem.category}
+                            </span>
+                            {mem.source && (
+                              <span className="text-[10px] text-slate-400">
+                                • {mem.source === 'explicit' ? 'User stated' : 'Learned'}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-slate-800 dark:text-slate-200 leading-relaxed">{memContent}</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingMemoryId(mem.id);
+                              setEditMemoryText(memContent);
+                              setEditMemoryCategory(mem.category);
+                            }}
+                            className="p-1 text-slate-400 hover:text-blue-600 rounded"
+                            title="Edit memory"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteAiMemory(mem.id)}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                            title="Delete memory"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       ) : (

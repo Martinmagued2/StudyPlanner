@@ -15,9 +15,12 @@ import {
   Edit3,
   Trash2,
   X,
-  FileText
+  FileText,
+  Settings,
+  Building2,
+  Globe
 } from 'lucide-react';
-import { Exam, RevisionSession } from '../../../types';
+import { Exam, RevisionSession, ExamPeriodType } from '../../../types';
 
 export const ExamsView: React.FC = () => {
   const {
@@ -29,11 +32,23 @@ export const ExamsView: React.FC = () => {
     generateRevisionPlanForExam,
     toggleRevisionSession,
     startFocusTimer,
-    openQuickCreate
+    openQuickCreate,
+    academicConfig,
+    updateAcademicConfig,
+    activeAcademicMode,
+    setActiveView
   } = useApp();
 
+  const [examFilter, setExamFilter] = useState<'all' | 'midterm' | 'final' | 'quiz'>('all');
   const [selectedExamId, setSelectedExamId] = useState<string>(exams[0]?.id || '');
-  const selectedExam = exams.find(e => e.id === selectedExamId) || exams[0];
+
+  const filteredExams = exams.filter(e => {
+    if (examFilter === 'all') return true;
+    const type = e.examType || (e.name.toLowerCase().includes('midterm') ? 'midterm' : e.name.toLowerCase().includes('final') ? 'final' : 'final');
+    return type === examFilter;
+  });
+
+  const selectedExam = filteredExams.find(e => e.id === selectedExamId) || exams.find(e => e.id === selectedExamId) || filteredExams[0] || exams[0];
 
   // Edit exam modal state
   const [editingExam, setEditingExam] = useState<Exam | null>(null);
@@ -43,8 +58,13 @@ export const ExamsView: React.FC = () => {
   const [editStartTime, setEditStartTime] = useState('');
   const [editEndTime, setEditEndTime] = useState('');
   const [editRoom, setEditRoom] = useState('');
+  const [editBuilding, setEditBuilding] = useState('');
+  const [editCampus, setEditCampus] = useState('');
+  const [editIsOnline, setEditIsOnline] = useState(false);
+  const [editExamType, setEditExamType] = useState<ExamPeriodType>('final');
   const [editWeight, setEditWeight] = useState(25);
   const [editDescription, setEditDescription] = useState('');
+  const [editInstructions, setEditInstructions] = useState('');
 
   const openEditModal = (exam: Exam, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -55,22 +75,42 @@ export const ExamsView: React.FC = () => {
     setEditStartTime(exam.startTime || '09:00');
     setEditEndTime(exam.endTime || '11:00');
     setEditRoom(exam.room || '');
+    setEditBuilding(exam.building || '');
+    setEditCampus(exam.campus || '');
+    setEditIsOnline(Boolean(exam.isOnline));
+    setEditExamType(exam.examType || (exam.name.toLowerCase().includes('midterm') ? 'midterm' : 'final'));
     setEditWeight(exam.weightPercentage || 25);
     setEditDescription(exam.description || '');
+    setEditInstructions(exam.instructions || '');
   };
 
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingExam) return;
+    let durationMinutes = editingExam.durationMinutes || 120;
+    if (editStartTime && editEndTime) {
+      const [sh, sm] = editStartTime.split(':').map(Number);
+      const [eh, em] = editEndTime.split(':').map(Number);
+      if (!isNaN(sh) && !isNaN(eh)) {
+        const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+        if (diff > 0) durationMinutes = diff;
+      }
+    }
     updateExam(editingExam.id, {
       name: editName,
       courseId: editCourseId,
       date: editDate,
       startTime: editStartTime || undefined,
       endTime: editEndTime || undefined,
+      durationMinutes,
+      examType: editExamType,
       room: editRoom || undefined,
+      building: editBuilding || undefined,
+      campus: editCampus || undefined,
+      isOnline: editIsOnline,
       weightPercentage: Number(editWeight) || 25,
-      description: editDescription || undefined
+      description: editDescription || undefined,
+      instructions: editInstructions || undefined
     });
     setEditingExam(null);
   };
@@ -123,23 +163,152 @@ export const ExamsView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-            Exams & Spaced Revision Planning
+            Exams, Midterms & Final Revision Hub
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Auto-generate spaced revision blocks leading up to finals, with synced calendar schedules and readiness tracking.
+            Configure Midterm Week & Final Examination periods, track exam locations & durations, and auto-build spaced revision schedules.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setActiveView('settings')}
+            className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 flex items-center gap-1.5 shadow-2xs"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>Academic Period Dates</span>
+          </button>
           <button
             onClick={() => openQuickCreate('exam')}
             className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1.5 shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add Major Exam</span>
+            <span>Add Midterm / Final Exam</span>
           </button>
         </div>
       </div>
+
+      {/* Academic Period Quick Configuration & Mode Bar */}
+      <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                Active Academic Period:
+              </span>
+              <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
+                activeAcademicMode === 'midterm'
+                  ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300'
+                  : activeAcademicMode === 'final'
+                  ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-300'
+                  : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+              }`}>
+                {activeAcademicMode === 'midterm'
+                  ? 'Midterm Week (Regular Lectures Suspended)'
+                  : activeAcademicMode === 'final'
+                  ? 'Final Exam Period (Regular Lectures Suspended)'
+                  : 'Normal Semester Teaching Weeks'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              During Midterm or Final Exam periods, regular weekly classes are temporarily suspended (never deleted) and automatically return when the period ends.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {([
+              { id: 'auto', label: 'Auto (By Dates)' },
+              { id: 'normal', label: 'Normal Mode' },
+              { id: 'midterm', label: 'Midterm Mode' },
+              { id: 'final', label: 'Final Exam Mode' }
+            ] as const).map(m => (
+              <button
+                key={m.id}
+                onClick={() => updateAcademicConfig({ modePreference: m.id })}
+                className={`px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors ${
+                  academicConfig.modePreference === m.id
+                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100'
+                    : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Inline Midterm & Final Period Date Pickers */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+          <div>
+            <label className="block text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase mb-1">
+              Midterm Week Start
+            </label>
+            <input
+              type="date"
+              value={academicConfig.midtermStartDate || ''}
+              onChange={e => updateAcademicConfig({ midtermStartDate: e.target.value || undefined })}
+              className="w-full px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase mb-1">
+              Midterm Week End
+            </label>
+            <input
+              type="date"
+              value={academicConfig.midtermEndDate || ''}
+              onChange={e => updateAcademicConfig({ midtermEndDate: e.target.value || undefined })}
+              className="w-full px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-rose-700 dark:text-rose-400 uppercase mb-1">
+              Final Exams Start
+            </label>
+            <input
+              type="date"
+              value={academicConfig.finalStartDate || ''}
+              onChange={e => updateAcademicConfig({ finalStartDate: e.target.value || undefined })}
+              className="w-full px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-rose-700 dark:text-rose-400 uppercase mb-1">
+              Final Exams End
+            </label>
+            <input
+              type="date"
+              value={academicConfig.finalEndDate || ''}
+              onChange={e => updateAcademicConfig({ finalEndDate: e.target.value || undefined })}
+              className="w-full px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Tabs */}
+      {exams.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {([
+            { id: 'all', label: `All Exams (${exams.length})` },
+            { id: 'midterm', label: `Midterms (${exams.filter(e => (e.examType || (e.name.toLowerCase().includes('midterm') ? 'midterm' : 'final')) === 'midterm').length})` },
+            { id: 'final', label: `Finals (${exams.filter(e => (e.examType || (e.name.toLowerCase().includes('midterm') ? 'midterm' : 'final')) === 'final').length})` },
+            { id: 'quiz', label: 'Quizzes & Practicals' }
+          ] as const).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setExamFilter(tab.id)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                examFilter === tab.id
+                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Empty State */}
       {exams.length === 0 && (
@@ -147,7 +316,7 @@ export const ExamsView: React.FC = () => {
           <Award className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-700" />
           <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">No Exams Scheduled</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Add your midterms, finals, or practical exams with start and end times to automatically sync them to your calendar and generate revision plans.
+            Add your midterms, finals, or practical exams with start and end times, locations, and instructions to automatically sync them to your calendar and generate revision plans.
           </p>
           <button
             onClick={() => openQuickCreate('exam')}
@@ -160,13 +329,14 @@ export const ExamsView: React.FC = () => {
       )}
 
       {/* Exam Cards Grid */}
-      {exams.length > 0 && (
+      {filteredExams.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {exams.map(exam => {
+          {filteredExams.map(exam => {
             const course = courses.find(c => c.id === exam.courseId);
             const daysLeft = getDaysRemaining(exam.date);
-            const isSelected = exam.id === selectedExamId;
+            const isSelected = exam.id === selectedExam?.id;
             const timeFormatted = formatExamTime(exam.startTime, exam.endTime);
+            const resolvedType = exam.examType || (exam.name.toLowerCase().includes('midterm') ? 'midterm' : 'final');
 
             return (
               <div
@@ -180,11 +350,27 @@ export const ExamsView: React.FC = () => {
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    {course && (
-                      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border" style={{ borderColor: course.color, color: course.color }}>
-                        {course.code} • Weight: {exam.weightPercentage}%
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {course && (
+                        <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border" style={{ borderColor: course.color, color: course.color }}>
+                          {course.code} • Weight: {exam.weightPercentage}%
+                        </span>
+                      )}
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                        resolvedType === 'midterm'
+                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                          : resolvedType === 'final'
+                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                          : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                      }`}>
+                        {resolvedType}
                       </span>
-                    )}
+                      {exam.isOnline && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                          Online
+                        </span>
+                      )}
+                    </div>
                     <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1.5">
                       {exam.name}
                     </h3>
@@ -223,6 +409,13 @@ export const ExamsView: React.FC = () => {
                   )}
                 </div>
 
+                {/* Instructions / Notes if present */}
+                {(exam.instructions || exam.description) && (
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/50 px-2.5 py-1.5 rounded">
+                    <strong>Instructions:</strong> {exam.instructions || exam.description}
+                  </div>
+                )}
+
                 {/* Readiness Progress Bar */}
                 <div className="space-y-1.5 text-xs">
                   <div className="flex items-center justify-between text-slate-500">
@@ -242,13 +435,15 @@ export const ExamsView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Room & Revision Sessions Count */}
+                {/* Room, Building & Revision Sessions Count */}
                 <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 font-mono">
-                  <span className="flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5" />
-                    <span>{exam.room || 'Main Hall'}</span>
+                  <span className="flex items-center gap-1 truncate">
+                    <MapPin className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {exam.isOnline ? 'Online Portal' : `${exam.room || 'Main Hall'}${exam.building ? ` • ${exam.building}` : ''}${exam.campus ? ` (${exam.campus})` : ''}`}
+                    </span>
                   </span>
-                  <span>{exam.revisionSessions.length} Spaced Sessions</span>
+                  <span className="shrink-0">{exam.revisionSessions.length} Spaced Sessions</span>
                 </div>
               </div>
             );
@@ -374,18 +569,35 @@ export const ExamsView: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="p-4 space-y-3.5">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Exam Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={editName}
-                  onChange={e => setEditName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
-                />
+            <form onSubmit={handleSaveEdit} className="p-4 space-y-3.5 max-h-[82vh] overflow-y-auto">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Exam Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Exam Type
+                  </label>
+                  <select
+                    value={editExamType}
+                    onChange={e => setEditExamType(e.target.value as ExamPeriodType)}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  >
+                    <option value="midterm">Midterm</option>
+                    <option value="final">Final Exam</option>
+                    <option value="quiz">Quiz / Test</option>
+                    <option value="practical">Practical / Viva</option>
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -462,6 +674,21 @@ export const ExamsView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Building / Campus
+                  </label>
+                  <input
+                    type="text"
+                    value={editBuilding}
+                    onChange={e => setEditBuilding(e.target.value)}
+                    placeholder="e.g. Turing Building, East Campus"
+                    className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Weight (%)
                   </label>
                   <input
@@ -473,17 +700,26 @@ export const ExamsView: React.FC = () => {
                     className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 pt-5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editIsOnline}
+                    onChange={e => setEditIsOnline(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  <span>Online / Remote Exam</span>
+                </label>
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Description / Topic Notes
+                  Exam Instructions / Allowed Materials
                 </label>
                 <textarea
                   rows={2}
-                  value={editDescription}
-                  onChange={e => setEditDescription(e.target.value)}
-                  placeholder="Notes, required equipment, calculator permissions..."
+                  value={editInstructions}
+                  onChange={e => setEditInstructions(e.target.value)}
+                  placeholder="Student ID required, non-programmable calculator, closed book..."
                   className="w-full px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
               </div>
