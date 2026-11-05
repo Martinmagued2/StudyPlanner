@@ -19,6 +19,8 @@
 
 -- 1. Safely drop any older broken tables so column types and constraints are 100% clean
 DROP TABLE IF EXISTS public.workspaces CASCADE;
+DROP TABLE IF EXISTS public.chat_sessions CASCADE;
+DROP TABLE IF EXISTS public.previous_term_courses CASCADE;
 DROP TABLE IF EXISTS public.inbox_items CASCADE;
 DROP TABLE IF EXISTS public.focus_sessions CASCADE;
 DROP TABLE IF EXISTS public.grade_items CASCADE;
@@ -231,16 +233,44 @@ CREATE TABLE public.grade_items (
     user_id TEXT NOT NULL,
     course_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    score NUMERIC NOT NULL,
+    score NUMERIC NOT NULL DEFAULT 0,
     max_score NUMERIC NOT NULL DEFAULT 100,
     weight NUMERIC NOT NULL DEFAULT 10,
     category TEXT DEFAULT 'homework',
+    is_ungraded BOOLEAN DEFAULT false,
     date TEXT DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 CREATE INDEX idx_grade_items_user ON public.grade_items(user_id);
+CREATE INDEX idx_grade_items_course ON public.grade_items(course_id);
 
--- 13. Create Focus Sessions Table
+-- 13. Create Previous Term Courses Table (Historical transcripts for Cumulative GPA)
+CREATE TABLE public.previous_term_courses (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    term_name TEXT NOT NULL,
+    course_code TEXT NOT NULL,
+    course_name TEXT NOT NULL,
+    credit_hours NUMERIC DEFAULT 3,
+    percentage NUMERIC,
+    grade_letter TEXT,
+    grade_points NUMERIC,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_previous_terms_user ON public.previous_term_courses(user_id);
+
+-- 14. Create Ask AI Chat Sessions Table (Persists 100% of Ask AI conversations and answers)
+CREATE TABLE public.chat_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    messages JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_chat_sessions_user ON public.chat_sessions(user_id);
+
+-- 15. Create Focus Sessions Table
 CREATE TABLE public.focus_sessions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -254,7 +284,7 @@ CREATE TABLE public.focus_sessions (
 );
 CREATE INDEX idx_focus_sessions_user ON public.focus_sessions(user_id);
 
--- 14. Create Inbox Items Table
+-- 16. Create Inbox Items Table
 CREATE TABLE public.inbox_items (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -270,7 +300,7 @@ CREATE TABLE public.inbox_items (
 );
 CREATE INDEX idx_inbox_items_user ON public.inbox_items(user_id);
 
--- 15. Create App State & Complete Workspace Snapshots Table
+-- 17. Create App State & Complete Workspace Snapshots Table
 CREATE TABLE public.workspaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL,
@@ -291,8 +321,8 @@ DECLARE
     tables text[] := ARRAY[
         'profiles', 'courses', 'notes', 'files', 'tasks', 
         'assignments', 'exams', 'flashcard_decks', 'flashcards', 
-        'quizzes', 'calendar_events', 'grade_items', 'focus_sessions', 
-        'inbox_items', 'workspaces'
+        'quizzes', 'calendar_events', 'grade_items', 'previous_term_courses',
+        'chat_sessions', 'focus_sessions', 'inbox_items', 'workspaces'
     ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP
@@ -309,7 +339,7 @@ END $$;
 DO $$
 DECLARE
     tbl text;
-    tables text[] := ARRAY['courses', 'notes', 'files', 'tasks', 'assignments', 'exams', 'flashcards', 'workspaces'];
+    tables text[] := ARRAY['courses', 'notes', 'files', 'tasks', 'assignments', 'exams', 'flashcards', 'grade_items', 'chat_sessions', 'workspaces'];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP
         IF NOT EXISTS (

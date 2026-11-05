@@ -16,7 +16,9 @@ import {
   FocusSession,
   Quiz,
   Exam,
-  GradeItem
+  GradeItem,
+  PreviousTermCourse,
+  ChatSession
 } from '../types';
 
 export interface SupabaseConfig {
@@ -447,9 +449,38 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
         max_score: g.maxScore || 100,
         weight: g.weightPercent || 10,
         category: g.category || 'homework',
+        is_ungraded: g.isUngraded || false,
         date: (g as any).date || ''
       }));
       await client.from('grade_items').upsert(records, { onConflict: 'id' });
+    }
+
+    // Previous Term Courses (Historical GPA transcripts)
+    if (Array.isArray(data.previousTermCourses) && data.previousTermCourses.length > 0) {
+      const records = data.previousTermCourses.map((p: PreviousTermCourse) => ({
+        id: p.id,
+        user_id: userId,
+        term_name: p.termName,
+        course_code: p.courseCode,
+        course_name: p.courseName,
+        credit_hours: p.creditHours || 3,
+        percentage: p.percentage ?? null,
+        grade_letter: p.gradeLetter || null,
+        grade_points: p.gradePoints ?? null
+      }));
+      await client.from('previous_term_courses').upsert(records, { onConflict: 'id' });
+    }
+
+    // Ask AI Chat Sessions & Full Message Histories
+    if (Array.isArray(data.chatSessions) && data.chatSessions.length > 0) {
+      const records = data.chatSessions.map((s: ChatSession) => ({
+        id: s.id,
+        user_id: userId,
+        title: s.title,
+        messages: s.messages || [],
+        updated_at: s.updatedAt || new Date().toISOString()
+      }));
+      await client.from('chat_sessions').upsert(records, { onConflict: 'id' });
     }
 
     // Calendar Events
@@ -525,7 +556,7 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       .eq('user_id', userId)
       .maybeSingle();
 
-    // 2. Fetch individual tables to ensure 100% latest data and all raw file texts
+    // 2. Fetch individual tables with stable deterministic ordering to ensure 100% latest data and no shuffling
     const [
       coursesRes,
       notesRes,
@@ -537,23 +568,27 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       cardsRes,
       quizzesRes,
       gradeRes,
+      prevTermsRes,
+      chatsRes,
       eventsRes,
       focusRes,
       inboxRes
     ] = await Promise.all([
-      client.from('courses').select('*').eq('user_id', userId),
-      client.from('notes').select('*').eq('user_id', userId),
-      client.from('files').select('*').eq('user_id', userId),
-      client.from('tasks').select('*').eq('user_id', userId),
-      client.from('assignments').select('*').eq('user_id', userId),
-      client.from('exams').select('*').eq('user_id', userId),
-      client.from('flashcard_decks').select('*').eq('user_id', userId),
-      client.from('flashcards').select('*').eq('user_id', userId),
-      client.from('quizzes').select('*').eq('user_id', userId),
-      client.from('grade_items').select('*').eq('user_id', userId),
-      client.from('calendar_events').select('*').eq('user_id', userId),
-      client.from('focus_sessions').select('*').eq('user_id', userId),
-      client.from('inbox_items').select('*').eq('user_id', userId)
+      client.from('courses').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      client.from('notes').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+      client.from('files').select('*').eq('user_id', userId).order('uploaded_at', { ascending: false }),
+      client.from('tasks').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      client.from('assignments').select('*').eq('user_id', userId).order('due_date', { ascending: true }),
+      client.from('exams').select('*').eq('user_id', userId).order('date', { ascending: true }),
+      client.from('flashcard_decks').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      client.from('flashcards').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      client.from('quizzes').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      client.from('grade_items').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      client.from('previous_term_courses').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+      client.from('chat_sessions').select('*').eq('user_id', userId).order('updated_at', { ascending: false }),
+      client.from('calendar_events').select('*').eq('user_id', userId).order('start_time', { ascending: true }),
+      client.from('focus_sessions').select('*').eq('user_id', userId).order('timestamp', { ascending: false }),
+      client.from('inbox_items').select('*').eq('user_id', userId).order('created_at', { ascending: false })
     ]);
 
     const baseData = snapshot?.data || {};
@@ -707,9 +742,34 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
           category: (g.category as any) || 'homework',
           earnedScore: Number(g.score) || 0,
           maxScore: Number(g.max_score) || 100,
-          weightPercent: Number(g.weight) || 10
+          weightPercent: Number(g.weight) || 10,
+          isUngraded: !!g.is_ungraded,
+          date: g.date || ''
         }))
       : baseData.gradeItems || [];
+
+    const previousTermCourses: PreviousTermCourse[] = (prevTermsRes.data && prevTermsRes.data.length > 0)
+      ? prevTermsRes.data.map(p => ({
+          id: p.id,
+          termName: p.term_name,
+          courseCode: p.course_code,
+          courseName: p.course_name,
+          creditHours: Number(p.credit_hours) || 3,
+          percentage: p.percentage !== null && p.percentage !== undefined ? Number(p.percentage) : undefined,
+          gradeLetter: p.grade_letter || undefined,
+          gradePoints: p.grade_points !== null && p.grade_points !== undefined ? Number(p.grade_points) : undefined
+        }))
+      : baseData.previousTermCourses || [];
+
+    const chatSessions: ChatSession[] = (chatsRes.data && chatsRes.data.length > 0)
+      ? chatsRes.data.map(s => ({
+          id: s.id,
+          title: s.title,
+          messages: s.messages || [],
+          createdAt: s.created_at,
+          updatedAt: s.updated_at
+        }))
+      : baseData.chatSessions || [];
 
     const events: CalendarEvent[] = (eventsRes.data && eventsRes.data.length > 0)
       ? eventsRes.data.map(e => ({
@@ -765,6 +825,9 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       flashcards,
       quizzes,
       gradeItems,
+      previousTermCourses,
+      chatSessions,
+      activeChatSessionId: baseData.activeChatSessionId || chatSessions[0]?.id || 'session_default',
       events,
       focusSessions,
       inboxItems
@@ -1105,6 +1168,143 @@ export async function dbDeleteEvent(userId: string, eventId: string): Promise<vo
     await client.from('calendar_events').delete().eq('id', eventId).eq('user_id', userId);
   } catch (err) {
     console.warn('Failed deleting event from DB:', err);
+  }
+}
+
+export async function dbSaveGradeItem(userId: string, item: GradeItem): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('grade_items').upsert({
+      id: item.id,
+      user_id: userId,
+      course_id: item.courseId,
+      name: item.name,
+      score: item.earnedScore ?? 0,
+      max_score: item.maxScore || 100,
+      weight: item.weightPercent || 10,
+      category: item.category || 'homework',
+      is_ungraded: item.isUngraded || false,
+      date: (item as any).date || ''
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Failed saving grade item to DB:', err);
+  }
+}
+
+export async function dbDeleteGradeItem(userId: string, itemId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('grade_items').delete().eq('id', itemId).eq('user_id', userId);
+  } catch (err) {
+    console.warn('Failed deleting grade item from DB:', err);
+  }
+}
+
+export async function dbSavePreviousTermCourse(userId: string, item: PreviousTermCourse): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('previous_term_courses').upsert({
+      id: item.id,
+      user_id: userId,
+      term_name: item.termName,
+      course_code: item.courseCode,
+      course_name: item.courseName,
+      credit_hours: item.creditHours || 3,
+      percentage: item.percentage ?? null,
+      grade_letter: item.gradeLetter || null,
+      grade_points: item.gradePoints ?? null
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Failed saving previous term course to DB:', err);
+  }
+}
+
+export async function dbDeletePreviousTermCourse(userId: string, itemId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('previous_term_courses').delete().eq('id', itemId).eq('user_id', userId);
+  } catch (err) {
+    console.warn('Failed deleting previous term course from DB:', err);
+  }
+}
+
+export async function dbSaveChatSession(userId: string, session: ChatSession): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('chat_sessions').upsert({
+      id: session.id,
+      user_id: userId,
+      title: session.title,
+      messages: session.messages || [],
+      updated_at: session.updatedAt || new Date().toISOString()
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Failed saving chat session to DB:', err);
+  }
+}
+
+export async function dbDeleteChatSession(userId: string, sessionId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('chat_sessions').delete().eq('id', sessionId).eq('user_id', userId);
+  } catch (err) {
+    console.warn('Failed deleting chat session from DB:', err);
+  }
+}
+
+export async function dbSaveInboxItem(userId: string, item: InboxItem): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('inbox_items').upsert({
+      id: item.id,
+      user_id: userId,
+      title: item.title,
+      content: item.content || '',
+      type: item.type || 'note',
+      url: item.url || null,
+      email_sender: item.emailSender || null,
+      email_subject: item.emailSubject || null,
+      processed: item.processed || false,
+      converted_to: item.convertedTo || null
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Failed saving inbox item to DB:', err);
+  }
+}
+
+export async function dbDeleteInboxItem(userId: string, itemId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('inbox_items').delete().eq('id', itemId).eq('user_id', userId);
+  } catch (err) {
+    console.warn('Failed deleting inbox item from DB:', err);
+  }
+}
+
+export async function dbSaveFocusSession(userId: string, session: FocusSession): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    await client.from('focus_sessions').upsert({
+      id: session.id,
+      user_id: userId,
+      course_id: session.courseId || null,
+      task_id: session.taskId || null,
+      duration_minutes: session.durationMinutes,
+      actual_minutes: session.actualMinutes,
+      label: session.label || 'Deep Work',
+      timestamp: session.timestamp
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Failed saving focus session to DB:', err);
   }
 }
 

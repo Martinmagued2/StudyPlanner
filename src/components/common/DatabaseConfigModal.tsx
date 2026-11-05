@@ -39,7 +39,7 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
   isOpen,
   onClose
 }) => {
-  const { user, login, saveToDatabase, courses, notes, tasks, files } = useApp();
+  const { user, login, saveToDatabase, courses, notes, tasks, files, exams, gradeItems, chatSessions } = useApp();
 
   const [activeTab, setActiveTab] = useState<'config' | 'auth' | 'status'>('config');
   const [supabaseUrl, setSupabaseUrl] = useState('');
@@ -117,6 +117,8 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
     const sqlSchema = `-- StudyPlanner Complete Database Setup (Run in Supabase SQL Editor):
 -- 1. Safely reset older tables to remove rigid constraints:
 DROP TABLE IF EXISTS public.workspaces CASCADE;
+DROP TABLE IF EXISTS public.chat_sessions CASCADE;
+DROP TABLE IF EXISTS public.previous_term_courses CASCADE;
 DROP TABLE IF EXISTS public.inbox_items CASCADE;
 DROP TABLE IF EXISTS public.focus_sessions CASCADE;
 DROP TABLE IF EXISTS public.grade_items CASCADE;
@@ -161,6 +163,7 @@ CREATE TABLE public.courses (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+CREATE INDEX idx_courses_user ON public.courses(user_id);
 
 CREATE TABLE public.notes (
     id TEXT PRIMARY KEY,
@@ -175,6 +178,7 @@ CREATE TABLE public.notes (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+CREATE INDEX idx_notes_user ON public.notes(user_id);
 
 CREATE TABLE public.files (
     id TEXT PRIMARY KEY,
@@ -191,6 +195,7 @@ CREATE TABLE public.files (
     is_favorite BOOLEAN DEFAULT false,
     uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+CREATE INDEX idx_files_user ON public.files(user_id);
 
 CREATE TABLE public.tasks (
     id TEXT PRIMARY KEY,
@@ -209,6 +214,7 @@ CREATE TABLE public.tasks (
     source TEXT DEFAULT 'user',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+CREATE INDEX idx_tasks_user ON public.tasks(user_id);
 
 CREATE TABLE public.assignments (
     id TEXT PRIMARY KEY,
@@ -227,6 +233,7 @@ CREATE TABLE public.assignments (
     is_broken_down BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+CREATE INDEX idx_assignments_user ON public.assignments(user_id);
 
 CREATE TABLE public.exams (
     id TEXT PRIMARY KEY,
@@ -234,18 +241,154 @@ CREATE TABLE public.exams (
     course_id TEXT NOT NULL,
     name TEXT NOT NULL,
     date TEXT NOT NULL,
+    start_time TEXT DEFAULT '',
+    end_time TEXT DEFAULT '',
     weight_percentage NUMERIC DEFAULT 25,
     readiness_percent NUMERIC DEFAULT 0,
     room TEXT DEFAULT '',
+    description TEXT DEFAULT '',
     revision_sessions JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+CREATE INDEX idx_exams_user ON public.exams(user_id);
+
+CREATE TABLE public.flashcard_decks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    name TEXT NOT NULL,
+    tag TEXT DEFAULT '',
+    cards_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_decks_user ON public.flashcard_decks(user_id);
+
+CREATE TABLE public.flashcards (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    deck_id TEXT NOT NULL REFERENCES public.flashcard_decks(id) ON DELETE CASCADE,
+    course_id TEXT,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    citation JSONB,
+    ease_factor NUMERIC DEFAULT 2.5,
+    interval_days INTEGER DEFAULT 0,
+    repetitions INTEGER DEFAULT 0,
+    lapses INTEGER DEFAULT 0,
+    due_date TEXT DEFAULT '',
+    state TEXT DEFAULT 'new',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_flashcards_user ON public.flashcards(user_id);
+
+CREATE TABLE public.quizzes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    file_id TEXT,
+    note_id TEXT,
+    title TEXT NOT NULL,
+    difficulty TEXT DEFAULT 'medium',
+    questions JSONB DEFAULT '[]'::jsonb,
+    attempts JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_quizzes_user ON public.quizzes(user_id);
+
+CREATE TABLE public.calendar_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    assignment_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    location TEXT DEFAULT '',
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    all_day BOOLEAN DEFAULT false,
+    type TEXT DEFAULT 'event',
+    provider TEXT DEFAULT 'local',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_events_user ON public.calendar_events(user_id);
+
+CREATE TABLE public.grade_items (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    score NUMERIC NOT NULL DEFAULT 0,
+    max_score NUMERIC NOT NULL DEFAULT 100,
+    weight NUMERIC NOT NULL DEFAULT 10,
+    category TEXT DEFAULT 'homework',
+    is_ungraded BOOLEAN DEFAULT false,
+    date TEXT DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_grade_items_user ON public.grade_items(user_id);
+
+CREATE TABLE public.previous_term_courses (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    term_name TEXT NOT NULL,
+    course_code TEXT NOT NULL,
+    course_name TEXT NOT NULL,
+    credit_hours NUMERIC DEFAULT 3,
+    percentage NUMERIC,
+    grade_letter TEXT,
+    grade_points NUMERIC,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_previous_terms_user ON public.previous_term_courses(user_id);
+
+CREATE TABLE public.chat_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    messages JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_chat_sessions_user ON public.chat_sessions(user_id);
+
+CREATE TABLE public.focus_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    course_id TEXT,
+    task_id TEXT,
+    duration_minutes INTEGER NOT NULL,
+    actual_minutes INTEGER NOT NULL,
+    label TEXT DEFAULT 'Deep Work',
+    timestamp TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_focus_sessions_user ON public.focus_sessions(user_id);
+
+CREATE TABLE public.inbox_items (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT DEFAULT '',
+    type TEXT DEFAULT 'note',
+    url TEXT,
+    email_sender TEXT,
+    email_subject TEXT,
+    processed BOOLEAN DEFAULT false,
+    converted_to TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_inbox_items_user ON public.inbox_items(user_id);
 
 -- 4. Enable Row Level Security and Allow Workspace Sync:
 DO $$
 DECLARE
     tbl text;
-    tables text[] := ARRAY['courses', 'notes', 'files', 'tasks', 'assignments', 'exams', 'workspaces'];
+    tables text[] := ARRAY[
+        'courses', 'notes', 'files', 'tasks', 'assignments', 'exams',
+        'flashcard_decks', 'flashcards', 'quizzes', 'calendar_events',
+        'grade_items', 'previous_term_courses', 'chat_sessions',
+        'focus_sessions', 'inbox_items', 'workspaces'
+    ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
@@ -258,7 +401,10 @@ END $$;
 DO $$
 DECLARE
     tbl text;
-    tables text[] := ARRAY['courses', 'notes', 'files', 'tasks', 'assignments', 'exams', 'workspaces'];
+    tables text[] := ARRAY[
+        'courses', 'notes', 'files', 'tasks', 'assignments', 'exams',
+        'flashcards', 'grade_items', 'chat_sessions', 'workspaces'
+    ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP
         IF NOT EXISTS (
@@ -301,7 +447,7 @@ END $$;`;
       if (res.success) {
         setForceSyncResult({
           success: true,
-          message: `Successfully backed up ${courses.length} courses, ${notes.length} notes, ${tasks.length} tasks, and ${files.length} files to Supabase PostgreSQL!`
+          message: `Successfully backed up ${courses.length} courses, ${notes.length} notes, ${tasks.length} tasks, ${files.length} files, ${exams.length} exams, ${gradeItems.length} grades, and ${chatSessions.length} AI chat sessions to Supabase PostgreSQL!`
         });
       } else {
         setForceSyncResult({

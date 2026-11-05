@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../../context/AppContext';
 import {
   Calculator,
@@ -51,6 +51,13 @@ export const GradesView: React.FC = () => {
   const [selectedCourseId, setSelectedCourseId] = useState<string>(courses[0]?.id || '');
   const [targetLetter, setTargetLetter] = useState<string>('A');
 
+  // Keep selectedCourseId in sync if courses array changes or loads
+  useEffect(() => {
+    if ((!selectedCourseId || !courses.some(c => c.id === selectedCourseId)) && courses.length > 0) {
+      setSelectedCourseId(courses[0].id);
+    }
+  }, [courses, selectedCourseId]);
+
   // New Assessment Item Form State (for current courses)
   const [itemName, setItemName] = useState('');
   const [itemCategory, setItemCategory] = useState<GradeItem['category']>('homework');
@@ -70,8 +77,9 @@ export const GradesView: React.FC = () => {
   const [prevGradeLetter, setPrevGradeLetter] = useState<string>('A');
 
   const { gpa, totalCredits, courseGrades } = calculateCumulativeGpa();
-  const currentCourse = courses.find(c => c.id === selectedCourseId) || courses[0];
-  const targetCalculation = calculateTargetExamScore(selectedCourseId, targetLetter);
+  const effectiveCourseId = selectedCourseId || courses[0]?.id || '';
+  const currentCourse = courses.find(c => c.id === effectiveCourseId) || courses[0];
+  const targetCalculation = calculateTargetExamScore(effectiveCourseId, targetLetter);
 
   // Helper to map percentage to scale letter and points
   const getScaleMatch = (pct: number) => {
@@ -91,15 +99,23 @@ export const GradesView: React.FC = () => {
 
   const handleAddAssessment = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!itemName.trim() || !selectedCourseId) return;
+    const courseIdToUse = effectiveCourseId;
+    if (!itemName.trim()) {
+      alert('Please enter an assessment name (e.g. Midterm 1, Lab 2).');
+      return;
+    }
+    if (!courseIdToUse) {
+      alert('Please select or create an active course before adding grades.');
+      return;
+    }
 
     addGradeItem({
-      courseId: selectedCourseId,
+      courseId: courseIdToUse,
       name: itemName.trim(),
       category: itemCategory,
-      earnedScore: Number(earnedScore),
-      maxScore: Number(maxScore),
-      weightPercent: Number(weightPercent),
+      earnedScore: Number(earnedScore) || 0,
+      maxScore: Number(maxScore) || 100,
+      weightPercent: Number(weightPercent) || 10,
       isUngraded
     });
 
@@ -146,7 +162,7 @@ export const GradesView: React.FC = () => {
     return acc;
   }, {} as Record<string, PreviousTermCourse[]>);
 
-  const courseItems = gradeItems.filter(g => g.courseId === selectedCourseId);
+  const courseItems = gradeItems.filter(g => g.courseId === effectiveCourseId);
   const totalCourseWeight = courseItems.reduce((acc, i) => acc + (i.weightPercent || 0), 0);
 
   return (
@@ -432,6 +448,19 @@ export const GradesView: React.FC = () => {
               {/* Add Assessment Component Form */}
               <form onSubmit={handleAddAssessment} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center gap-2 text-xs shadow-xs">
                 <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">Add Assessment:</span>
+
+                <select
+                  value={effectiveCourseId}
+                  onChange={e => setSelectedCourseId(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold"
+                >
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.code}
+                    </option>
+                  ))}
+                </select>
+
                 <input
                   type="text"
                   required

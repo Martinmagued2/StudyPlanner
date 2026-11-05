@@ -59,7 +59,13 @@ import {
   dbSaveQuiz,
   dbDeleteQuiz,
   dbSaveEvent,
-  dbDeleteEvent
+  dbDeleteEvent,
+  dbSaveGradeItem,
+  dbDeleteGradeItem,
+  dbSavePreviousTermCourse,
+  dbDeletePreviousTermCourse,
+  dbSaveChatSession,
+  dbDeleteChatSession
 } from '../services/supabase';
 import { fetchRepoCommits, getGitHubToken } from '../services/githubService';
 import {
@@ -597,9 +603,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const active = prev.find(s => s.id === activeChatSessionId) || prev[0];
       if (!active) return prev;
       const nextMsgs = typeof updater === 'function' ? updater(active.messages) : updater;
-      return prev.map(s => s.id === active.id ? { ...s, messages: nextMsgs, updatedAt: new Date().toISOString() } : s);
+      const updatedSession: ChatSession = {
+        ...active,
+        messages: nextMsgs,
+        updatedAt: new Date().toISOString()
+      };
+      if (user && isSupabaseConfigured()) {
+        dbSaveChatSession(user.id, updatedSession).catch(err => console.warn('DB chat save:', err));
+      }
+      return prev.map(s => s.id === active.id ? updatedSession : s);
     });
-  }, [activeChatSessionId]);
+  }, [activeChatSessionId, user]);
 
   const createNewChatSession = useCallback((title?: string) => {
     const newId = `session_${Date.now()}`;
@@ -619,8 +633,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setChatSessions(prev => [newSession, ...prev]);
     setActiveChatSessionId(newId);
+    if (user && isSupabaseConfigured()) {
+      dbSaveChatSession(user.id, newSession).catch(err => console.warn('DB chat save:', err));
+    }
     return newId;
-  }, []);
+  }, [user]);
 
   const selectChatSession = useCallback((id: string) => {
     setActiveChatSessionId(id);
@@ -638,34 +655,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           updatedAt: new Date().toISOString()
         };
         setActiveChatSessionId(fresh.id);
+        if (user && isSupabaseConfigured()) {
+          dbSaveChatSession(user.id, fresh).catch(err => console.warn('DB chat save:', err));
+          dbDeleteChatSession(user.id, id).catch(err => console.warn('DB chat delete:', err));
+        }
         return [fresh];
       }
       if (activeChatSessionId === id) {
         setActiveChatSessionId(filtered[0].id);
       }
+      if (user && isSupabaseConfigured()) {
+        dbDeleteChatSession(user.id, id).catch(err => console.warn('DB chat delete:', err));
+      }
       return filtered;
     });
-  }, [activeChatSessionId, defaultInitialWelcome]);
+  }, [activeChatSessionId, defaultInitialWelcome, user]);
 
   const renameChatSession = useCallback((id: string, newTitle: string) => {
     if (!newTitle.trim()) return;
-    setChatSessions(prev => prev.map(s => s.id === id ? { ...s, title: newTitle.trim(), updatedAt: new Date().toISOString() } : s));
-  }, []);
+    setChatSessions(prev => {
+      const next = prev.map(s => s.id === id ? { ...s, title: newTitle.trim(), updatedAt: new Date().toISOString() } : s);
+      const target = next.find(s => s.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveChatSession(user.id, target).catch(err => console.warn('DB chat rename:', err));
+      }
+      return next;
+    });
+  }, [user]);
 
   const clearChatSessionMessages = useCallback((id: string) => {
-    setChatSessions(prev => prev.map(s => s.id === id ? {
-      ...s,
-      messages: [
-        {
-          id: `msg_cleared_${Date.now()}`,
-          sender: 'assistant',
-          content: 'Chat conversation cleared. How can I help you today?',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ],
-      updatedAt: new Date().toISOString()
-    } : s));
-  }, []);
+    setChatSessions(prev => {
+      const next = prev.map(s => s.id === id ? {
+        ...s,
+        messages: [
+          {
+            id: `msg_cleared_${Date.now()}`,
+            sender: 'assistant' as const,
+            content: 'Chat conversation cleared. How can I help you today?',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        ],
+        updatedAt: new Date().toISOString()
+      } : s);
+      const target = next.find(s => s.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveChatSession(user.id, target).catch(err => console.warn('DB chat clear:', err));
+      }
+      return next;
+    });
+  }, [user]);
 
   // Focus Timer Logic
   const [focusState, setFocusState] = useState<{
@@ -787,6 +825,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (g) setGradeItems(JSON.parse(g));
           const p = localStorage.getItem(`${userStorageKey}_previous_term_courses`);
           if (p) setPreviousTermCourses(JSON.parse(p));
+          const ch = localStorage.getItem(`${userStorageKey}_chat_sessions`);
+          if (ch) setChatSessions(JSON.parse(ch));
+          const ach = localStorage.getItem(`${userStorageKey}_active_chat_session_id`);
+          if (ach) setActiveChatSessionId(JSON.parse(ach));
+          const dp = localStorage.getItem(`${userStorageKey}_daily_plan`);
+          if (dp) setDailyPlan(JSON.parse(dp));
+          const ig = localStorage.getItem(`${userStorageKey}_integrations`);
+          if (ig) setIntegrations(JSON.parse(ig));
+          const gh = localStorage.getItem(`${userStorageKey}_repos`);
+          if (gh) setGithubRepos(JSON.parse(gh));
+          const mem = localStorage.getItem(`${userStorageKey}_ai_memories`);
+          if (mem) setAiMemories(JSON.parse(mem));
         }
       } catch (err) {
         console.warn('Failed restoring user local workspace:', err);
@@ -808,7 +858,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (Array.isArray(dbData.flashcards) && dbData.flashcards.length > 0) setFlashcards(dbData.flashcards);
           if (Array.isArray(dbData.flashcardDecks) && dbData.flashcardDecks.length > 0) setFlashcardDecks(dbData.flashcardDecks);
           if (Array.isArray(dbData.gradeItems) && dbData.gradeItems.length > 0) setGradeItems(dbData.gradeItems);
+          if (Array.isArray(dbData.previousTermCourses) && dbData.previousTermCourses.length > 0) setPreviousTermCourses(dbData.previousTermCourses);
+          if (Array.isArray(dbData.chatSessions) && dbData.chatSessions.length > 0) {
+            setChatSessions(dbData.chatSessions);
+            if (dbData.activeChatSessionId) setActiveChatSessionId(dbData.activeChatSessionId);
+          }
           if (dbData.dailyPlan) setDailyPlan(dbData.dailyPlan);
+          if (Array.isArray(dbData.integrations)) setIntegrations(dbData.integrations);
+          if (Array.isArray(dbData.githubRepos)) setGithubRepos(dbData.githubRepos);
+          if (Array.isArray(dbData.aiMemories)) setAiMemories(dbData.aiMemories);
+          if (Array.isArray(dbData.notifications)) setNotifications(dbData.notifications);
+          if (Array.isArray(dbData.reminderLogs)) setReminderLogs(dbData.reminderLogs);
         }
       }).catch(err => console.warn('Supabase DB fetch on login error:', err));
     }
@@ -1736,13 +1796,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveStored('grade_items', next);
       return next;
     });
+    if (user && isSupabaseConfigured()) {
+      dbSaveGradeItem(user.id, newItem).catch(err => console.warn('DB grade save:', err));
+    }
     return newItem;
   };
 
   const updateGradeItem = (id: string, updates: Partial<GradeItem>) => {
     setGradeItems(prev => {
       const next = prev.map(g => g.id === id ? { ...g, ...updates } : g);
+      const target = next.find(g => g.id === id);
       saveStored('grade_items', next);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveGradeItem(user.id, target).catch(err => console.warn('DB grade update:', err));
+      }
       return next;
     });
   };
@@ -1753,6 +1820,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveStored('grade_items', next);
       return next;
     });
+    if (user && isSupabaseConfigured()) {
+      dbDeleteGradeItem(user.id, id).catch(err => console.warn('DB grade delete:', err));
+    }
   };
 
   // Previous Term Courses Management
@@ -1780,6 +1850,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveStored('previous_term_courses', next);
       return next;
     });
+    if (user && isSupabaseConfigured()) {
+      dbSavePreviousTermCourse(user.id, newItem).catch(err => console.warn('DB previous term save:', err));
+    }
     return newItem;
   };
 
@@ -1797,7 +1870,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         return merged;
       });
+      const target = next.find(p => p.id === id);
       saveStored('previous_term_courses', next);
+      if (target && user && isSupabaseConfigured()) {
+        dbSavePreviousTermCourse(user.id, target).catch(err => console.warn('DB previous term update:', err));
+      }
       return next;
     });
   };
@@ -1808,6 +1885,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveStored('previous_term_courses', next);
       return next;
     });
+    if (user && isSupabaseConfigured()) {
+      dbDeletePreviousTermCourse(user.id, id).catch(err => console.warn('DB previous term delete:', err));
+    }
   };
 
   // Exact Academic GPA Scale from Specification Image
@@ -3150,6 +3230,7 @@ How would you like me to assist you with your studies right now?`;
         if (Array.isArray(remoteData.flashcardDecks)) setFlashcardDecks(remoteData.flashcardDecks);
         if (Array.isArray(remoteData.exams)) setExams(remoteData.exams);
         if (Array.isArray(remoteData.gradeItems)) setGradeItems(remoteData.gradeItems);
+        if (Array.isArray(remoteData.previousTermCourses)) setPreviousTermCourses(remoteData.previousTermCourses);
         if (remoteData.dailyPlan) setDailyPlan(remoteData.dailyPlan);
         if (Array.isArray(remoteData.chatSessions)) setChatSessions(remoteData.chatSessions);
         if (Array.isArray(remoteData.notifications)) setNotifications(remoteData.notifications);
