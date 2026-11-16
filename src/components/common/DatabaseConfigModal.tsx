@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { useApp } from '../../context/AppContext';
 import {
   getSupabaseConfig,
@@ -67,7 +68,7 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
   const [authName, setAuthName] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authMessage, setAuthMessage] = useState<{ error?: boolean; msg: string } | null>(null);
-  const [supabaseAuthUser, setSupabaseAuthUser] = useState<any>(null);
+  const [supabaseAuthUser, setSupabaseAuthUser] = useState<SupabaseUser | null>(null);
 
   // Initialize inputs from existing config
   useEffect(() => {
@@ -77,7 +78,7 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
         setSupabaseUrl(cfg.url);
         setAnonKey(cfg.anonKey);
       }
-      getSupabaseUser().then(u => setSupabaseAuthUser(u));
+      getSupabaseUser().then((u: SupabaseUser | null) => setSupabaseAuthUser(u));
     }
   }, [isOpen]);
 
@@ -99,7 +100,7 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
       setCustomSupabaseConfig(supabaseUrl, anonKey);
       setTimeout(() => {
         // Refresh auth state
-        getSupabaseUser().then(u => setSupabaseAuthUser(u));
+        getSupabaseUser().then((u: SupabaseUser | null) => setSupabaseAuthUser(u));
       }, 500);
     }
   };
@@ -116,6 +117,9 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
   const handleCopySql = async () => {
     const sqlSchema = `-- StudyPlanner Complete Database Setup (Run in Supabase SQL Editor):
 -- 1. Safely reset older tables to remove rigid constraints:
+DROP TABLE IF EXISTS public.email_notification_logs CASCADE;
+DROP TABLE IF EXISTS public.notification_preferences CASCADE;
+DROP TABLE IF EXISTS public.note_folders CASCADE;
 DROP TABLE IF EXISTS public.workspaces CASCADE;
 DROP TABLE IF EXISTS public.chat_sessions CASCADE;
 DROP TABLE IF EXISTS public.previous_term_courses CASCADE;
@@ -176,14 +180,32 @@ CREATE TABLE public.courses (
 );
 CREATE INDEX idx_courses_user ON public.courses(user_id);
 
+CREATE TABLE public.note_folders (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    parent_id TEXT,
+    course_id TEXT,
+    icon TEXT,
+    color TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_note_folders_user ON public.note_folders(user_id);
+
 CREATE TABLE public.notes (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     course_id TEXT,
+    folder_id TEXT,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
+    blocks JSONB DEFAULT '[]'::jsonb,
+    icon TEXT,
+    cover_image TEXT,
     tags TEXT[] DEFAULT '{}',
     pinned BOOLEAN DEFAULT false,
+    is_favorite BOOLEAN DEFAULT false,
+    is_archived BOOLEAN DEFAULT false,
     in_trash BOOLEAN DEFAULT false,
     highlighted_terms TEXT[] DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
@@ -390,15 +412,52 @@ CREATE TABLE public.inbox_items (
 );
 CREATE INDEX idx_inbox_items_user ON public.inbox_items(user_id);
 
+CREATE TABLE public.notification_preferences (
+    user_id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'Europe/London',
+    daily_digest_enabled BOOLEAN DEFAULT true,
+    daily_digest_time TEXT DEFAULT '08:00',
+    deadline_reminders_enabled BOOLEAN DEFAULT true,
+    reminder_days_before INTEGER[] DEFAULT ARRAY[3, 2, 1],
+    anti_procrastination_enabled BOOLEAN DEFAULT true,
+    anti_procrastination_frequency TEXT DEFAULT 'smart',
+    weekly_summary_enabled BOOLEAN DEFAULT true,
+    enable_classes BOOLEAN DEFAULT true,
+    enable_exams BOOLEAN DEFAULT true,
+    enable_assignments BOOLEAN DEFAULT true,
+    last_app_open_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE public.email_notification_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    recipient_email TEXT NOT NULL,
+    notification_type TEXT NOT NULL,
+    entity_id TEXT DEFAULT '',
+    days_before INTEGER DEFAULT 0,
+    scheduled_for_date TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'sent',
+    provider_message_id TEXT,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    sent_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT unique_email_dedup UNIQUE (user_id, notification_type, entity_id, days_before, scheduled_for_date)
+);
+CREATE INDEX idx_email_logs_user ON public.email_notification_logs(user_id);
+
 -- 4. Enable Row Level Security and Allow Workspace Sync:
 DO $$
 DECLARE
     tbl text;
     tables text[] := ARRAY[
-        'profiles', 'courses', 'notes', 'files', 'tasks', 'assignments', 'exams',
+        'profiles', 'courses', 'note_folders', 'notes', 'files', 'tasks', 'assignments', 'exams',
         'flashcard_decks', 'flashcards', 'quizzes', 'calendar_events',
         'grade_items', 'previous_term_courses', 'chat_sessions',
-        'focus_sessions', 'inbox_items', 'workspaces'
+        'focus_sessions', 'inbox_items', 'workspaces',
+        'notification_preferences', 'email_notification_logs'
     ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP
@@ -518,12 +577,12 @@ END $$;`;
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-sm">
               <Database className="w-4 h-4" />
             </div>
             <div>
@@ -652,7 +711,7 @@ END $$;`;
                     placeholder="https://xyzcompany.supabase.co"
                     value={supabaseUrl}
                     onChange={e => setSupabaseUrl(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
 
@@ -665,7 +724,7 @@ END $$;`;
                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                     value={anonKey}
                     onChange={e => setAnonKey(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
 
@@ -673,7 +732,7 @@ END $$;`;
                   <button
                     type="submit"
                     disabled={isTesting || !supabaseUrl.trim() || !anonKey.trim()}
-                    className="flex-1 py-2 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
+                    className="flex-1 py-2 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
                     <span>{isTesting ? 'Testing Connection...' : 'Save & Connect Database'}</span>
@@ -735,7 +794,7 @@ END $$;`;
               {supabaseAuthUser ? (
                 <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 space-y-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs">
+                    <div className="w-10 h-10 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-sm">
                       {supabaseAuthUser.email?.[0]?.toUpperCase() || 'U'}
                     </div>
                     <div>
@@ -771,7 +830,7 @@ END $$;`;
                       onClick={() => setAuthMode('signin')}
                       className={`flex-1 py-1 rounded-md transition-all ${
                         authMode === 'signin'
-                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-xs'
+                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
                           : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
@@ -782,7 +841,7 @@ END $$;`;
                       onClick={() => setAuthMode('signup')}
                       className={`flex-1 py-1 rounded-md transition-all ${
                         authMode === 'signup'
-                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-xs'
+                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
                           : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
@@ -793,7 +852,7 @@ END $$;`;
                       onClick={() => setAuthMode('otp')}
                       className={`flex-1 py-1 rounded-md transition-all ${
                         authMode === 'otp'
-                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-xs'
+                          ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
                           : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
@@ -851,7 +910,7 @@ END $$;`;
                     <button
                       type="submit"
                       disabled={isAuthenticating || !authEmail.trim()}
-                      className="w-full py-2 px-4 rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
+                      className="w-full py-2 px-4 rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
                     >
                       <Lock className="w-3.5 h-3.5" />
                       <span>
@@ -898,7 +957,7 @@ END $$;`;
               </div>
 
               {/* Live Read/Write Test Box */}
-              <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 space-y-3">
+              <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100">
@@ -912,7 +971,7 @@ END $$;`;
                     type="button"
                     onClick={handleRunReadWriteTest}
                     disabled={isReadWriteTesting}
-                    className="py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                    className="py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isReadWriteTesting ? 'animate-spin' : ''}`} />
                     <span>{isReadWriteTesting ? 'Testing...' : 'Run Test Now'}</span>

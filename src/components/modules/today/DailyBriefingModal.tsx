@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { MeetingSlot } from '../../../types';
+import { toLocalDateKey } from '../../../services/academicScheduleService';
 import {
   Sparkles,
   BookOpen,
@@ -27,7 +28,8 @@ export const DailyBriefingModal: React.FC<{ isOpen: boolean; onClose: () => void
     assignments,
     exams,
     startFocusTimer,
-    setActiveView
+    setActiveView,
+    isClassSuspendedOnDate,
   } = useApp();
 
   const [dontShowAgainToday, setDontShowAgainToday] = useState(false);
@@ -43,10 +45,12 @@ export const DailyBriefingModal: React.FC<{ isOpen: boolean; onClose: () => void
     month: 'long',
     day: 'numeric'
   });
-  const todayIsoDate = now.toISOString().slice(0, 10);
+  const todayIsoDate = toLocalDateKey(now);
 
-  // 1. Classes Today
-  const todayClasses = courses.flatMap(c =>
+  // 1. Classes Today (respects archived status and Academic Calendar suspensions)
+  const todayClasses = courses
+    .filter(c => !c.isArchived && !isClassSuspendedOnDate(todayIsoDate, c.id).suspended)
+    .flatMap(c =>
     (c.meetingSlots || [])
       .filter((s: MeetingSlot) => s.day === todayDay)
       .map((s: MeetingSlot) => ({
@@ -123,7 +127,7 @@ export const DailyBriefingModal: React.FC<{ isOpen: boolean; onClose: () => void
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header with decorative gradient bar */}
         <div className="relative bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-500 p-5 text-white">
@@ -197,7 +201,7 @@ export const DailyBriefingModal: React.FC<{ isOpen: boolean; onClose: () => void
                 {todayClasses.map(cls => (
                   <div
                     key={cls.id}
-                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs flex items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div
@@ -270,7 +274,7 @@ export const DailyBriefingModal: React.FC<{ isOpen: boolean; onClose: () => void
                   return (
                     <div
                       key={asg.id}
-                      className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs flex items-center justify-between gap-3"
+                      className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex items-center justify-between gap-3"
                     >
                       <div className="min-w-0 space-y-0.5">
                         <div className="flex items-center gap-1.5">
@@ -366,7 +370,7 @@ export const DailyBriefingModal: React.FC<{ isOpen: boolean; onClose: () => void
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
               onClick={handleStartFocus}
-              className="flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+              className="flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center gap-1.5 transition-colors shadow-sm"
             >
               <Play className="w-3 h-3 text-emerald-600" />
               <span>Start 25m Focus</span>
@@ -374,7 +378,7 @@ export const DailyBriefingModal: React.FC<{ isOpen: boolean; onClose: () => void
 
             <button
               onClick={handleDismiss}
-              className="flex-1 sm:flex-none px-4 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center justify-center gap-1 transition-colors shadow-2xs"
+              className="flex-1 sm:flex-none px-4 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center justify-center gap-1 transition-colors shadow-sm"
             >
               <span>Let's Study</span>
               <ArrowRight className="w-3.5 h-3.5" />

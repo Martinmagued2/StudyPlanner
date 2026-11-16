@@ -564,7 +564,7 @@ export const FilesView: React.FC = () => {
             onClick={() => setSelectedFileId('all')}
             className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
               isAllFiles
-                ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-400 dark:border-blue-600 shadow-xs'
+                ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-400 dark:border-blue-600 shadow-sm'
                 : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
             }`}
           >
@@ -614,7 +614,7 @@ export const FilesView: React.FC = () => {
                     onClick={() => setSelectedFileId(file.id)}
                     className={`p-3 rounded-xl border cursor-pointer transition-colors space-y-2 text-xs ${
                       isSelected
-                        ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 shadow-xs'
+                        ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 shadow-sm'
                         : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
                     }`}
                   >
@@ -924,7 +924,7 @@ export const FilesView: React.FC = () => {
 
       {/* MODAL 1: Detailed Lecture Notes Explanation */}
       {isNoteModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-5">
           <div className="w-full max-w-3xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden text-xs">
             {/* Modal Header */}
             <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -1019,7 +1019,7 @@ export const FilesView: React.FC = () => {
 
       {/* MODAL 2: Generate Practice Quiz with Custom Difficulty & Count */}
       {isQuizModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-5">
           <div className="w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden text-xs">
             {/* Header */}
             <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -1060,7 +1060,7 @@ export const FilesView: React.FC = () => {
                         onClick={() => setQuizDifficulty('easy')}
                         className={`p-3 rounded-lg border text-left transition-all ${
                           quizDifficulty === 'easy'
-                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 text-emerald-900 dark:text-emerald-200 font-semibold shadow-xs'
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 text-emerald-900 dark:text-emerald-200 font-semibold shadow-sm'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                         }`}
                       >
@@ -1078,7 +1078,7 @@ export const FilesView: React.FC = () => {
                         onClick={() => setQuizDifficulty('medium')}
                         className={`p-3 rounded-lg border text-left transition-all ${
                           quizDifficulty === 'medium'
-                            ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-500 text-amber-900 dark:text-amber-200 font-semibold shadow-xs'
+                            ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-500 text-amber-900 dark:text-amber-200 font-semibold shadow-sm'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                         }`}
                       >
@@ -1096,7 +1096,7 @@ export const FilesView: React.FC = () => {
                         onClick={() => setQuizDifficulty('hard')}
                         className={`p-3 rounded-lg border text-left transition-all ${
                           quizDifficulty === 'hard'
-                            ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-500 text-rose-900 dark:text-rose-200 font-semibold shadow-xs'
+                            ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-500 text-rose-900 dark:text-rose-200 font-semibold shadow-sm'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                         }`}
                       >
@@ -1239,7 +1239,7 @@ export const FilesView: React.FC = () => {
 
       {/* MODAL 3: Generate Flashcards with Custom Difficulty & Count */}
       {isFlashcardModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-5">
           <div className="w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden text-xs">
             {/* Header */}
             <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -1294,7 +1294,7 @@ export const FilesView: React.FC = () => {
                         onClick={() => setCardDifficulty('easy')}
                         className={`p-3 rounded-lg border text-left transition-all ${
                           cardDifficulty === 'easy'
-                            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold shadow-xs'
+                            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold shadow-sm'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                         }`}
                       >
@@ -1309,7 +1309,7 @@ export const FilesView: React.FC = () => {
                         onClick={() => setCardDifficulty('medium')}
                         className={`p-3 rounded-lg border text-left transition-all ${
                           cardDifficulty === 'medium'
-                            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold shadow-xs'
+                            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold shadow-sm'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                         }`}
                       >
@@ -1324,7 +1324,7 @@ export const FilesView: React.FC = () => {
                         onClick={() => setCardDifficulty('hard')}
                         className={`p-3 rounded-lg border text-left transition-all ${
                           cardDifficulty === 'hard'
-                            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold shadow-xs'
+                            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold shadow-sm'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                         }`}
                       >
@@ -1450,7 +1450,7 @@ export const FilesView: React.FC = () => {
 
       {/* MODAL 0: Upload Document with Course Selection */}
       {isUploadModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
           <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
@@ -1597,7 +1597,7 @@ export const FilesView: React.FC = () => {
 
       {/* MODAL 4: Paste Lecture Text / Transcript */}
       {isPasteTextModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-5">
           <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
@@ -1682,7 +1682,7 @@ export const FilesView: React.FC = () => {
 
       {/* MODAL 5: YouTube Captions Modal */}
       {isYoutubeModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-5">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-5">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
@@ -1762,7 +1762,7 @@ export const FilesView: React.FC = () => {
 
       {/* Google Drive Link Modal (Smart Hybrid Storage: 0 MB in Database) */}
       {isGdriveModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-900 rounded-xl max-w-md w-full p-5 border border-slate-200 dark:border-slate-800 shadow-xl space-y-4 text-xs">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2">
@@ -1878,7 +1878,7 @@ export const FilesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center gap-1.5 shadow-xs"
+                  className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center gap-1.5 shadow-sm"
                 >
                   <FolderArchive className="w-3.5 h-3.5" />
                   <span>Link to Workspace</span>

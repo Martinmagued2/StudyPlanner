@@ -303,7 +303,7 @@ export const CalendarView: React.FC = () => {
                 onClick={() => setCalendarMode(mode)}
                 className={`px-3 py-1 rounded-md capitalize transition-colors ${
                   calendarMode === mode
-                    ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold'
+                    ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold'
                     : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
                 }`}
               >
@@ -322,7 +322,7 @@ export const CalendarView: React.FC = () => {
 
           <button
             onClick={() => openQuickCreate('exam')}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-xs transition-colors"
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 shadow-sm transition-colors"
           >
             <Award className="w-3.5 h-3.5" />
             <span>+ Exam</span>
@@ -378,7 +378,7 @@ export const CalendarView: React.FC = () => {
               onClick={() => setSelectedTypeFilter('all')}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
                 selectedTypeFilter === 'all'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -388,7 +388,7 @@ export const CalendarView: React.FC = () => {
               onClick={() => setSelectedTypeFilter('exam')}
               className={`px-2.5 py-1 rounded text-xs font-medium flex items-center gap-1 transition-colors ${
                 selectedTypeFilter === 'exam'
-                  ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 shadow-xs font-semibold'
+                  ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 shadow-sm font-semibold'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -399,7 +399,7 @@ export const CalendarView: React.FC = () => {
               onClick={() => setSelectedTypeFilter('assignment')}
               className={`px-2.5 py-1 rounded text-xs font-medium flex items-center gap-1 transition-colors ${
                 selectedTypeFilter === 'assignment'
-                  ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200 shadow-xs font-semibold'
+                  ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200 shadow-sm font-semibold'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -410,7 +410,7 @@ export const CalendarView: React.FC = () => {
               onClick={() => setSelectedTypeFilter('event')}
               className={`px-2.5 py-1 rounded text-xs font-medium flex items-center gap-1 transition-colors ${
                 selectedTypeFilter === 'event'
-                  ? 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200 shadow-xs font-semibold'
+                  ? 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200 shadow-sm font-semibold'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -472,7 +472,7 @@ export const CalendarView: React.FC = () => {
                 >
                   <div className="flex items-center justify-between mb-0.5">
                     <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-mono font-medium ${
-                      isToday ? 'bg-blue-600 text-white font-bold shadow-xs' : 'text-slate-700 dark:text-slate-300'
+                      isToday ? 'bg-blue-600 text-white font-bold shadow-sm' : 'text-slate-700 dark:text-slate-300'
                     }`}>
                       {dayNum}
                     </span>
@@ -492,7 +492,7 @@ export const CalendarView: React.FC = () => {
                         <div
                           key={item.id}
                           onClick={() => setSelectedItemDetail(item)}
-                          className={`p-1 sm:p-1.5 rounded-md text-[11px] font-medium border cursor-pointer hover:shadow-xs transition-all leading-tight truncate flex items-center gap-1.5 ${badgeStyle.bg}`}
+                          className={`p-1 sm:p-1.5 rounded-md text-[11px] font-medium border cursor-pointer hover:shadow-sm transition-all leading-tight truncate flex items-center gap-1.5 ${badgeStyle.bg}`}
                           title={`${item.title} ${item.startTime ? `(${item.startTime})` : ''} - Click for details`}
                         >
                           <span
@@ -544,7 +544,7 @@ export const CalendarView: React.FC = () => {
                       <div
                         key={item.id}
                         onClick={() => setSelectedItemDetail(item)}
-                        className={`p-1 rounded text-[10px] font-semibold border cursor-pointer hover:shadow-xs transition-colors truncate flex items-center gap-1 ${badgeStyle.bg}`}
+                        className={`p-1 rounded text-[10px] font-semibold border cursor-pointer hover:shadow-sm transition-colors truncate flex items-center gap-1 ${badgeStyle.bg}`}
                         title={item.title}
                       >
                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: course?.color || '#3b82f6' }} />
@@ -858,7 +858,7 @@ export const CalendarView: React.FC = () => {
                       setSelectedItemDetail(null);
                       setActiveView('exams');
                     }}
-                    className="px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-600 text-white font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+                    className="px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-600 text-white font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>Open Spaced Revision</span>
@@ -871,7 +871,7 @@ export const CalendarView: React.FC = () => {
                       setSelectedItemDetail(null);
                       setActiveView('assignments');
                     }}
-                    className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+                    className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
                   >
                     <FileCheck2 className="w-3.5 h-3.5" />
                     <span>Open Assignment</span>

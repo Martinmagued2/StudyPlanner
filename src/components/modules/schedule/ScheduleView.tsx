@@ -485,7 +485,7 @@ export const ScheduleView: React.FC = () => {
                 setIsAiDrawerOpen(true);
               }
             }}
-            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 transition-colors shadow-xs"
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 transition-colors shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Class Slot</span>
@@ -493,7 +493,7 @@ export const ScheduleView: React.FC = () => {
 
           <button
             onClick={handlePrint}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 transition-colors shadow-xs"
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 transition-colors shadow-sm"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Print Timetable</span>
@@ -787,7 +787,7 @@ export const ScheduleView: React.FC = () => {
                                 backgroundColor: `${slot.courseColor}18`,
                                 borderColor: `${slot.courseColor}60`
                               }}
-                              className="absolute top-2 bottom-2 p-2 rounded-lg border shadow-xs cursor-pointer hover:shadow-md hover:scale-[1.01] transition-all flex flex-col justify-between overflow-hidden group z-10"
+                              className="absolute top-2 bottom-2 p-2 rounded-lg border shadow-sm cursor-pointer hover:shadow-md hover:scale-[1.01] transition-all flex flex-col justify-between overflow-hidden group z-10"
                             >
                               <div className="flex items-center justify-between gap-1 overflow-hidden">
                                 <span

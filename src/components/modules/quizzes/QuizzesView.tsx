@@ -383,7 +383,7 @@ export const QuizzesView: React.FC = () => {
                         onClick={() => handleSelectOption(currentQ.id, opt)}
                         className={`w-full p-3 rounded-lg border text-left text-xs font-medium transition-colors ${
                           currentSelected === opt
-                            ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-transparent shadow-xs'
+                            ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-transparent shadow-sm'
                             : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
                         }`}
                       >
@@ -402,7 +402,7 @@ export const QuizzesView: React.FC = () => {
                         onClick={() => handleSelectOption(currentQ.id, opt)}
                         className={`p-4 rounded-lg border text-center text-xs font-bold transition-colors ${
                           currentSelected === opt
-                            ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-transparent shadow-xs'
+                            ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-transparent shadow-sm'
                             : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
                         }`}
                       >

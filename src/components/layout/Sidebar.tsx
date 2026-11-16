@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp, ActiveView } from '../../context/AppContext';
-import { getLiveScheduleStatus } from '../../services/academicScheduleService';
+import { getLiveScheduleStatus, toLocalDateKey } from '../../services/academicScheduleService';
 import {
   LayoutDashboard,
   BookOpen,
@@ -58,12 +58,16 @@ export const Sidebar: React.FC = () => {
     setIsSyncModalOpen,
     setIsDbModalOpen,
     isDatabaseConfigured,
-    logout
+    logout,
+    activeAcademicMode,
+    isClassSuspendedOnDate
   } = useApp();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const liveSchedule = getLiveScheduleStatus(courses);
+  const todayKey = toLocalDateKey(new Date());
+  const sidebarSuspended = activeAcademicMode !== 'normal' || isClassSuspendedOnDate(todayKey).suspended;
+  const liveSchedule = getLiveScheduleStatus(sidebarSuspended ? [] : courses, new Date(), isClassSuspendedOnDate);
   const selectedCourse = courses.find(c => c.id === selectedCourseId);
 
   // Live Counts
@@ -102,7 +106,7 @@ export const Sidebar: React.FC = () => {
       {isMobileNavOpen && (
         <div className="fixed inset-0 z-50 flex md:hidden animate-in fade-in duration-200">
           <div
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setIsMobileNavOpen(false)}
           />
           <div className="relative w-72 max-w-[85vw] h-full bg-white dark:bg-slate-900 shadow-2xl flex flex-col z-10 animate-in slide-in-from-left duration-200 border-r border-slate-200 dark:border-slate-800">
@@ -136,7 +140,7 @@ export const Sidebar: React.FC = () => {
                   setIsMobileNavOpen(false);
                   openQuickCreate('task');
                 }}
-                className="py-1.5 px-2 text-xs font-semibold rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 flex items-center justify-center gap-1.5 shadow-2xs"
+                className="py-1.5 px-2 text-xs font-semibold rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 flex items-center justify-center gap-1.5 shadow-sm"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>+ Create</span>
@@ -176,7 +180,7 @@ export const Sidebar: React.FC = () => {
                     }}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
                       isActive
-                        ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold shadow-2xs'
+                        ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold shadow-sm'
                         : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
@@ -523,14 +527,22 @@ export const Sidebar: React.FC = () => {
           ) : (
             <div>
               <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-1">
-                <span className="font-medium">Academic Workspace</span>
+                <span className="font-medium">
+                  {activeAcademicMode === 'midterm'
+                    ? 'Midterm Week Mode'
+                    : activeAcademicMode === 'final'
+                    ? 'Final Exam Mode'
+                    : 'Academic Workspace'}
+                </span>
                 <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">{courses.length} enrolled</span>
               </div>
               <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                All Courses Active
+                {sidebarSuspended ? 'Regular Classes Suspended' : 'All Courses Active'}
               </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                No classes scheduled for today
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                {sidebarSuspended
+                  ? (isClassSuspendedOnDate(todayKey).reason || 'Exam / Holiday mode active')
+                  : 'No classes scheduled today'}
               </div>
             </div>
           )}

@@ -6,6 +6,7 @@ import { MobileNav } from './components/layout/MobileNav';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { QuickCreateModal } from './components/layout/QuickCreateModal';
 import { GlobalAiDrawer } from './components/modules/ai/GlobalAiDrawer';
+import { VoiceAssistantOverlay } from './components/modules/ai/VoiceAssistantOverlay';
 import { AuthModal } from './components/modules/auth/AuthModal';
 import { DailyBriefingModal } from './components/modules/today/DailyBriefingModal';
 import { DeviceSyncModal } from './components/common/DeviceSyncModal';
@@ -112,6 +113,7 @@ const WorkspaceContent: React.FC = () => {
       <CommandPalette />
       <QuickCreateModal />
       <GlobalAiDrawer />
+      <VoiceAssistantOverlay />
       <DailyBriefingModal
         isOpen={isBriefingOpen}
         onClose={() => setIsBriefingOpen(false)}

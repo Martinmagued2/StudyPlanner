@@ -150,7 +150,7 @@ export const TasksView: React.FC = () => {
             onClick={() => setFilterMode(mode)}
             className={`px-3 py-1.5 rounded-md font-medium capitalize transition-colors ${
               filterMode === mode
-                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold shadow-xs'
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold shadow-sm'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >

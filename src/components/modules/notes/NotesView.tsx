@@ -1,2523 +1,1660 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useApp } from '../../../context/AppContext';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   FileText,
   Plus,
-  Pin,
+  Search,
+  Star,
   Trash2,
+  RotateCcw,
+  Folder,
+  FolderPlus,
+  ChevronRight,
+  ChevronDown,
+  Archive,
+  Copy,
   Sparkles,
   Download,
-  Copy,
+  FileDown,
+  FileCode2,
+  ClipboardCopy,
   Check,
-  Search,
-  BookOpen,
-  Table as TableIcon,
   Tag,
-  Bold,
-  Italic,
-  Underline as UnderlineIcon,
-  Strikethrough,
-  Code,
-  List,
-  ListOrdered,
-  CheckSquare,
-  Quote,
-  Minus,
-  Link as LinkIcon,
-  Printer,
-  Layers,
-  Undo,
-  Redo,
-  Highlighter,
-  Palette,
+  BookOpen,
+  LayoutTemplate,
+  Wand2,
+  Brain,
+  ListChecks,
+  HelpCircle,
+  Loader2,
   X,
-  FileCode,
-  CheckCheck,
-  Sigma,
-  Eye,
-  Edit3
+  ArrowUpDown,
+  Clock,
+  Layers
 } from 'lucide-react';
-import { Note } from '../../../types';
-import katex from 'katex';
-import { MarkdownRenderer } from '../../common/MarkdownRenderer';
-import { queryGemini } from '../../../services/fileAiService';
+import { useApp } from '../../../context/AppContext';
+import { Note, NoteFolder, NoteBlock } from '../../../types';
+import { NotionBlockEditor } from './NotionBlockEditor';
+import {
+  createBlock,
+  blocksToHtml,
+  blocksToMarkdown,
+  parseHtmlOrMarkdownToBlocks,
+  stripHtmlTags,
+  getNoteTemplates,
+  NoteTemplate
+} from '../../../services/noteBlockService';
+import {
+  buildFormattedNoteDocumentHtml,
+  exportNoteToPdf,
+  exportNoteToHtml,
+  exportNoteToMarkdown,
+  copyNoteFormatted,
+  PdfExportOptions
+} from '../../../services/noteExportService';
+import { queryGemini, generateQuizFromFiles } from '../../../services/fileAiService';
 
-// Import Prism and core programming languages
-import Prism from 'prismjs';
-import 'prismjs/components/prism-clike';
-import 'prismjs/components/prism-c';
-import 'prismjs/components/prism-cpp';
-import 'prismjs/components/prism-java';
-import 'prismjs/components/prism-python';
-import 'prismjs/components/prism-typescript';
-import 'prismjs/components/prism-sql';
-import 'prismjs/components/prism-bash';
+type NavFilter = 'all' | 'favorites' | 'recent' | 'archived' | 'trash' | { folderId: string };
+type SortMode = 'updated' | 'created' | 'title';
 
 export const NotesView: React.FC = () => {
   const {
     notes,
     courses,
+    files,
+    flashcardDecks,
     addNote,
     updateNote,
+    duplicateNote,
     moveNoteToTrash,
+    restoreNote,
+    deleteNotePermanently,
+    noteFolders,
+    addNoteFolder,
+    updateNoteFolder,
+    deleteNoteFolder,
+    notesNavTarget,
+    setNotesNavTarget,
+    addFlashcard,
     addFlashcardDeck,
-    addFlashcard
+    addQuiz,
+    setActiveView
   } = useApp();
 
-  const activeNotes = notes.filter(n => !n.inTrash);
-  const [selectedNoteId, setSelectedNoteId] = useState<string>(activeNotes[0]?.id || '');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [navFilter, setNavFilter] = useState<NavFilter>('all');
   const [selectedCourseFilter, setSelectedCourseFilter] = useState<string>('all');
-  const [saveStatus, setSaveStatus] = useState<string>('All changes saved');
-
-  // AI Modal State
-  const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [aiToolType, setAiToolType] = useState<string>('');
-  const [aiGeneratedText, setAiGeneratedText] = useState<string>('');
-  const [copied, setCopied] = useState(false);
-
-  // Link insert modal
-  const [linkModalOpen, setLinkModalOpen] = useState(false);
-  const [linkUrl, setLinkUrl] = useState('');
-  const [linkText, setLinkText] = useState('');
-
-  // Add Tag input
-  const [isAddingTag, setIsAddingTag] = useState(false);
-  const [newTagInput, setNewTagInput] = useState('');
-
-  // Text / Highlight Color picker
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showHighlightPicker, setShowHighlightPicker] = useState(false);
-  const [colorPickerPos, setColorPickerPos] = useState<{ top: number; left: number } | null>(null);
-  const [highlightPickerPos, setHighlightPickerPos] = useState<{ top: number; left: number } | null>(null);
-
-  // Dynamic Table Inserter State
-  const [tableModalOpen, setTableModalOpen] = useState(false);
-  const [tableRows, setTableRows] = useState(3);
-  const [tableCols, setTableCols] = useState(3);
-  const [tableHasHeader, setTableHasHeader] = useState(true);
-  const [hoverGridRow, setHoverGridRow] = useState(0);
-  const [hoverGridCol, setHoverGridCol] = useState(0);
-
-  // LaTeX Mathematical Equation Inserter State
-  const [latexModalOpen, setLatexModalOpen] = useState(false);
-  const [latexFormula, setLatexFormula] = useState('\\int_{a}^{b} f(x) \\, dx = F(b) - F(a)');
-  const [latexDisplayMode, setLatexDisplayMode] = useState(true);
-  const [isPreviewMode, setIsPreviewMode] = useState(false);
-
-  // Generic Code Block Builder Modal
-  const [codeModalOpen, setCodeModalOpen] = useState(false);
-  const [codeLanguage, setCodeLanguage] = useState<string>('cpp');
-  const [codeContent, setCodeContent] = useState<string>(
-`#include <iostream>
-#include <vector>
-
-using namespace std;
-
-// AVL Node representation
-template <typename T>
-class AVLNode {
-public:
-    T data;
-    int height;
-    AVLNode* left;
-    AVLNode* right;
-
-    AVLNode(T val) : data(val), height(1), left(nullptr), right(nullptr) {}
-};
-
-int main() {
-    vector<int> keys = {15, 27, 49, 82};
-    cout << "Binary search tree in C++" << endl;
-    return 0;
-}`
-  );
-
-  const sampleSnippets: Record<string, string> = {
-    cpp: `#include <iostream>
-#include <vector>
-#include <algorithm>
-
-using namespace std;
-
-// AVL / Red-Black Tree rotation
-int main() {
-    vector<int> numbers = {10, 25, 40, 65, 80};
-    auto it = lower_bound(numbers.begin(), numbers.end(), 40);
-    cout << "Found target index: " << distance(numbers.begin(), it) << endl;
-    return 0;
-}`,
-    java: `import java.util.*;
-
-public class CourseworkSolver {
-    public static void main(String[] args) {
-        List<String> modules = Arrays.asList("CS302", "AI401", "MATH210");
-        for (String mod : modules) {
-            System.out.println("Processing academic module: " + mod);
-        }
-    }
-}`,
-    python: `def binary_search(arr: list[int], target: int) -> int:
-    low, high = 0, len(arr) - 1
-    while low <= high:
-        mid = (low + high) // 2
-        if arr[mid] == target:
-            return mid
-        elif arr[mid] < target:
-            low = mid + 1
-        else:
-            high = mid - 1
-    return -1
-
-# Test algorithm
-print("Index found:", binary_search([2, 5, 8, 12, 16, 23, 38], 16))`,
-    c: `#include <stdio.h>
-#include <stdlib.h>
-
-int main() {
-    int* ptr = (int*)malloc(sizeof(int) * 5);
-    if (ptr == NULL) {
-        fprintf(stderr, "Allocation failed\\n");
-        return 1;
-    }
-    printf("Dynamic memory allocated successfully.\\n");
-    free(ptr);
-    return 0;
-}`,
-    typescript: `interface Student {
-  id: string;
-  name: string;
-  gpa: number;
-}
-
-const calculateHonorRoll = (students: Student[]): Student[] => {
-  return students.filter(s => s.gpa >= 3.8);
-};`,
-    sql: `SELECT 
-    courses.code, 
-    courses.name, 
-    COUNT(assignments.id) AS pending_assignments
-FROM courses
-LEFT JOIN assignments ON assignments.course_id = courses.id
-WHERE courses.is_archived = FALSE
-GROUP BY courses.id, courses.code, courses.name
-ORDER BY pending_assignments DESC;`,
-    bash: `#!/bin/bash
-# Compile and run academic solution
-echo "Compiling C++ test suite..."
-g++ -O2 -std=c++17 solution.cpp -o solution
-./solution`
-  };
-
-  const editorRef = useRef<HTMLDivElement>(null);
-  const lastLoadedNoteId = useRef<string | null>(null);
-  const activeEditingNoteIdRef = useRef<string | null>(null);
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const savedRange = useRef<Range | null>(null);
-
-  const selectedNote = activeNotes.find(n => n.id === selectedNoteId) || activeNotes[0];
-
-  // Selection preservation
-  const saveSelection = () => {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
-        savedRange.current = range.cloneRange();
-      }
-    }
-  };
-
-  const restoreSelection = () => {
-    const sel = window.getSelection();
-    if (sel && savedRange.current) {
-      sel.removeAllRanges();
-      sel.addRange(savedRange.current);
-    }
-  };
-
-  useEffect(() => {
-    if (!selectedNoteId && activeNotes.length > 0) {
-      setSelectedNoteId(activeNotes[0].id);
-    }
-  }, [activeNotes, selectedNoteId]);
-
-  // Helper to safely render LaTeX formula with KaTeX
-  const renderFormulaWithKatex = (eq: string, displayMode: boolean) => {
-    try {
-      return katex.renderToString(eq.trim(), { displayMode, throwOnError: false });
-    } catch {
-      return eq;
-    }
-  };
-
-  // Convert raw pasted text / markdown / LaTeX into clean, styled academic HTML
-  const parseAcademicTextToHtml = (raw: string): string => {
-    if (!raw) return '<p><br></p>';
-    let text = raw.replace(/\r\n/g, '\n');
-
-    // 0. Protect & format Fenced Code Blocks & ASCII Diagrams (``` or ``)
-    const codeBlocks: string[] = [];
-    text = text.replace(/(?:```|``)([a-zA-Z0-9_-]*)\n([\s\S]*?)(?:```|``)/g, (_, lang, code) => {
-      const isDiagram =
-        code.includes('^') ||
-        code.includes('| \\') ||
-        code.includes('| /') ||
-        code.includes('+--') ||
-        code.includes('-->') ||
-        code.includes('<--') ||
-        code.includes('---+');
-      const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
-      const badge = isDiagram
-        ? `<div class="text-[10px] uppercase font-bold tracking-wider text-emerald-400 mb-1 flex items-center gap-1.5 font-mono">📐 Conceptual Diagram / Architecture</div>`
-        : lang
-        ? `<div class="text-[10px] uppercase font-bold tracking-wider text-blue-400 mb-1 font-mono">${lang}</div>`
-        : '';
-      const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      const html = `<div class="my-4 p-4 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 shadow-sm" contenteditable="false">${badge}<pre class="font-mono text-xs leading-relaxed ${
-        isDiagram ? 'text-emerald-300' : 'text-slate-200'
-      } overflow-x-auto whitespace-pre select-all"><code>${escaped}</code></pre></div>`;
-      codeBlocks.push(html);
-      return placeholder;
-    });
-
-    // 1. Process display LaTeX math $$...$$
-    const mathBlocks: string[] = [];
-    text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, eq) => {
-      const rendered = renderFormulaWithKatex(eq, true);
-      const placeholder = `__MATH_BLOCK_${mathBlocks.length}__`;
-      mathBlocks.push(
-        `<div class="katex-display-block my-3 py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 overflow-x-auto text-center font-sans" contenteditable="false" data-latex="${encodeURIComponent(
-          eq
-        )}">${rendered}</div>`
-      );
-      return placeholder;
-    });
-
-    // 2. Process inline LaTeX math $...$
-    text = text.replace(/\$([^\$\n\r]+?)\$/g, (_, eq) => {
-      const rendered = renderFormulaWithKatex(eq, false);
-      return `<span class="katex-inline-formula px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 mx-0.5" contenteditable="false" data-latex="${encodeURIComponent(
-        eq
-      )}">${rendered}</span>`;
-    });
-
-    // 3. Process Markdown tables
-    const tableRegex = /((?:^|\n)\|[^\n]+\|\n\|[-:\s|]+\|\n(?:\|[^\n]+\|\n?)+)/g;
-    text = text.replace(tableRegex, match => {
-      const lines = match
-        .trim()
-        .split('\n')
-        .map(l => l.trim())
-        .filter(Boolean);
-      if (lines.length < 2) return match;
-      const headerCols = lines[0]
-        .split('|')
-        .slice(1, -1)
-        .map(c => c.trim());
-      const rowLines = lines.slice(2);
-
-      let tableHtml = `<div class="overflow-x-auto my-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs"><table class="w-full text-xs sm:text-sm text-left border-collapse"><thead class="bg-slate-100 dark:bg-slate-800/90 text-slate-900 dark:text-slate-100 font-bold border-b border-slate-200 dark:border-slate-700"><tr>`;
-      headerCols.forEach(col => {
-        tableHtml += `<th class="px-3.5 py-2.5">${col}</th>`;
-      });
-      tableHtml += `</tr></thead><tbody class="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900">`;
-
-      rowLines.forEach((row, rIdx) => {
-        const cells = row
-          .split('|')
-          .slice(1, -1)
-          .map(c => c.trim());
-        tableHtml += `<tr class="${rIdx % 2 === 1 ? 'bg-slate-50/50 dark:bg-slate-800/20' : ''}">`;
-        cells.forEach(cell => {
-          tableHtml += `<td class="px-3.5 py-2 text-slate-800 dark:text-slate-200">${cell}</td>`;
-        });
-        tableHtml += `</tr>`;
-      });
-      tableHtml += `</tbody></table></div>`;
-      return tableHtml;
-    });
-
-    // 4. Main Lecture Study Guide Banner: e.g. "🎓 Detailed Lecture Explanation..."
-    text = text.replace(
-      /^(?:#\s*)?(🎓[^\n]+)$/m,
-      '<div class="my-4 pb-3 border-b border-slate-200 dark:border-slate-800"><div class="text-[11px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 mb-1 flex items-center gap-1.5 font-mono"><span>🎓</span> Study Guide & Lecture Explanation</div><h1 class="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight leading-snug">$1</h1></div>'
-    );
-
-    // 5. Horizontal Dividers: --- or ***
-    text = text.replace(
-      /^(?:---|---|\*\*\*|___)$/gm,
-      '<div class="my-6 flex items-center gap-3"><div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div><div class="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700"></div><div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div></div>'
-    );
-
-    // 6. Exam Traps & Common Pitfalls
-    text = text.replace(
-      /^(?:>\s*)?(?:⚠️\s*)?(Trap\s*\d*|Exam Trap|Common Pitfall|Pitfall)\s*:\s*(.*)$/gim,
-      '<div class="my-3 p-3.5 rounded-xl border border-amber-300 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 text-xs sm:text-sm leading-relaxed"><div class="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-200 uppercase tracking-wide text-xs mb-1">⚠️ $1</div><div class="text-slate-800 dark:text-slate-200 pl-4">$2</div></div>'
-    );
-    text = text.replace(
-      /^(?:>\s*)?(?:✅\s*)?(Correction|Reality)\s*:\s*(.*)$/gim,
-      '<div class="my-2 p-2.5 rounded-lg border border-emerald-300 dark:border-emerald-900/50 bg-emerald-50/60 dark:bg-emerald-950/20 text-xs sm:text-sm pl-4"><strong class="text-emerald-700 dark:text-emerald-300 font-bold uppercase tracking-wide text-[10px] block mb-0.5">$1</strong><span class="text-slate-800 dark:text-slate-200">$2</span></div>'
-    );
-
-    // 7. Practical Scenarios & Illustrations
-    text = text.replace(
-      /^(?:>\s*)?(?:💡\s*)?(Scenario|Worked Example|Case Study)\s*:\s*(.*)$/gim,
-      '<div class="my-3 p-3.5 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/25 text-xs sm:text-sm leading-relaxed"><div class="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-200 uppercase tracking-wide text-xs mb-1">💡 $1</div><div class="text-slate-800 dark:text-slate-200 pl-4">$2</div></div>'
-    );
-
-    // 8. Checklists: [ ] and [x]
-    text = text.replace(
-      /^(?:[-*]\s*)?\[ \]\s*(.*)$/gim,
-      '<div class="flex items-start gap-2.5 my-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-800 text-xs sm:text-sm text-slate-800 dark:text-slate-200"><span class="w-4 h-4 mt-0.5 rounded border border-slate-400 dark:border-slate-500 bg-white dark:bg-slate-800 shrink-0 inline-block"></span><span class="flex-1 leading-relaxed">$1</span></div>'
-    );
-    text = text.replace(
-      /^(?:[-*]\s*)?\[[xX]\]\s*(.*)$/gim,
-      '<div class="flex items-start gap-2.5 my-2 p-2 rounded-lg bg-slate-50/50 dark:bg-slate-800/30 border border-slate-200/40 dark:border-slate-800 text-xs sm:text-sm text-slate-400 dark:text-slate-500 line-through"><span class="w-4 h-4 mt-0.5 rounded bg-blue-600 text-white shrink-0 flex items-center justify-center text-[10px]">✓</span><span class="flex-1 leading-relaxed">$1</span></div>'
-    );
-
-    // 9. Numbered Major Sections: 1. Executive Summary...
-    text = text.replace(
-      /^(?:##\s*)?(\d+)\.\s+([A-Z][^\n]{3,80})$/gm,
-      '<div class="mt-7 mb-3 flex items-center gap-3 pt-2"><span class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-extrabold text-xs flex items-center justify-center shadow-xs shrink-0">$1</span><h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">$2</h2></div>'
-    );
-
-    // 10. Lettered Subsections: A. The Three Basic...
-    text = text.replace(
-      /^(?:###\s*)?([A-Z])\.\s+([A-Z][^\n]{3,80})$/gm,
-      '<div class="mt-5 mb-2.5 flex items-center gap-2"><span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 font-mono">$1</span><h3 class="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">$2</h3></div>'
-    );
-
-    // 11. Context Callout Header: e.g. "Why This Matters in CSE441"
-    text = text.replace(
-      /^(Why This Matters[^\n]*)$/gim,
-      '<div class="my-3 px-3.5 py-2 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-300 font-bold text-xs uppercase tracking-wide flex items-center gap-2">💡 $1</div>'
-    );
-
-    // 12. Phase Milestones: e.g. "Phase 1: Early Phases (Inception & Planning)"
-    text = text.replace(
-      /^(Phase\s+\d+:\s+[^\n]+)$/gim,
-      '<div class="mt-4 mb-2 p-2.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 font-bold text-xs sm:text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2"><span class="px-2 py-0.5 rounded bg-blue-600 text-white font-mono text-[10px] font-bold">PHASE</span><span>$1</span></div>'
-    );
-
-    // 13. Definition Pairs: e.g. "Definition: ...", "Structural Context: ...", "Deliverable: ..."
-    text = text.replace(
-      /^([A-Z][A-Za-z0-9 /()&-]{2,35})\s*:\s*(.+)$/gm,
-      '<div class="my-1.5 pl-3 border-l-2 border-blue-400/40 dark:border-blue-600/40 text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed"><strong class="font-bold text-slate-900 dark:text-slate-100">$1:</strong> $2</div>'
-    );
-
-    // 14. Single Category Header Line Ending with Colon: e.g. "Functional Structure:"
-    text = text.replace(
-      /^([A-Z][A-Za-z0-9 /()&-]{2,35}):\s*$/gm,
-      '<div class="mt-3 mb-1 text-xs sm:text-sm font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider font-mono flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span><span>$1</span></div>'
-    );
-
-    // 15. Process Markdown bold and italics
-    text = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-900 dark:text-slate-100">$1</strong>');
-    text = text.replace(/__([^_]+)__/g, '<strong class="font-bold text-slate-900 dark:text-slate-100">$1</strong>');
-    text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
-
-    // 16. Process inline code
-    text = text.replace(
-      /`([^`]+)`/g,
-      '<code class="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-xs text-blue-600 dark:text-blue-400 font-semibold">$1</code>'
-    );
-
-    // 17. Headings
-    text = text.replace(
-      /^### (.*$)/gim,
-      '<h3 class="text-base font-bold mt-4 mb-1 text-slate-900 dark:text-slate-100">$1</h3>'
-    );
-    text = text.replace(
-      /^## (.*$)/gim,
-      '<h2 class="text-lg font-bold mt-5 mb-2 text-slate-900 dark:text-slate-100">$1</h2>'
-    );
-    text = text.replace(
-      /^# (.*$)/gim,
-      '<h1 class="text-xl sm:text-2xl font-black mt-4 mb-3 pb-2 border-b border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100">$1</h1>'
-    );
-
-    // 18. Blockquotes
-    text = text.replace(
-      /^\> (.*$)/gim,
-      '<blockquote class="border-l-4 border-blue-500 pl-3.5 py-1.5 my-2.5 bg-blue-50/50 dark:bg-blue-950/25 italic text-slate-700 dark:text-slate-300 rounded-r text-xs sm:text-sm leading-relaxed">$1</blockquote>'
-    );
-
-    // 19. Bullet lists
-    text = text.replace(
-      /^[-*] (.*$)/gim,
-      '<li class="ml-4 list-disc text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 my-1">$1</li>'
-    );
-
-    // 20. Numbered lists
-    text = text.replace(
-      /^\d+\. (.*$)/gim,
-      '<li class="ml-4 list-decimal text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 my-1">$1</li>'
-    );
-
-    // 21. Safe paragraph block parsing (avoid illegal nesting of div inside p)
-    const rawBlocks = text.split(/\n\n+/);
-    const formattedBlocks = rawBlocks.map(b => {
-      const trimmed = b.trim();
-      if (!trimmed) return '';
-      if (
-        trimmed.startsWith('<div') ||
-        trimmed.startsWith('<h') ||
-        trimmed.startsWith('<table') ||
-        trimmed.startsWith('<ul') ||
-        trimmed.startsWith('<ol') ||
-        trimmed.startsWith('<blockquote') ||
-        trimmed.startsWith('__CODE_BLOCK_') ||
-        trimmed.startsWith('__MATH_BLOCK_')
-      ) {
-        return trimmed;
-      }
-      return `<p class="mb-3 leading-relaxed text-xs sm:text-sm text-slate-800 dark:text-slate-200">${trimmed.replace(/\n/g, '<br/>')}</p>`;
-    });
-
-    let result = formattedBlocks.filter(Boolean).join('\n');
-
-    // 22. Restore protected Code and Math blocks
-    codeBlocks.forEach((bHtml, idx) => {
-      result = result.replace(`__CODE_BLOCK_${idx}__`, bHtml);
-    });
-    mathBlocks.forEach((mHtml, idx) => {
-      result = result.replace(`__MATH_BLOCK_${idx}__`, mHtml);
-    });
-
-    return result;
-  };
-
-  // Normalize initial content to clean HTML
-  const normalizeToHtml = (content: string) => {
-    if (!content) return '<p><br></p>';
-    // If it starts with standard HTML wrappers and doesn't contain raw markdown constructs, return as is
-    if (
-      (content.startsWith('<div') || content.startsWith('<p>') || content.startsWith('<h1') || content.startsWith('<h2')) &&
-      !content.includes('---') &&
-      !content.includes('## ') &&
-      !content.includes('🎓') &&
-      !content.includes('Trap 1:') &&
-      !content.includes('[ ]')
-    ) {
-      return content;
-    }
-    return parseAcademicTextToHtml(content);
-  };
-
-  // Smart Clipboard Paste Handler
-  const handleEditorPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const html = e.clipboardData.getData('text/html');
-    const plainText = e.clipboardData.getData('text/plain');
-
-    const hasMarkdownOrLatex = 
-      plainText.includes('|') ||
-      plainText.includes('$') ||
-      plainText.includes('**') ||
-      plainText.includes('###') ||
-      plainText.includes('##') ||
-      plainText.includes('#') ||
-      plainText.includes('```');
-
-    let toInsert = '';
-    if (hasMarkdownOrLatex || !html) {
-      toInsert = parseAcademicTextToHtml(plainText);
-    } else {
-      toInsert = parseAcademicTextToHtml(html);
-    }
-
-    restoreSelection();
-    document.execCommand('insertHTML', false, toInsert);
-    handleEditorInput();
-  };
-
-  // Insert LaTeX Equation into active note
-  const insertLatexEquation = (formula: string, displayMode: boolean) => {
-    restoreSelection();
-    try {
-      const renderedHtml = renderFormulaWithKatex(formula, displayMode);
-      const equationNodeHtml = displayMode
-        ? `<div class="katex-display-block my-3 py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 overflow-x-auto text-center font-sans" contenteditable="false" data-latex="${encodeURIComponent(formula)}">${renderedHtml}</div><p><br></p>`
-        : `<span class="katex-inline-formula px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 mx-0.5" contenteditable="false" data-latex="${encodeURIComponent(formula)}">${renderedHtml}</span>&nbsp;`;
-
-      document.execCommand('insertHTML', false, equationNodeHtml);
-      handleEditorInput();
-      setLatexModalOpen(false);
-    } catch (e) {
-      console.error('KaTeX equation insert error:', e);
-    }
-  };
-
-  // 1. When switching to a different note ID, decide preview vs edit mode cleanly
-  useEffect(() => {
-    if (!selectedNote) return;
-    if (activeEditingNoteIdRef.current !== selectedNote.id) {
-      activeEditingNoteIdRef.current = selectedNote.id;
-      const trimmed = (selectedNote.content || '').trim();
-      const isRawMarkdownGuide =
-        !trimmed.startsWith('<') &&
-        (trimmed.startsWith('# ') || trimmed.includes('\n## ') || trimmed.includes('\n---\n'));
-      setIsPreviewMode(isRawMarkdownGuide);
-      lastLoadedNoteId.current = null;
-    }
-  }, [selectedNote?.id]);
-
-  // 2. Always synchronize editor DOM whenever note ID changes or user switches from Preview -> Edit
-  useEffect(() => {
-    if (!selectedNote || isPreviewMode) return;
-    if (editorRef.current) {
-      const targetLoadKey = `${selectedNote.id}_edit`;
-      if (lastLoadedNoteId.current !== targetLoadKey) {
-        editorRef.current.innerHTML = normalizeToHtml(selectedNote.content || '<p><br></p>');
-        lastLoadedNoteId.current = targetLoadKey;
-      } else if (document.activeElement !== editorRef.current) {
-        // Keep in sync if remote/external update arrived while editor is not focused
-        const normalized = normalizeToHtml(selectedNote.content || '<p><br></p>');
-        if (editorRef.current.innerHTML !== normalized) {
-          editorRef.current.innerHTML = normalized;
-        }
-      }
-    }
-  }, [selectedNote?.id, selectedNote?.content, isPreviewMode]);
-
-  const filteredNotes = activeNotes.filter(n => {
-    const matchesCourse = selectedCourseFilter === 'all' || n.courseId === selectedCourseFilter;
-    if (!matchesCourse) return false;
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      n.title.toLowerCase().includes(q) ||
-      n.content.toLowerCase().includes(q) ||
-      n.tags.some(t => t.toLowerCase().includes(q))
-    );
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortMode, setSortMode] = useState<SortMode>('updated');
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(() => {
+    const active = notes.filter(n => !n.inTrash && !n.isArchived);
+    return active[0]?.id || null;
   });
 
-  const handleTitleChange = (newTitle: string) => {
-    if (!selectedNote) return;
-    const targetId = selectedNote.id;
-    updateNote(targetId, { title: newTitle });
-    triggerAutosave();
-  };
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [saveStatus, setSaveStatus] = useState<'saving' | 'saved'>('saved');
 
-  const handleEditorInput = () => {
-    if (!selectedNote || !editorRef.current) return;
-    const targetId = selectedNote.id;
-    const htmlContent = editorRef.current.innerHTML;
-    lastLoadedNoteId.current = `${targetId}_edit`;
-    updateNote(targetId, { content: htmlContent });
-    triggerAutosave();
-  };
+  // Modals & Drawers
+  const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderParentId, setNewFolderParentId] = useState<string>('');
+  const [newFolderIcon, setNewFolderIcon] = useState('📁');
 
-  const triggerAutosave = () => {
-    setSaveStatus('Saving changes...');
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    saveTimeoutRef.current = setTimeout(() => {
-      setSaveStatus('All changes saved');
-    }, 550);
-  };
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
+  const [aiTopicPrompt, setAiTopicPrompt] = useState('');
+  const [aiSourceFileId, setAiSourceFileId] = useState('');
+  const [aiTargetCourseId, setAiTargetCourseId] = useState('');
+  const [aiBusyLabel, setAiBusyLabel] = useState<string | null>(null);
+  const [aiToast, setAiToast] = useState<{ message: string; type: 'success' | 'info' | 'error'; actionLabel?: string; onAction?: () => void } | null>(null);
 
-  const handleCreateNewNote = () => {
-    const defaultCourseId = selectedCourseFilter !== 'all' ? selectedCourseFilter : courses[0]?.id;
-    const newNote = addNote({
-      title: 'Untitled Note',
-      content: '<p><br></p>',
-      courseId: defaultCourseId,
-      tags: ['notes'],
-      pinned: false,
-      highlightedTerms: []
-    });
-    setIsPreviewMode(false);
-    lastLoadedNoteId.current = null;
-    activeEditingNoteIdRef.current = newNote.id;
-    setSelectedNoteId(newNote.id);
-    setSaveStatus('All changes saved');
-    setTimeout(() => {
-      if (editorRef.current) {
-        editorRef.current.innerHTML = '<p><br></p>';
-        editorRef.current.focus();
-      }
-    }, 30);
-  };
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [pdfOptions, setPdfOptions] = useState<PdfExportOptions>({
+    paperSize: 'A4',
+    includePageNumbers: true,
+    includeHeaderFooter: true,
+    includeCoverAndMeta: true
+  });
+  const [copiedHtmlFeedback, setCopiedHtmlFeedback] = useState(false);
 
-  // Document Metrics
-  const rawText = editorRef.current?.innerText || selectedNote?.content?.replace(/<[^>]*>/g, '') || '';
-  const wordCount = rawText.trim() ? rawText.trim().split(/\s+/).length : 0;
-  const charCount = rawText.length;
-  const readingTime = Math.max(1, Math.ceil(wordCount / 200));
+  const [newTagInput, setNewTagInput] = useState('');
+  const [showSidebarMobile, setShowSidebarMobile] = useState(false);
 
-  // Rock-solid Inline Color & Highlight Applicator
-  const applyDirectStyle = (styles: { color?: string; backgroundColor?: string; isClearHighlight?: boolean }) => {
-    restoreSelection();
-    let sel = window.getSelection();
-    let range: Range | null = null;
-    
-    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-      range = sel.getRangeAt(0);
-    } else if (savedRange.current && !savedRange.current.collapsed) {
-      range = savedRange.current;
-    } else if (sel && sel.rangeCount > 0) {
-      range = sel.getRangeAt(0);
-    } else if (savedRange.current) {
-      range = savedRange.current;
-    }
-
-    if (!range && editorRef.current) {
-      editorRef.current.focus();
-      const newSel = window.getSelection();
-      if (newSel && newSel.rangeCount > 0) {
-        range = newSel.getRangeAt(0);
+  // Consume external navigation target (e.g. from Voice Assistant or Dashboard)
+  useEffect(() => {
+    if (!notesNavTarget) return;
+    if (notesNavTarget.noteId) {
+      const target = notes.find(n => n.id === notesNavTarget.noteId);
+      if (target) {
+        if (target.inTrash) setNavFilter('trash');
+        else if (target.isArchived) setNavFilter('archived');
+        else setNavFilter('all');
+        setSelectedNoteId(target.id);
       }
     }
-
-    if (!range) return;
-
-    if (editorRef.current && !editorRef.current.contains(range.commonAncestorContainer)) {
-      return;
+    if (notesNavTarget.searchQuery !== undefined) {
+      setSearchQuery(notesNavTarget.searchQuery);
+      setNavFilter('all');
     }
+    if (notesNavTarget.courseId !== undefined) {
+      setSelectedCourseFilter(notesNavTarget.courseId || 'all');
+    }
+    setNotesNavTarget(null);
+  }, [notesNavTarget, notes, setNotesNavTarget]);
 
-    // Clear highlight mode
-    if (styles.isClearHighlight) {
-      let node: Node | null = range.commonAncestorContainer;
-      while (node && node !== editorRef.current) {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          const el = node as HTMLElement;
-          if (el.tagName === 'MARK' || el.style.backgroundColor) {
-            el.style.backgroundColor = 'transparent';
-            el.style.removeProperty('background-color');
-            if (el.tagName === 'MARK') {
-              const span = document.createElement('span');
-              span.innerHTML = el.innerHTML;
-              el.parentNode?.replaceChild(span, el);
-            }
-            break;
+  // Helper: collect folder + descendant folder IDs
+  const getFolderDescendantIds = useCallback(
+    (folderId: string): Set<string> => {
+      const ids = new Set<string>([folderId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        noteFolders.forEach(f => {
+          if (f.parentId && ids.has(f.parentId) && !ids.has(f.id)) {
+            ids.add(f.id);
+            changed = true;
           }
-        }
-        node = node.parentNode;
+        });
       }
-      handleEditorInput();
-      setShowHighlightPicker(false);
-      return;
-    }
+      return ids;
+    },
+    [noteFolders]
+  );
 
-    try {
-      if (range.collapsed) {
-        // Collapsed cursor: create a styled span with a zero-width space
-        const span = document.createElement(styles.backgroundColor ? 'mark' : 'span');
-        if (styles.color) {
-          span.style.color = styles.color;
-          span.style.setProperty('color', styles.color, 'important');
-        }
-        if (styles.backgroundColor && styles.backgroundColor !== 'transparent') {
-          span.style.backgroundColor = styles.backgroundColor;
-          span.style.setProperty('background-color', styles.backgroundColor, 'important');
-          span.style.color = 'inherit';
-          span.style.padding = '1px 3px';
-          span.style.borderRadius = '3px';
-        }
-        span.appendChild(document.createTextNode('\u200B'));
-        range.insertNode(span);
-        const newRange = document.createRange();
-        newRange.setStart(span.firstChild!, 1);
-        newRange.setEnd(span.firstChild!, 1);
-        sel?.removeAllRanges();
-        sel?.addRange(newRange);
-        savedRange.current = newRange.cloneRange();
-      } else {
-        // Non-collapsed: wrap extracted contents in styled span or mark
-        const span = document.createElement(styles.backgroundColor ? 'mark' : 'span');
-        if (styles.color) {
-          span.style.color = styles.color;
-          span.style.setProperty('color', styles.color, 'important');
-        }
-        if (styles.backgroundColor && styles.backgroundColor !== 'transparent') {
-          span.style.backgroundColor = styles.backgroundColor;
-          span.style.setProperty('background-color', styles.backgroundColor, 'important');
-          span.style.color = 'inherit';
-          span.style.padding = '1px 3px';
-          span.style.borderRadius = '3px';
-        }
-        span.appendChild(range.extractContents());
-        range.insertNode(span);
+  // Compute searchable plain text for a note
+  const getNoteSearchText = useCallback((note: Note): string => {
+    const blocksText = (note.blocks || [])
+      .map(b => `${stripHtmlTags(b.content)} ${stripHtmlTags(b.props?.toggleBody || '')}`)
+      .join(' ');
+    return `${note.title} ${note.tags.join(' ')} ${blocksText} ${stripHtmlTags(note.content)}`.toLowerCase();
+  }, []);
 
-        const newRange = document.createRange();
-        newRange.selectNodeContents(span);
-        sel?.removeAllRanges();
-        sel?.addRange(newRange);
-        savedRange.current = newRange.cloneRange();
-      }
-    } catch (e) {
-      console.warn('DOM style wrapping error:', e);
-    }
+  // All distinct tags across non-trashed notes
+  const allTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    notes
+      .filter(n => !n.inTrash)
+      .forEach(n => {
+        (n.tags || []).forEach(t => {
+          counts.set(t, (counts.get(t) || 0) + 1);
+        });
+      });
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [notes]);
 
-    handleEditorInput();
-  };
-
-  // Direct In-Place Formatting Execution
-  const formatDoc = (cmd: string, val: string | undefined = undefined) => {
-    restoreSelection();
-    try {
-      (document as any).execCommand('styleWithCSS', false, 'true');
-      document.execCommand(cmd, false, val);
-    } catch {}
-    handleEditorInput();
-  };
-
-  // Text Color Applicator
-  const applyTextColor = (color: string) => {
-    restoreSelection();
-    try {
-      (document as any).execCommand('styleWithCSS', false, 'true');
-      document.execCommand('foreColor', false, color);
-    } catch {}
-    applyDirectStyle({ color });
-    setShowColorPicker(false);
-  };
-
-  // Highlighter Applicator
-  const applyHighlight = (color: string) => {
-    restoreSelection();
-    try {
-      (document as any).execCommand('styleWithCSS', false, 'true');
-      if (color === 'transparent') {
-        document.execCommand('removeFormat', false, undefined);
-      } else {
-        document.execCommand('hiliteColor', false, color) || document.execCommand('backColor', false, color);
-      }
-    } catch {}
-
-    if (color === 'transparent') {
-      applyDirectStyle({ isClearHighlight: true });
-    } else {
-      applyDirectStyle({ backgroundColor: color });
-    }
-    setShowHighlightPicker(false);
-  };
-
-  // Blockquote Formatter (Clean & Guaranteed to format)
-  const applyBlockquote = () => {
-    restoreSelection();
-    let success = false;
-    try {
-      success = document.execCommand('formatBlock', false, 'blockquote');
-    } catch {}
-    if (!success) {
-      try {
-        success = document.execCommand('formatBlock', false, '<blockquote>');
-      } catch {}
-    }
-
-    if (!success) {
-      const sel = window.getSelection();
-      let range: Range | null = null;
-      if (sel && sel.rangeCount > 0) {
-        range = sel.getRangeAt(0);
-      } else if (savedRange.current) {
-        range = savedRange.current;
-      }
-
-      if (range && editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
-        let parent: Node | null = range.commonAncestorContainer;
-        let existingBq: HTMLElement | null = null;
-        while (parent && parent !== editorRef.current) {
-          if (parent.nodeName === 'BLOCKQUOTE') {
-            existingBq = parent as HTMLElement;
-            break;
-          }
-          parent = parent.parentNode;
-        }
-
-        if (existingBq) {
-          const p = document.createElement('p');
-          p.innerHTML = existingBq.innerHTML;
-          existingBq.parentNode?.replaceChild(p, existingBq);
-        } else if (!range.collapsed) {
-          const bq = document.createElement('blockquote');
-          bq.appendChild(range.extractContents());
-          range.insertNode(bq);
-        } else {
-          const bq = document.createElement('blockquote');
-          bq.innerHTML = 'Quote text or citation...';
-          range.insertNode(bq);
-          const p = document.createElement('p');
-          p.innerHTML = '<br>';
-          bq.after(p);
-        }
-      }
-    }
-    handleEditorInput();
-  };
-
-  // Custom Notion / Word Block Insertions
-  const insertCalloutBox = () => {
-    restoreSelection();
-    const calloutHtml = `
-      <div class="my-4 p-3.5 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/70 dark:bg-blue-950/30 text-slate-800 dark:text-slate-200 flex items-start gap-2.5">
-        <span class="text-base select-none">💡</span>
-        <div><strong>Key Takeaway:</strong> Write critical theorem, formula or definition here.</div>
-      </div>
-      <p><br></p>
-    `;
-    document.execCommand('insertHTML', false, calloutHtml);
-    handleEditorInput();
-  };
-
-  const insertChecklistTask = () => {
-    restoreSelection();
-    const taskHtml = `
-      <div class="flex items-center gap-2 my-1">
-        <input type="checkbox" class="rounded accent-blue-600 w-4 h-4 cursor-pointer" />
-        <span>Actionable coursework or revision task</span>
-      </div>
-      <p><br></p>
-    `;
-    document.execCommand('insertHTML', false, taskHtml);
-    handleEditorInput();
-  };
-
-  // Dynamic Table Inserter (Custom Rows x Columns with Header toggle)
-  const insertDynamicTable = (rows: number, cols: number, hasHeader: boolean) => {
-    restoreSelection();
-    const rCount = Math.max(1, Math.min(25, Number(rows) || 3));
-    const cCount = Math.max(1, Math.min(12, Number(cols) || 3));
-
-    let theadHtml = '';
-    if (hasHeader) {
-      const ths = Array.from({ length: cCount }, (_, i) =>
-        `<th class="border border-slate-300 dark:border-slate-700 p-2.5 text-left font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100">Column ${i + 1}</th>`
-      ).join('');
-      theadHtml = `<thead><tr>${ths}</tr></thead>`;
-    }
-
-    const tbodyRows = Array.from({ length: rCount }, (_, r) => {
-      const tds = Array.from({ length: cCount }, (_, c) =>
-        `<td class="border border-slate-300 dark:border-slate-700 p-2.5 text-slate-800 dark:text-slate-200">Data ${r + 1}, ${c + 1}</td>`
-      ).join('');
-      return `<tr>${tds}</tr>`;
-    }).join('');
-
-    const fullTableHtml = `
-      <div class="my-4 overflow-x-auto not-prose">
-        <table class="w-full border-collapse border border-slate-300 dark:border-slate-700 text-xs sm:text-sm">
-          ${theadHtml}
-          <tbody>${tbodyRows}</tbody>
-        </table>
-      </div>
-      <p><br></p>
-    `;
-
-    document.execCommand('insertHTML', false, fullTableHtml);
-    handleEditorInput();
-    setTableModalOpen(false);
-  };
-
-  // Generic Prism Code Block Inserter
-  const insertCodeBlock = () => {
-    restoreSelection();
-    let highlightedHtml = '';
-    try {
-      const grammar = Prism.languages[codeLanguage] || Prism.languages.clike;
-      highlightedHtml = Prism.highlight(codeContent, grammar, codeLanguage);
-    } catch {
-      highlightedHtml = codeContent
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-    }
-
-    const languageNames: Record<string, string> = {
-      cpp: 'C++',
-      java: 'Java',
-      python: 'Python',
-      c: 'C',
-      typescript: 'TypeScript',
-      javascript: 'JavaScript',
-      sql: 'SQL',
-      bash: 'Bash / Shell'
+  // Counts
+  const counts = useMemo(() => {
+    const active = notes.filter(n => !n.inTrash && !n.isArchived);
+    const fav = active.filter(n => n.isFavorite || n.pinned);
+    const archived = notes.filter(n => !n.inTrash && n.isArchived);
+    const trash = notes.filter(n => n.inTrash);
+    return {
+      all: active.length,
+      favorites: fav.length,
+      recent: active.length,
+      archived: archived.length,
+      trash: trash.length
     };
+  }, [notes]);
 
-    const blockHtml = `
-      <div class="code-block-container my-4 rounded-xl border border-slate-700 bg-slate-950 overflow-hidden shadow-md text-left" contenteditable="false">
-        <div class="code-header flex items-center justify-between px-3.5 py-2 bg-slate-900 border-b border-slate-800 text-[11px] font-mono select-none">
-          <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-rose-500/80 inline-block"></span>
-            <span class="w-2.5 h-2.5 rounded-full bg-amber-500/80 inline-block"></span>
-            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500/80 inline-block"></span>
-            <span class="text-blue-400 font-bold uppercase tracking-wider ml-1">${languageNames[codeLanguage] || codeLanguage}</span>
-          </div>
-          <button type="button" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-sans font-medium transition-colors" onclick="navigator.clipboard.writeText(this.closest('.code-block-container').querySelector('code').innerText); this.innerText='Copied!'; setTimeout(()=>this.innerText='Copy', 1500)">
-            Copy Code
-          </button>
-        </div>
-        <pre class="p-4 text-xs font-mono leading-relaxed overflow-x-auto text-slate-100 bg-slate-950" contenteditable="true" spellcheck="false"><code class="language-${codeLanguage}">${highlightedHtml}</code></pre>
-      </div>
-      <p><br></p>
-    `;
+  // Filtered & sorted notes list
+  const filteredNotes = useMemo(() => {
+    let list = notes.slice();
 
-    document.execCommand('insertHTML', false, blockHtml);
-    handleEditorInput();
-    setCodeModalOpen(false);
+    if (navFilter === 'trash') {
+      list = list.filter(n => n.inTrash);
+    } else if (navFilter === 'archived') {
+      list = list.filter(n => !n.inTrash && n.isArchived);
+    } else if (navFilter === 'favorites') {
+      list = list.filter(n => !n.inTrash && !n.isArchived && (n.isFavorite || n.pinned));
+    } else if (typeof navFilter === 'object' && navFilter.folderId) {
+      const folderSet = getFolderDescendantIds(navFilter.folderId);
+      list = list.filter(n => !n.inTrash && !n.isArchived && n.folderId && folderSet.has(n.folderId));
+    } else {
+      // 'all' or 'recent'
+      list = list.filter(n => !n.inTrash && !n.isArchived);
+    }
+
+    if (selectedCourseFilter !== 'all') {
+      list = list.filter(n => n.courseId === selectedCourseFilter);
+    }
+
+    if (selectedTagFilter) {
+      list = list.filter(n => (n.tags || []).includes(selectedTagFilter));
+    }
+
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(n => getNoteSearchText(n).includes(q));
+    }
+
+    list.sort((a, b) => {
+      // Pin / Favorite priority inside normal views
+      if (navFilter === 'all') {
+        const aFav = a.isFavorite || a.pinned ? 1 : 0;
+        const bFav = b.isFavorite || b.pinned ? 1 : 0;
+        if (aFav !== bFav) return bFav - aFav;
+      }
+      if (sortMode === 'title') {
+        return (a.title || '').localeCompare(b.title || '');
+      }
+      if (sortMode === 'created') {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+
+    return list;
+  }, [notes, navFilter, selectedCourseFilter, selectedTagFilter, searchQuery, sortMode, getFolderDescendantIds, getNoteSearchText]);
+
+  const selectedNote = useMemo(
+    () => notes.find(n => n.id === selectedNoteId) || filteredNotes[0] || null,
+    [notes, selectedNoteId, filteredNotes]
+  );
+
+  // Keep selectedNoteId aligned if current selection vanished
+  useEffect(() => {
+    if (selectedNoteId && !notes.some(n => n.id === selectedNoteId)) {
+      setSelectedNoteId(filteredNotes[0]?.id || null);
+    }
+  }, [notes, selectedNoteId, filteredNotes]);
+
+  const selectedCourse = useMemo(
+    () => (selectedNote?.courseId ? courses.find(c => c.id === selectedNote.courseId) : undefined),
+    [selectedNote, courses]
+  );
+
+  const showToast = (
+    message: string,
+    type: 'success' | 'info' | 'error' = 'success',
+    actionLabel?: string,
+    onAction?: () => void
+  ) => {
+    setAiToast({ message, type, actionLabel, onAction });
+    setTimeout(() => {
+      setAiToast(prev => (prev?.message === message ? null : prev));
+    }, 6500);
   };
 
-  const handleInsertLink = (e: React.FormEvent) => {
+  const handleCreateBlankNote = (overrides?: Partial<Omit<Note, 'id' | 'createdAt' | 'updatedAt' | 'inTrash'>>) => {
+    const activeFolderId = typeof navFilter === 'object' ? navFilter.folderId : undefined;
+    const starterBlocks = overrides?.blocks || [createBlock('paragraph', '')];
+    const created = addNote({
+      title: overrides?.title || 'Untitled Note',
+      courseId: overrides?.courseId || (selectedCourseFilter !== 'all' ? selectedCourseFilter : courses[0]?.id || ''),
+      folderId: overrides?.folderId !== undefined ? overrides.folderId : activeFolderId,
+      tags: overrides?.tags || [],
+      content: overrides?.content || blocksToHtml(starterBlocks),
+      blocks: starterBlocks,
+      icon: overrides?.icon || '📝',
+      coverImage: overrides?.coverImage,
+      pinned: false,
+      highlightedTerms: [],
+      isFavorite: false,
+      isArchived: false
+    });
+    if (navFilter === 'trash' || navFilter === 'archived') {
+      setNavFilter('all');
+    }
+    setSelectedNoteId(created.id);
+    setShowSidebarMobile(false);
+  };
+
+  const handleApplyTemplate = (tpl: NoteTemplate) => {
+    const clonedBlocks = tpl.blocks.map(b => createBlock(b.type, b.content, b.props ? { ...b.props } : undefined, b.indent || 0));
+    handleCreateBlankNote({
+      title: tpl.id === 'blank' ? 'Untitled Note' : tpl.name,
+      icon: tpl.icon,
+      coverImage: tpl.coverImage,
+      tags: [...tpl.tags],
+      blocks: clonedBlocks,
+      content: blocksToHtml(clonedBlocks)
+    });
+    setIsTemplateModalOpen(false);
+  };
+
+  const handleSaveNote = useCallback(
+    (noteId: string, updates: Partial<Note>) => {
+      updateNote(noteId, updates);
+    },
+    [updateNote]
+  );
+
+  const handleCreateFolder = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!linkUrl) return;
-    restoreSelection();
-    const linkHtml = `<a href="${linkUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400 underline font-medium hover:text-blue-800">${linkText || linkUrl}</a> `;
-    document.execCommand('insertHTML', false, linkHtml);
-    handleEditorInput();
-    setLinkUrl('');
-    setLinkText('');
-    setLinkModalOpen(false);
+    if (!newFolderName.trim()) return;
+    const created = addNoteFolder({
+      name: newFolderName.trim(),
+      parentId: newFolderParentId || undefined,
+      icon: newFolderIcon || '📁'
+    });
+    if (newFolderParentId) {
+      setExpandedFolders(prev => ({ ...prev, [newFolderParentId]: true }));
+    }
+    setNavFilter({ folderId: created.id });
+    setNewFolderName('');
+    setNewFolderParentId('');
+    setIsNewFolderOpen(false);
   };
 
-  const handleAddTag = (e: React.FormEvent) => {
+  const getPlainTextFromNote = (note: Note): string => {
+    if (note.blocks && note.blocks.length > 0) {
+      return blocksToMarkdown(note.blocks, note.title);
+    }
+    return `${note.title}\n\n${stripHtmlTags(note.content)}`;
+  };
+
+  // ==================== AI NOTES STUDIO ACTIONS ====================
+  const handleAiGenerateNewNote = async () => {
+    const sourceFile = files.find(f => f.id === aiSourceFileId);
+    const topic = aiTopicPrompt.trim();
+    if (!topic && !sourceFile) {
+      showToast('Enter a topic or pick an uploaded study file first.', 'info');
+      return;
+    }
+
+    setAiBusyLabel('Generating structured Notion notes...');
+    try {
+      const targetCourse = courses.find(c => c.id === (aiTargetCourseId || selectedCourseFilter));
+      const materialText = sourceFile
+        ? (sourceFile.rawText || sourceFile.chunks.map(c => c.content).join('\n')).slice(0, 12000)
+        : '';
+
+      const prompt = sourceFile
+        ? `Create comprehensive, university-level structured study notes in Markdown from the uploaded material "${sourceFile.name}"${topic ? ` focusing on: ${topic}` : ''}.\nCourse context: ${targetCourse ? `${targetCourse.code} ${targetCourse.name}` : 'General University Course'}.\nInclude:\n- Clear H1/H2/H3 headings\n- Concise definitions and key concepts\n- Callouts using > [!TIP] or > [!WARNING] for exam pitfalls\n- Concrete examples or code blocks / LaTeX equations ($...$ or $$...$$) where appropriate\n- A Markdown comparison table if comparing concepts\n- An actionable revision checklist using - [ ]\n\nMaterial:\n${materialText}`
+        : `Create comprehensive, university-level structured study notes in Markdown on the topic: "${topic}".\nCourse context: ${targetCourse ? `${targetCourse.code} ${targetCourse.name}` : 'General University Course'}.\nInclude:\n- Clear H2/H3 headings\n- Intuitive explanations and formal definitions\n- Callouts using > [!TIP] or > [!WARNING] for common mistakes\n- Concrete examples, LaTeX formulas, or code snippets where relevant\n- A Markdown summary table\n- A short self-test revision checklist using - [ ]`;
+
+      const aiMd = await queryGemini(
+        prompt,
+        'You are an expert academic professor who produces clean, scannable Notion-ready Markdown notes.'
+      );
+
+      let finalMd = aiMd;
+      if (!finalMd) {
+        // Offline / No Gemini Key deterministic academic scaffold built from real material
+        const titleLabel = topic || sourceFile?.name.replace(/\.[^/.]+$/, '') || 'Study Notes';
+        const snippet = materialText
+          ? materialText
+              .split(/\n+/)
+              .map(s => s.trim())
+              .filter(s => s.length > 25)
+              .slice(0, 6)
+              .map(s => `- ${s}`)
+              .join('\n')
+          : '- Core principle 1: Define key terminology and boundaries.\n- Core principle 2: Trace step-by-step mechanisms and examples.\n- Core principle 3: Identify edge cases and exam applications.';
+
+        finalMd = `## Overview\nStructured study notes for **${titleLabel}**${targetCourse ? ` (${targetCourse.code} — ${targetCourse.name})` : ''}.\n\n> [!TIP] Key Objective: Focus on understanding the core invariant and applying it to unseen exam scenarios.\n\n## Key Concepts & Extracted Points\n${snippet}\n\n## Summary Matrix\n| Concept | Definition | Application |\n| --- | --- | --- |\n| Fundamentals | Core rules and notation | Foundation questions |\n| Edge Cases | Boundary conditions & limits | High-weight exam problems |\n\n## Revision Checklist\n- [ ] Review main definitions without looking at notes\n- [ ] Work through 2 practice examples\n- [ ] Test recall using flashcards or a quick quiz`;
+      }
+
+      const generatedBlocks = parseHtmlOrMarkdownToBlocks(finalMd);
+      const generatedTitle = topic || (sourceFile ? `${sourceFile.name.replace(/\.[^/.]+$/, '')} — Study Notes` : 'AI Study Notes');
+      handleCreateBlankNote({
+        title: generatedTitle,
+        courseId: targetCourse?.id || '',
+        icon: '🧠',
+        tags: ['ai-generated', ...(targetCourse?.code ? [targetCourse.code.toLowerCase()] : [])],
+        blocks: generatedBlocks,
+        content: blocksToHtml(generatedBlocks)
+      });
+
+      setIsAiStudioOpen(false);
+      setAiTopicPrompt('');
+      showToast('Created structured AI study note!', 'success');
+    } finally {
+      setAiBusyLabel(null);
+    }
+  };
+
+  const handleAiTransformActiveNote = async (
+    mode: 'summarize' | 'rewrite' | 'simplify' | 'key_concepts' | 'revision_sheet' | 'auto_format'
+  ) => {
+    if (!selectedNote) return;
+    const rawText = getPlainTextFromNote(selectedNote);
+    if (stripHtmlTags(rawText).trim().length < 8) {
+      showToast('Write a bit more content in the note first so AI has material to work with.', 'info');
+      return;
+    }
+
+    setAiBusyLabel(`Running AI ${mode.replace('_', ' ')}...`);
+    try {
+      const existingBlocks: NoteBlock[] =
+        selectedNote.blocks && selectedNote.blocks.length > 0
+          ? selectedNote.blocks
+          : parseHtmlOrMarkdownToBlocks(selectedNote.content);
+
+      if (mode === 'auto_format') {
+        const reformatted = await queryGemini(
+          `Reformat and organize the following raw student note into clean, scannable Markdown with H2/H3 headings, bullet lists, > [!TIP] callouts, and - [ ] checklists without losing any facts:\n\n${rawText.slice(0, 10000)}`,
+          'Preserve all factual information while elevating structure and readability.'
+        );
+        const nextBlocks = reformatted
+          ? parseHtmlOrMarkdownToBlocks(reformatted)
+          : parseHtmlOrMarkdownToBlocks(rawText);
+        updateNote(selectedNote.id, {
+          blocks: nextBlocks,
+          content: blocksToHtml(nextBlocks)
+        });
+        showToast('Note formatting upgraded cleanly!', 'success');
+        return;
+      }
+
+      if (mode === 'summarize') {
+        const aiSummary = await queryGemini(
+          `Write a concise 3-bullet executive summary and a 1-sentence core takeaway in Markdown for these lecture notes:\n\n${rawText.slice(0, 10000)}`,
+          'Be concise, crisp, and high-yield.'
+        );
+        const cleanSummary =
+          aiSummary ||
+          `Core summary of "${selectedNote.title}": ${stripHtmlTags(rawText).slice(0, 260)}...`;
+        const summaryBlocks = parseHtmlOrMarkdownToBlocks(cleanSummary);
+        const headerCallout = createBlock(
+          'callout',
+          `<strong>AI Executive Summary:</strong> ${stripHtmlTags(summaryBlocks[0]?.content || cleanSummary)}`,
+          { calloutTone: 'info', calloutIcon: '✨' }
+        );
+        const restBlocks = summaryBlocks.slice(1, 5);
+        const nextBlocks = [headerCallout, ...restBlocks, createBlock('divider', ''), ...existingBlocks];
+        updateNote(selectedNote.id, { blocks: nextBlocks, content: blocksToHtml(nextBlocks) });
+        showToast('Inserted AI Executive Summary at the top of your note.', 'success');
+        return;
+      }
+
+      if (mode === 'rewrite' || mode === 'simplify') {
+        const instruction =
+          mode === 'rewrite'
+            ? 'Rewrite and polish these university notes for academic clarity, flow, and precision while preserving all equations, code, and concepts.'
+            : 'Simplify and explain these notes clearly as if tutoring a first-year student: keep key terms accurate, add intuitive analogies, and break long ideas into digestible bullets.';
+        const output = await queryGemini(
+          `${instruction}\nOutput clean Markdown.\n\n${rawText.slice(0, 10000)}`,
+          'You are an academic tutor writing clear Markdown notes.'
+        );
+        if (!output) {
+          showToast('Add a Gemini API key in Settings / .env to run full AI rewriting.', 'info');
+          return;
+        }
+        const nextBlocks = parseHtmlOrMarkdownToBlocks(output);
+        updateNote(selectedNote.id, { blocks: nextBlocks, content: blocksToHtml(nextBlocks) });
+        showToast(mode === 'rewrite' ? 'Note polished!' : 'Note simplified cleanly!', 'success');
+        return;
+      }
+
+      if (mode === 'key_concepts' || mode === 'revision_sheet') {
+        const prompt =
+          mode === 'key_concepts'
+            ? `Extract the 5-8 most important key concepts and definitions from these notes as a Markdown H2 "Key Concepts" section with bold terms and concise explanations:\n\n${rawText.slice(0, 10000)}`
+            : `Turn these notes into a compact Exam Revision Sheet in Markdown: include High-Yield Definitions, Common Exam Traps (> [!WARNING]), and a Self-Test Recall Checklist (- [ ]):\n\n${rawText.slice(0, 10000)}`;
+
+        const aiSection = await queryGemini(prompt, 'You are an expert university exam coach.');
+        const fallbackMd =
+          mode === 'key_concepts'
+            ? `## Key Concepts (${selectedNote.title})\n` +
+              rawText
+                .split(/[.!?]\s+/)
+                .filter(s => s.trim().length > 20)
+                .slice(0, 5)
+                .map(s => `- ${s.trim()}`)
+                .join('\n')
+            : `## Exam Revision Sheet\n> [!WARNING] Double-check edge cases, units, and formal definitions.\n- [ ] Summarize "${selectedNote.title}" from memory\n- [ ] Practice applying each concept to a sample exam question`;
+
+        const appended = parseHtmlOrMarkdownToBlocks(aiSection || fallbackMd);
+        const nextBlocks = [...existingBlocks, createBlock('divider', ''), ...appended];
+        updateNote(selectedNote.id, { blocks: nextBlocks, content: blocksToHtml(nextBlocks) });
+        showToast(
+          mode === 'key_concepts' ? 'Appended Key Concepts section.' : 'Appended Exam Revision Sheet.',
+          'success'
+        );
+      }
+    } finally {
+      setAiBusyLabel(null);
+    }
+  };
+
+  const handleGenerateFlashcardsFromNote = async () => {
+    if (!selectedNote) return;
+    const rawText = getPlainTextFromNote(selectedNote);
+    if (stripHtmlTags(rawText).trim().length < 15) {
+      showToast('Add more content to this note before generating flashcards.', 'info');
+      return;
+    }
+
+    setAiBusyLabel('Creating spaced-repetition flashcards...');
+    try {
+      const targetCourseId = selectedNote.courseId || courses[0]?.id;
+      let targetDeck = flashcardDecks.find(d => d.courseId === targetCourseId) || flashcardDecks[0];
+      if (!targetDeck) {
+        addFlashcardDeck(`${selectedNote.title} Deck`, targetCourseId, 'notes');
+      }
+      const deckId = targetDeck?.id || 'deck_cs302';
+
+      const aiJson = await queryGemini(
+        `Extract 6 high-yield study flashcards from these notes. Return ONLY valid JSON array of {"question": string, "answer": string} without markdown fences:\n\n${rawText.slice(0, 9000)}`,
+        'Return only a raw JSON array of flashcards.'
+      );
+
+      let cards: Array<{ question: string; answer: string }> = [];
+      if (aiJson) {
+        try {
+          const cleaned = aiJson.replace(/```json|```/gi, '').trim();
+          const parsed = JSON.parse(cleaned);
+          if (Array.isArray(parsed)) {
+            cards = parsed
+              .filter(c => c?.question && c?.answer)
+              .slice(0, 8)
+              .map(c => ({ question: String(c.question), answer: String(c.answer) }));
+          }
+        } catch {
+          // Fall back to structured block extraction
+        }
+      }
+
+      if (cards.length === 0) {
+        const lines = rawText
+          .split('\n')
+          .map(l => l.replace(/^#+\s*|[-*]\s*|\[\s*[x ]?\s*\]\s*/gi, '').trim())
+          .filter(l => l.length > 18);
+        cards = lines.slice(0, 5).map((line, i) => ({
+          question: `Key Concept ${i + 1} from "${selectedNote.title}": Explain "${line.slice(0, 58)}${line.length > 58 ? '...' : ''}"`,
+          answer: line
+        }));
+      }
+
+      if (cards.length === 0) {
+        showToast('Could not extract enough concepts for flashcards yet.', 'info');
+        return;
+      }
+
+      cards.forEach((c, idx) => {
+        addFlashcard({
+          deckId,
+          courseId: targetCourseId,
+          question: c.question,
+          answer: c.answer,
+          citation: { file: selectedNote.title, pageOrSlide: `Note Section ${idx + 1}` }
+        });
+      });
+
+      showToast(`Added ${cards.length} flashcards to Study Hub!`, 'success', 'Open Study Hub', () =>
+        setActiveView('studyhub')
+      );
+    } finally {
+      setAiBusyLabel(null);
+    }
+  };
+
+  const handleGenerateQuizFromNote = async () => {
+    if (!selectedNote) return;
+    const rawText = getPlainTextFromNote(selectedNote);
+    if (stripHtmlTags(rawText).trim().length < 20) {
+      showToast('Add more content to this note before generating a quiz.', 'info');
+      return;
+    }
+
+    setAiBusyLabel('Building practice quiz from note...');
+    try {
+      const virtualFile = {
+        id: `virt_${selectedNote.id}`,
+        name: `${selectedNote.title}.md`,
+        courseId: selectedNote.courseId || undefined,
+        sizeBytes: rawText.length,
+        fileType: 'md' as const,
+        status: 'indexed' as const,
+        pageCount: 1,
+        uploadedAt: new Date().toISOString(),
+        isFavorite: false,
+        rawText,
+        chunks: [{ id: 'c1', content: rawText, page: 1, hasVisuals: false }]
+      };
+      const generated = await generateQuizFromFiles([virtualFile], {
+        difficulty: 'medium',
+        questionCount: 5,
+        courseId: selectedNote.courseId || undefined,
+        title: `${selectedNote.title} — Practice Quiz`
+      });
+      addQuiz({
+        title: generated.title,
+        courseId: selectedNote.courseId || undefined,
+        difficulty: generated.difficulty,
+        questions: generated.questions
+      });
+      showToast(`Created a ${generated.questions.length}-question practice quiz!`, 'success', 'Open Quizzes', () =>
+        setActiveView('quizzes')
+      );
+    } finally {
+      setAiBusyLabel(null);
+    }
+  };
+
+  // ==================== FOLDER TREE RENDERER ====================
+  const renderFolderTree = (parentId?: string, depth: number = 0) => {
+    const children = noteFolders.filter(f => (f.parentId || undefined) === parentId);
+    if (children.length === 0) return null;
+
+    return children.map(folder => {
+      const hasKids = noteFolders.some(f => f.parentId === folder.id);
+      const isExpanded = expandedFolders[folder.id] ?? true;
+      const isSelected = typeof navFilter === 'object' && navFilter.folderId === folder.id;
+      const folderSet = getFolderDescendantIds(folder.id);
+      const folderNoteCount = notes.filter(
+        n => !n.inTrash && !n.isArchived && n.folderId && folderSet.has(n.folderId)
+      ).length;
+
+      return (
+        <div key={folder.id}>
+          <div
+            style={{ paddingLeft: `${8 + depth * 14}px` }}
+            className={`group flex items-center justify-between pr-2 py-1.5 rounded-lg text-xs cursor-pointer transition ${
+              isSelected
+                ? 'bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/50 dark:text-indigo-300'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
+            }`}
+            onClick={() => setNavFilter({ folderId: folder.id })}
+          >
+            <div className="flex items-center gap-1.5 min-w-0">
+              {hasKids ? (
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    setExpandedFolders(prev => ({ ...prev, [folder.id]: !isExpanded }));
+                  }}
+                  className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                >
+                  {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                </button>
+              ) : (
+                <span className="w-4 inline-block" />
+              )}
+              <span>{folder.icon || '📁'}</span>
+              <span className="truncate">{folder.name}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-slate-400">{folderNoteCount}</span>
+              <button
+                type="button"
+                title="Add Subfolder"
+                onClick={e => {
+                  e.stopPropagation();
+                  setNewFolderParentId(folder.id);
+                  setIsNewFolderOpen(true);
+                }}
+                className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-indigo-600"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                title="Delete Folder"
+                onClick={e => {
+                  e.stopPropagation();
+                  deleteNoteFolder(folder.id);
+                  if (isSelected) setNavFilter('all');
+                }}
+                className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-rose-600"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+          {hasKids && isExpanded && renderFolderTree(folder.id, depth + 1)}
+        </div>
+      );
+    });
+  };
+
+  // ==================== EXPORT PREVIEW HTML ====================
+  const exportPreviewHtml = useMemo(() => {
+    if (!isExportModalOpen || !selectedNote) return '';
+    return buildFormattedNoteDocumentHtml(selectedNote, selectedCourse, pdfOptions);
+  }, [isExportModalOpen, selectedNote, selectedCourse, pdfOptions]);
+
+  const handleAddTagToSelected = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedNote || !newTagInput.trim()) return;
-    const tag = newTagInput.trim().toLowerCase();
+    const tag = newTagInput.trim().toLowerCase().replace(/^#/, '');
     if (!selectedNote.tags.includes(tag)) {
       updateNote(selectedNote.id, { tags: [...selectedNote.tags, tag] });
     }
     setNewTagInput('');
-    setIsAddingTag(false);
-  };
-
-  const handleRemoveTag = (tagToRemove: string) => {
-    if (!selectedNote) return;
-    updateNote(selectedNote.id, {
-      tags: selectedNote.tags.filter(t => t !== tagToRemove)
-    });
-  };
-
-  // Export handlers
-  const exportNote = (type: 'doc' | 'html' | 'print') => {
-    if (!selectedNote) return;
-
-    if (type === 'print') {
-      const printWin = window.open('', '_blank', 'width=900,height=850');
-      if (!printWin) {
-        window.print();
-        return;
-      }
-
-      const course = courses.find(c => c.id === selectedNote.courseId);
-      const htmlBody = editorRef.current?.innerHTML || selectedNote.content;
-      const formattedDate = new Date(selectedNote.updatedAt || Date.now()).toLocaleDateString(undefined, {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-
-      const printDocumentHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>${selectedNote.title || 'Academic Note'}</title>
-  <style>
-    @page {
-      size: portrait;
-      margin: 18mm 20mm;
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      color: #0f172a;
-      background: #ffffff;
-      line-height: 1.65;
-      font-size: 13.5px;
-      margin: 0;
-      padding: 24px;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-    }
-    .doc-header {
-      border-bottom: 2px solid #0f172a;
-      padding-bottom: 14px;
-      margin-bottom: 24px;
-    }
-    .doc-title {
-      font-size: 26px;
-      font-weight: 800;
-      color: #0f172a;
-      margin: 0 0 6px 0;
-      line-height: 1.25;
-    }
-    .doc-meta {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 12px;
-      color: #64748b;
-      margin-top: 6px;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      background: #f1f5f9;
-      font-weight: 600;
-      font-size: 11px;
-      color: #334155;
-      margin-right: 6px;
-    }
-    .course-badge {
-      background: #eff6ff;
-      color: #1d4ed8;
-      border: 1px solid #bfdbfe;
-    }
-    
-    h1 { font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 24px; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
-    h2 { font-size: 16px; font-weight: 700; color: #1e293b; margin-top: 18px; margin-bottom: 8px; }
-    h3 { font-size: 14px; font-weight: 600; color: #334155; margin-top: 14px; margin-bottom: 6px; }
-    p { margin-top: 0; margin-bottom: 10px; }
-    
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 16px 0;
-      font-size: 12px;
-      page-break-inside: avoid;
-    }
-    th, td {
-      border: 1px solid #cbd5e1;
-      padding: 8px 10px;
-      text-align: left;
-      vertical-align: top;
-    }
-    th {
-      background: #f8fafc;
-      font-weight: 700;
-      color: #1e293b;
-    }
-    
-    blockquote {
-      border-left: 4px solid #2563eb;
-      background: #f0f7ff;
-      padding: 10px 14px;
-      margin: 14px 0;
-      font-style: italic;
-      color: #334155;
-      border-radius: 0 4px 4px 0;
-    }
-    
-    pre {
-      background: #0f172a;
-      color: #f8fafc;
-      padding: 12px 14px;
-      border-radius: 6px;
-      overflow-x: auto;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 11.5px;
-      line-height: 1.5;
-      page-break-inside: avoid;
-      margin: 14px 0;
-    }
-    code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 12px;
-      background: #f1f5f9;
-      padding: 1px 4px;
-      border-radius: 3px;
-    }
-    pre code {
-      background: transparent;
-      padding: 0;
-      color: inherit;
-    }
-    
-    mark {
-      padding: 1px 3px;
-      border-radius: 2px;
-    }
-
-    .code-header button { display: none !important; }
-    
-    @media print {
-      body { padding: 0; }
-    }
-  </style>
-</head>
-<body>
-  <div class="doc-header">
-    <h1 class="doc-title">${selectedNote.title || 'Untitled Academic Note'}</h1>
-    <div class="doc-meta">
-      <div>
-        ${course ? `<span class="badge course-badge">${course.code} — ${course.name}</span>` : ''}
-        ${selectedNote.tags.map(t => `<span class="badge">#${t}</span>`).join('')}
-      </div>
-      <div>
-        <span>Updated: <strong>${formattedDate}</strong></span>
-        <span style="margin-left: 10px;">• ${wordCount} words</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="doc-content">
-    ${htmlBody}
-  </div>
-
-  <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.print();
-      }, 250);
-    };
-  </script>
-</body>
-</html>`;
-
-      printWin.document.open();
-      printWin.document.write(printDocumentHtml);
-      printWin.document.close();
-      return;
-    }
-
-    const htmlBody = editorRef.current?.innerHTML || selectedNote.content;
-    const fullHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>${selectedNote.title}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; max-width: 820px; margin: 40px auto; padding: 24px; color: #1e293b; }
-    h1 { font-size: 28px; margin-bottom: 8px; color: #0f172a; }
-    h2 { font-size: 22px; margin-top: 24px; margin-bottom: 8px; color: #0f172a; }
-    h3 { font-size: 18px; margin-top: 18px; margin-bottom: 6px; color: #0f172a; }
-    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
-    th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; }
-    th { background: #f8fafc; font-weight: 600; }
-    blockquote { border-left: 4px solid #3b82f6; padding-left: 14px; margin: 16px 0; color: #475569; background: #eff6ff; padding: 10px 14px; border-radius: 4px; font-style: italic; }
-    pre { background: #0f172a; color: #f8fafc; padding: 14px; border-radius: 8px; overflow-x: auto; font-family: monospace; }
-  </style>
-</head>
-<body>
-  <h1>${selectedNote.title}</h1>
-  <p style="color: #64748b; font-size: 13px;">Exported from Nook Workspace • ${new Date().toLocaleDateString()}</p>
-  <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-  ${htmlBody}
-</body>
-</html>`;
-
-    const blob = new Blob([fullHtml], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${selectedNote.title.replace(/\s+/g, '_')}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // Turn Note into Flashcards
-  const handleTurnIntoFlashcards = () => {
-    if (!selectedNote) return;
-
-    const deckName = `${selectedNote.title} Flashcards`;
-    addFlashcardDeck(deckName, selectedNote.courseId, 'note-export');
-
-    const cleanSnippet = rawText.slice(0, 180) || 'Core takeaway from lecture.';
-    addFlashcard({
-      deckId: `deck_${Date.now()}`,
-      courseId: selectedNote.courseId,
-      question: `What is the core takeaway of "${selectedNote.title}"?`,
-      answer: cleanSnippet
-    });
-
-    setAiGeneratedText(`✅ Created Flashcard Deck: "${deckName}" with SM-2 spaced repetition in Study Hub!`);
-    setAiToolType('flashcard_export');
-    setAiModalOpen(true);
-  };
-
-  // AI Note Tools logic - Connected to Gemini AI
-  const runAiNoteTool = async (type: string) => {
-    if (!selectedNote) return;
-    setAiToolType(type);
-    setAiModalOpen(true);
-    setAiGeneratedText('⏳ Generating academic study analysis with Gemini AI...');
-
-    const noteBodyText = editorRef.current?.innerText || selectedNote.content.replace(/<[^>]+>/g, ' ');
-    const noteTitle = selectedNote.title;
-
-    let prompt = '';
-    if (type === 'summarize') {
-      prompt = `Provide an authoritative, clear Executive Summary of the following student lecture note:
-Note Title: "${noteTitle}"
-Note Content:
-${noteBodyText.slice(0, 8000)}
-
-Format with:
-- **Core Academic Focus**: What problem/concept this note addresses
-- **Key Concepts & Theoretical Frameworks**: Bullet points of key findings, terminology, and theorems
-- **Actionable Exam Takeaways**: 2-3 practical exam tips`;
-    } else if (type === 'study_guide') {
-      prompt = `Generate a comprehensive Academic Study Guide based strictly on this note:
-Note Title: "${noteTitle}"
-Content:
-${noteBodyText.slice(0, 8000)}
-
-Structure as:
-1. Core Definitions & Formal Invariants
-2. Operational Principles & Mechanisms (with LaTeX formulas where applicable, using $...$ or $$...$$)
-3. Diagnostic Self-Check Questions with Solutions`;
-    } else if (type === 'practice_questions') {
-      prompt = `Generate 3 rigorous university practice questions based on this lecture note:
-Note Title: "${noteTitle}"
-Content:
-${noteBodyText.slice(0, 8000)}
-
-Include:
-- Question 1: Multiple choice (with options A, B, C, D and marked correct answer with explanation)
-- Question 2: True/False (with detailed explanation)
-- Question 3: Conceptual short-answer question (with model solution)`;
-    }
-
-    try {
-      const geminiResult = await queryGemini(prompt, 'You are a distinguished university academic tutor.');
-      if (geminiResult && geminiResult.trim().length > 20) {
-        setAiGeneratedText(geminiResult.trim());
-        return;
-      }
-    } catch (err) {
-      console.warn('Gemini query failed, falling back to local analysis:', err);
-    }
-
-    // Local grounded fallback using note title and paragraphs
-    const paragraphs = noteBodyText.split(/\n+/).map(p => p.trim()).filter(p => p.length > 20);
-    const p1 = paragraphs[0] || 'Core theoretical principles and system models.';
-    const p2 = paragraphs[1] || 'Invariant validation and performance trade-offs.';
-
-    if (type === 'summarize') {
-      setAiGeneratedText(`### Executive Summary: ${selectedNote.title}
-
-- **Core Academic Focus:** ${selectedNote.title} covers essential theoretical frameworks and analytical methods.
-- **Key Concepts Identified:**
-  1. ${p1}
-  2. ${p2}
-- **Recommended Action:** Review the highlighted terms and practice self-testing.`);
-    } else if (type === 'study_guide') {
-      setAiGeneratedText(`### Comprehensive Study Guide: ${selectedNote.title}
-
-#### 1. Terminology & Formal Definitions
-- **Foundational Thesis:** ${p1}
-- **Operational Mechanisms:** ${p2}
-
-#### 2. Diagnostic Self-Assessment
-1. How does ${selectedNote.title} behave under edge-case conditions?
-2. What are the major pitfalls to avoid on the final exam regarding this topic?`);
-    } else {
-      setAiGeneratedText(`### Practice Questions: ${selectedNote.title}
-
-1. **[Multiple Choice]** Regarding "${selectedNote.title}", which of the following is accurate?
-   - A) ${p1} (Correct)
-   - B) Bypasses all standard invariant checks (Incorrect)
-   - C) Requires unbounded quadratic latency (Incorrect)
-
-2. **[Short Answer]** Explain how the concepts in "${selectedNote.title}" relate to: "${p2.slice(0, 100)}..."`);
-    }
-  };
-
-  const applyAiContent = (mode: 'append' | 'replace') => {
-    if (!editorRef.current || !selectedNote) return;
-    const formattedHtml = `<div class="p-4 my-4 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80">
-      <h3 class="font-bold text-sm mb-2 text-blue-600 dark:text-blue-400">✨ AI Generated Study Analysis:</h3>
-      <p class="whitespace-pre-wrap text-xs leading-relaxed">${aiGeneratedText}</p>
-    </div>`;
-
-    if (mode === 'append') {
-      editorRef.current.innerHTML += formattedHtml;
-    } else {
-      editorRef.current.innerHTML = formattedHtml;
-    }
-    handleEditorInput();
-    setAiModalOpen(false);
   };
 
   return (
-    <div className="flex h-full min-h-[calc(100vh-52px)] bg-slate-50 dark:bg-slate-950 font-sans">
-      {/* Left Sidebar: Notes Navigator */}
-      <div className="w-64 sm:w-72 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col shrink-0">
-        {/* Sidebar Header */}
-        <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-bold text-xs text-slate-900 dark:text-slate-100">
-              <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <span>Notes & Documents</span>
+    <div className="h-[calc(100vh-4rem)] flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden">
+      {/* Toast Notification */}
+      {aiToast && (
+        <div
+          className={`fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl border text-xs font-medium transition-all ${
+            aiToast.type === 'error'
+              ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-200 dark:border-rose-800'
+              : 'bg-white text-slate-800 border-slate-200 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-700'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-indigo-500 shrink-0" />
+          <span>{aiToast.message}</span>
+          {aiToast.actionLabel && aiToast.onAction && (
+            <button
+              type="button"
+              onClick={() => {
+                aiToast.onAction?.();
+                setAiToast(null);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-semibold"
+            >
+              {aiToast.actionLabel}
+            </button>
+          )}
+          <button type="button" onClick={() => setAiToast(null)} className="text-slate-400 hover:text-slate-700">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Main 3-Pane Notion Workspace */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* PANE 1: Library / Folders / Views */}
+        <aside
+          className={`${
+            showSidebarMobile ? 'flex fixed inset-y-0 left-0 z-40' : 'hidden lg:flex'
+          } w-60 shrink-0 flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 overflow-y-auto`}
+        >
+          <div className="p-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center">
+                <FileText className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">Notion Notes</h2>
+                <p className="text-[10px] text-slate-400">Blocks • Folders • PDF</p>
+              </div>
             </div>
             <button
-              onClick={handleCreateNewNote}
-              className="px-2 py-1 text-xs font-semibold rounded bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1 transition-colors shadow-xs"
-              title="New Note"
+              type="button"
+              onClick={() => setShowSidebarMobile(false)}
+              className="lg:hidden p-1 text-slate-400 hover:text-slate-700"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>New</span>
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Search Bar */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search notes..."
-              className="w-full pl-8 pr-2.5 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
-            />
+          <div className="p-2.5 space-y-1.5">
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleCreateBlankNote()}
+                className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition"
+              >
+                <Plus className="w-3.5 h-3.5" /> New Note
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(true)}
+                title="Create from Template"
+                className="px-2.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-medium"
+              >
+                <LayoutTemplate className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsAiStudioOpen(true)}
+              className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-sm transition"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> AI Generate Notes
+            </button>
           </div>
 
-          {/* Course Filter Dropdown */}
-          <select
-            value={selectedCourseFilter}
-            onChange={e => setSelectedCourseFilter(e.target.value)}
-            className="w-full p-1 text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
-          >
-            <option value="all">All Courses ({activeNotes.length})</option>
-            {courses.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.code} — {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Notes List */}
-        <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 p-1.5 space-y-0.5">
-          {filteredNotes.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-400 italic">
-              No notes found. Click "+ New" above to write your first note.
-            </div>
-          ) : (
-            filteredNotes.map(n => {
-              const isSelected = n.id === selectedNote?.id;
-              const course = courses.find(c => c.id === n.courseId);
-              const previewText = n.content.replace(/<[^>]*>/g, '').trim() || 'Empty document...';
-
+          {/* Core Views */}
+          <div className="px-2.5 py-1 space-y-0.5">
+            {(
+              [
+                { id: 'all', label: 'All Notes', icon: Layers, count: counts.all },
+                { id: 'favorites', label: 'Favorites', icon: Star, count: counts.favorites },
+                { id: 'recent', label: 'Recent', icon: Clock, count: counts.recent },
+                { id: 'archived', label: 'Archived', icon: Archive, count: counts.archived },
+                { id: 'trash', label: 'Trash', icon: Trash2, count: counts.trash }
+              ] as const
+            ).map(item => {
+              const Icon = item.icon;
+              const active = navFilter === item.id;
               return (
-                <div
-                  key={n.id}
-                  onClick={() => setSelectedNoteId(n.id)}
-                  className={`p-3 rounded-lg cursor-pointer transition-all space-y-1 ${
-                    isSelected
-                      ? 'bg-slate-100 dark:bg-slate-800/90 shadow-xs'
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setNavFilter(item.id);
+                    setSelectedTagFilter(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition ${
+                    active
+                      ? 'bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/50 dark:text-indigo-300'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-1">
-                    <h3 className={`text-xs font-semibold truncate ${isSelected ? 'text-slate-900 dark:text-slate-100 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
-                      {n.title || 'Untitled Note'}
-                    </h3>
-                    {n.pinned && <Pin className="w-3 h-3 text-amber-600 fill-amber-600 shrink-0" />}
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
-                    {previewText}
-                  </p>
-
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
-                    <span className="font-mono">
-                      {new Date(n.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                    </span>
-                    {course && (
-                      <span
-                        className="px-1.5 py-0.2 rounded font-semibold truncate max-w-[100px]"
-                        style={{ backgroundColor: `${course.color}20`, color: course.color }}
-                      >
-                        {course.code}
-                      </span>
-                    )}
-                  </div>
-                </div>
+                  <span className="flex items-center gap-2">
+                    <Icon className="w-3.5 h-3.5" />
+                    {item.label}
+                  </span>
+                  <span className="text-[10px] text-slate-400">{item.count}</span>
+                </button>
               );
-            })
-          )}
-        </div>
-      </div>
+            })}
+          </div>
 
-      {/* Main Living Document Workspace (Word / Notion Live WYSIWYG) */}
-      {selectedNote ? (
-        <div className="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-slate-950 overflow-hidden">
-          {/* Top Document Status & Meta Ribbon */}
-          <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2 flex-wrap">
+          {/* Folders Tree */}
+          <div className="px-2.5 pt-3 pb-2 border-t border-slate-100 dark:border-slate-800 mt-2">
+            <div className="flex items-center justify-between px-1.5 mb-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Folders</span>
               <button
-                onClick={() => updateNote(selectedNote.id, { pinned: !selectedNote.pinned })}
-                className={`p-1.5 rounded transition-colors ${
-                  selectedNote.pinned
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                    : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-                }`}
-                title={selectedNote.pinned ? 'Unpin note' : 'Pin note to top'}
+                type="button"
+                onClick={() => {
+                  setNewFolderParentId('');
+                  setIsNewFolderOpen(true);
+                }}
+                title="New Folder"
+                className="p-1 text-slate-400 hover:text-indigo-600 rounded"
               >
-                <Pin className="w-3.5 h-3.5" />
+                <FolderPlus className="w-3.5 h-3.5" />
               </button>
+            </div>
+            {noteFolders.length === 0 ? (
+              <p className="text-[11px] text-slate-400 px-2 py-1">No folders yet.</p>
+            ) : (
+              <div className="space-y-0.5">{renderFolderTree(undefined, 0)}</div>
+            )}
+          </div>
 
-              {/* Course Selector Dropdown */}
-              <select
-                value={selectedNote.courseId || ''}
-                onChange={e => updateNote(selectedNote.id, { courseId: e.target.value })}
-                className="py-1 px-2 text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+          {/* Course Filters */}
+          <div className="px-2.5 pt-3 pb-2 border-t border-slate-100 dark:border-slate-800">
+            <span className="block px-1.5 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Courses
+            </span>
+            <div className="space-y-0.5">
+              <button
+                type="button"
+                onClick={() => setSelectedCourseFilter('all')}
+                className={`w-full text-left px-2.5 py-1 rounded-lg text-xs transition ${
+                  selectedCourseFilter === 'all'
+                    ? 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                }`}
               >
-                <option value="">No Course Tag</option>
-                {courses.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.code} — {c.name}
-                  </option>
+                All Courses
+              </button>
+              {courses
+                .filter(c => !c.isArchived)
+                .map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setSelectedCourseFilter(c.id)}
+                    className={`w-full flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs transition ${
+                      selectedCourseFilter === c.id
+                        ? 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                    <span className="truncate">{c.code || c.name}</span>
+                  </button>
                 ))}
-              </select>
+            </div>
+          </div>
 
-              <span className="text-[11px] text-slate-400 font-mono hidden sm:inline flex items-center gap-1">
-                <Check className="w-3 h-3 text-emerald-600" />
-                <span>{saveStatus}</span>
+          {/* Tags */}
+          {allTags.length > 0 && (
+            <div className="px-3 pt-3 pb-4 border-t border-slate-100 dark:border-slate-800">
+              <span className="block mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Tags
               </span>
+              <div className="flex flex-wrap gap-1.5">
+                {allTags.slice(0, 14).map(([tag, count]) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => setSelectedTagFilter(prev => (prev === tag ? null : tag))}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition ${
+                      selectedTagFilter === tag
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    #{tag} ({count})
+                  </button>
+                ))}
+              </div>
             </div>
+          )}
+        </aside>
 
-            {/* Document Action Tools */}
-            <div className="flex items-center gap-1.5">
+        {/* PANE 2: Note Cards List */}
+        <section className="w-72 xl:w-80 shrink-0 flex flex-col border-r border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50">
+          <div className="p-3 border-b border-slate-200 dark:border-slate-800 space-y-2 bg-white dark:bg-slate-900">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={handleTurnIntoFlashcards}
-                className="px-2.5 py-1 text-xs rounded bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 hover:bg-blue-100 font-medium flex items-center gap-1 transition-colors"
-                title="Create Spaced Repetition Flashcards"
+                onClick={() => setShowSidebarMobile(true)}
+                className="lg:hidden p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
               >
-                <Layers className="w-3 h-3" />
-                <span className="hidden sm:inline">Make Flashcards</span>
+                <Folder className="w-4 h-4" />
               </button>
-
-              <button
-                type="button"
-                onClick={() => runAiNoteTool('summarize')}
-                className="px-2.5 py-1 text-xs rounded bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 flex items-center gap-1 font-medium transition-colors"
-              >
-                <Sparkles className="w-3 h-3" />
-                <span>AI Assist</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsPreviewMode(!isPreviewMode)}
-                className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                  isPreviewMode
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200'
-                }`}
-                title={isPreviewMode ? 'Switch to live editor' : 'Preview formatted note & LaTeX'}
-              >
-                {isPreviewMode ? <Edit3 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                <span>{isPreviewMode ? 'Edit' : 'Preview'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => exportNote('html')}
-                className="p-1.5 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                title="Export HTML Document"
-              >
-                <Download className="w-3.5 h-3.5" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => exportNote('print')}
-                className="p-1.5 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                title="Print or Save PDF"
-              >
-                <Printer className="w-3.5 h-3.5" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => moveNoteToTrash(selectedNote.id)}
-                className="p-1.5 rounded text-slate-400 hover:text-rose-600 transition-colors"
-                title="Delete note"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Microsoft Word / Notion Live Formatting Ribbon */}
-          <div className="px-4 py-1.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-1 overflow-x-auto text-slate-600 dark:text-slate-400 text-xs shrink-0 select-none">
-            {/* Undo / Redo */}
-            <div className="flex items-center gap-0.5 pr-1 border-r border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('undo')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                title="Undo (Ctrl+Z)"
-              >
-                <Undo className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('redo')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                title="Redo (Ctrl+Y)"
-              >
-                <Redo className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Typography Styles: H1, H2, H3, Paragraph */}
-            <div className="flex items-center gap-1 px-1.5 border-r border-slate-200 dark:border-slate-800">
-              <select
-                onMouseDown={saveSelection}
-                onChange={e => {
-                  restoreSelection();
-                  formatDoc('formatBlock', e.target.value);
-                }}
-                defaultValue="<p>"
-                className="py-1 px-1.5 text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
-              >
-                <option value="<p>">Normal Text</option>
-                <option value="<h1>">Heading 1</option>
-                <option value="<h2>">Heading 2</option>
-                <option value="<h3>">Heading 3</option>
-              </select>
-            </div>
-
-            {/* Font Styles: Bold, Italic, Underline, Strikethrough */}
-            <div className="flex items-center gap-0.5 px-1.5 border-r border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('bold')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold"
-                title="Bold (Ctrl+B)"
-              >
-                <Bold className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('italic')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 italic"
-                title="Italic (Ctrl+I)"
-              >
-                <Italic className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('underline')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 underline"
-                title="Underline (Ctrl+U)"
-              >
-                <UnderlineIcon className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('strikeThrough')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200"
-                title="Strikethrough"
-              >
-                <Strikethrough className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Text Color & Highlight Color (Fixed focus & floating popover) */}
-            <div className="flex items-center gap-0.5 px-1.5 border-r border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  saveSelection();
-                  if (showColorPicker) {
-                    setShowColorPicker(false);
-                  } else {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setColorPickerPos({ top: rect.bottom + 6, left: Math.max(10, rect.left - 10) });
-                    setShowColorPicker(true);
-                    setShowHighlightPicker(false);
-                  }
-                }}
-                className={`p-1.5 rounded transition-colors ${showColorPicker ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'}`}
-                title="Text Color"
-              >
-                <Palette className="w-3.5 h-3.5" />
-              </button>
-
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  saveSelection();
-                  if (showHighlightPicker) {
-                    setShowHighlightPicker(false);
-                  } else {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setHighlightPickerPos({ top: rect.bottom + 6, left: Math.max(10, rect.left - 10) });
-                    setShowHighlightPicker(true);
-                    setShowColorPicker(false);
-                  }
-                }}
-                className={`p-1.5 rounded transition-colors ${showHighlightPicker ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-600' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-amber-600 dark:text-amber-400'}`}
-                title="Highlight Background Color"
-              >
-                <Highlighter className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Lists: Bullets, Numbered, Checklist */}
-            <div className="flex items-center gap-0.5 px-1.5 border-r border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('insertUnorderedList')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200"
-                title="Bulleted List"
-              >
-                <List className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('insertOrderedList')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200"
-                title="Numbered List"
-              >
-                <ListOrdered className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={insertChecklistTask}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200"
-                title="Interactive Checklist Task"
-              >
-                <CheckSquare className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Rich Blocks: Quote (Fixed), Code Block (Generic), Callout, Table, Divider */}
-            <div className="flex items-center gap-0.5 px-1.5 border-r border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={applyBlockquote}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-serif"
-                title="Blockquote (Quote Block)"
-              >
-                <Quote className="w-3.5 h-3.5" />
-              </button>
-
-              {/* Generic Multi-Language Code Block Button */}
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  saveSelection();
-                  setCodeModalOpen(true);
-                }}
-                className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-mono text-[11px] font-semibold flex items-center gap-1 transition-colors"
-                title="Insert Generic Code Block (C++, Java, Python, TS, SQL, etc.)"
-              >
-                <Code className="w-3.5 h-3.5" />
-                <span>Code</span>
-              </button>
-
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={insertCalloutBox}
-                className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-blue-600 font-semibold"
-                title="Callout Box"
-              >
-                💡
-              </button>
-              {/* Dynamic Table Inserter */}
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  saveSelection();
-                  setTableModalOpen(true);
-                }}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200"
-                title="Insert Dynamic Table (Custom Rows & Columns)"
-              >
-                <TableIcon className="w-3.5 h-3.5" />
-              </button>
-
-              {/* LaTeX Math Formula Inserter */}
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  saveSelection();
-                  setLatexModalOpen(true);
-                }}
-                className="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-purple-700 dark:text-purple-300 font-mono text-[11px] font-bold flex items-center gap-1 transition-colors"
-                title="Insert LaTeX Mathematical Equation (KaTeX Style)"
-              >
-                <Sigma className="w-3.5 h-3.5" />
-                <span>LaTeX</span>
-              </button>
-
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('insertHorizontalRule')}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200"
-                title="Horizontal Divider"
-              >
-                <Minus className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Hyperlink */}
-            <div className="flex items-center gap-0.5 px-1.5">
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  saveSelection();
-                  setLinkModalOpen(true);
-                }}
-                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200"
-                title="Insert Hyperlink"
-              >
-                <LinkIcon className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => formatDoc('removeFormat')}
-                className="px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] text-slate-500"
-                title="Clear Formatting"
-              >
-                Clear
-              </button>
-            </div>
-
-            {/* Word count metrics in ribbon */}
-            <div className="ml-auto text-[11px] text-slate-400 font-mono flex items-center gap-2 shrink-0">
-              <span>{wordCount} words</span>
-              <span>•</span>
-              <span>{readingTime}m read</span>
-            </div>
-          </div>
-
-          {/* Living Document Scroll Area */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-8">
-            {/* Centered Paper Sheet Canvas (Word / Notion Page) */}
-            <div className="max-w-4xl mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs p-6 sm:p-12 min-h-[700px] flex flex-col space-y-4">
-              {/* Document Title Header */}
-              <div>
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  value={selectedNote.title}
-                  onChange={e => handleTitleChange(e.target.value)}
-                  placeholder="Document Title..."
-                  className="w-full text-2xl sm:text-3xl font-bold bg-transparent text-slate-900 dark:text-slate-100 focus:outline-none tracking-tight placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search notes, blocks, tags..."
+                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-slate-500">
+              <span>
+                {filteredNotes.length} {filteredNotes.length === 1 ? 'note' : 'notes'}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setSortMode(prev => (prev === 'updated' ? 'created' : prev === 'created' ? 'title' : 'updated'))
+                }
+                className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium"
+              >
+                <ArrowUpDown className="w-3 h-3" />
+                Sort: {sortMode === 'updated' ? 'Updated' : sortMode === 'created' ? 'Created' : 'Title'}
+              </button>
+            </div>
+          </div>
 
-                {/* Tags row */}
-                <div className="flex items-center gap-1.5 flex-wrap pt-2">
-                  {selectedNote.tags.map(t => (
-                    <span
-                      key={t}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-                    >
-                      <span>#{t}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(t)}
-                        className="hover:text-rose-600"
+          <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+            {filteredNotes.length === 0 ? (
+              <div className="text-center py-12 px-4">
+                <FileText className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">No notes match this view</p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Create a fresh note or pick a Notion template to start writing.
+                </p>
+                {navFilter !== 'trash' && (
+                  <button
+                    type="button"
+                    onClick={() => handleCreateBlankNote()}
+                    className="mt-3 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700"
+                  >
+                    + Create Note
+                  </button>
+                )}
+              </div>
+            ) : (
+              filteredNotes.map(note => {
+                const isSelected = selectedNote?.id === note.id;
+                const course = courses.find(c => c.id === note.courseId);
+                const snippet =
+                  note.blocks && note.blocks.length > 0
+                    ? stripHtmlTags(note.blocks.map(b => b.content).join(' ')).trim()
+                    : stripHtmlTags(note.content).trim();
+
+                return (
+                  <div
+                    key={note.id}
+                    onClick={() => setSelectedNoteId(note.id)}
+                    className={`p-3 rounded-xl cursor-pointer border transition ${
+                      isSelected
+                        ? 'bg-white dark:bg-slate-800 border-indigo-400 dark:border-indigo-500 shadow-sm ring-1 ring-indigo-500/20'
+                        : 'bg-white/70 dark:bg-slate-900/70 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-sm shrink-0">{note.icon || '📝'}</span>
+                        <h3 className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                          {note.title || 'Untitled Note'}
+                        </h3>
+                      </div>
+                      {(note.isFavorite || note.pinned) && (
+                        <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400 shrink-0" />
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 leading-relaxed">
+                      {snippet || 'Empty page — click to start writing...'}
+                    </p>
+                    <div className="flex items-center justify-between gap-2 mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/70">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {course && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[9px] font-bold text-white truncate"
+                            style={{ backgroundColor: course.color }}
+                          >
+                            {course.code}
+                          </span>
+                        )}
+                        {note.tags.slice(0, 2).map(t => (
+                          <span key={t} className="text-[9px] text-slate-400 truncate">
+                            #{t}
+                          </span>
+                        ))}
+                      </div>
+                      <span className="text-[10px] text-slate-400 shrink-0">
+                        {new Date(note.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+
+        {/* PANE 3: Notion Block Editor & Toolbar */}
+        <main className="flex-1 flex flex-col min-w-0 bg-white dark:bg-slate-950 overflow-hidden">
+          {selectedNote ? (
+            <>
+              {/* Note Action Bar */}
+              <div className="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                {/* Metadata Pickers */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={selectedNote.courseId || ''}
+                    onChange={e => updateNote(selectedNote.id, { courseId: e.target.value })}
+                    className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200"
+                    title="Link to Course"
+                  >
+                    <option value="">No Course</option>
+                    {courses.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.code} — {c.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={selectedNote.folderId || ''}
+                    onChange={e => updateNote(selectedNote.id, { folderId: e.target.value || undefined })}
+                    className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200"
+                    title="Move to Folder"
+                  >
+                    <option value="">No Folder</option>
+                    {noteFolders.map(f => (
+                      <option key={f.id} value={f.id}>
+                        {f.icon || '📁'} {f.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Inline Tags */}
+                  <div className="hidden xl:flex items-center gap-1 flex-wrap">
+                    {selectedNote.tags.map(t => (
+                      <span
+                        key={t}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-300"
                       >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-
-                  {isAddingTag ? (
-                    <form onSubmit={handleAddTag} className="inline-flex items-center">
+                        #{t}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateNote(selectedNote.id, {
+                              tags: selectedNote.tags.filter(item => item !== t)
+                            })
+                          }
+                          className="text-slate-400 hover:text-rose-500"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                    <form onSubmit={handleAddTagToSelected} className="inline-flex items-center">
                       <input
                         type="text"
-                        autoFocus
                         value={newTagInput}
                         onChange={e => setNewTagInput(e.target.value)}
-                        onBlur={() => setIsAddingTag(false)}
-                        placeholder="Tag name..."
-                        className="px-2 py-0.5 text-[11px] rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:outline-none"
+                        placeholder="+ tag"
+                        className="w-16 focus:w-24 transition-all px-2 py-0.5 rounded-full border border-dashed border-slate-300 dark:border-slate-700 bg-transparent text-[11px] text-slate-700 dark:text-slate-200 focus:outline-none"
                       />
                     </form>
+                  </div>
+                </div>
+
+                {/* Status, AI Study Tools & Export Actions */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                      saveStatus === 'saving'
+                        ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                        : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                    }`}
+                  >
+                    {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
+                  </span>
+
+                  {/* AI Actions Dropdown Group */}
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      disabled={!!aiBusyLabel}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-900/50 text-violet-700 dark:text-violet-300 text-xs font-semibold transition"
+                    >
+                      {aiBusyLabel ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Wand2 className="w-3.5 h-3.5" />
+                      )}
+                      {aiBusyLabel ? 'Working...' : 'AI Tools'}
+                    </button>
+                    <div className="hidden group-hover:block absolute right-0 top-full pt-1 z-30 w-60">
+                      <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl p-1.5 space-y-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleAiTransformActiveNote('summarize')}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-500" /> Summarize at Top
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAiTransformActiveNote('key_concepts')}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <BookOpen className="w-3.5 h-3.5 text-emerald-500" /> Extract Key Concepts
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAiTransformActiveNote('revision_sheet')}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <ListChecks className="w-3.5 h-3.5 text-amber-500" /> Build Revision Sheet
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAiTransformActiveNote('rewrite')}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <Wand2 className="w-3.5 h-3.5 text-violet-500" /> Rewrite & Polish
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAiTransformActiveNote('simplify')}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <Brain className="w-3.5 h-3.5 text-sky-500" /> Simplify Explanation
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAiTransformActiveNote('auto_format')}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <Tag className="w-3.5 h-3.5 text-slate-500" /> Auto-Format Blocks
+                        </button>
+                        <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
+                        <button
+                          type="button"
+                          onClick={handleGenerateFlashcardsFromNote}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50"
+                        >
+                          <Layers className="w-3.5 h-3.5" /> Generate Flashcards
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleGenerateQuizFromNote}
+                          className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
+                        >
+                          <HelpCircle className="w-3.5 h-3.5" /> Generate Practice Quiz
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Export PDF / Preview */}
+                  <button
+                    type="button"
+                    onClick={() => setIsExportModalOpen(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 transition"
+                  >
+                    <Download className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" /> Export / PDF
+                  </button>
+
+                  {/* Favorite */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextFav = !(selectedNote.isFavorite || selectedNote.pinned);
+                      updateNote(selectedNote.id, { isFavorite: nextFav, pinned: nextFav });
+                    }}
+                    title="Favorite Note"
+                    className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <Star
+                      className={`w-3.5 h-3.5 ${
+                        selectedNote.isFavorite || selectedNote.pinned
+                          ? 'text-amber-500 fill-amber-400'
+                          : 'text-slate-400'
+                      }`}
+                    />
+                  </button>
+
+                  {/* Duplicate */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const copy = duplicateNote(selectedNote.id);
+                      if (copy) {
+                        setSelectedNoteId(copy.id);
+                        showToast('Note duplicated.', 'info');
+                      }
+                    }}
+                    title="Duplicate Note"
+                    className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-300"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Archive */}
+                  {!selectedNote.inTrash && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextArc = !selectedNote.isArchived;
+                        updateNote(selectedNote.id, { isArchived: nextArc });
+                        showToast(nextArc ? 'Note moved to Archive.' : 'Note restored from Archive.', 'info');
+                      }}
+                      title={selectedNote.isArchived ? 'Unarchive' : 'Archive Note'}
+                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-300"
+                    >
+                      <Archive className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  {/* Trash / Restore / Delete Forever */}
+                  {selectedNote.inTrash ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          restoreNote(selectedNote.id);
+                          setNavFilter('all');
+                        }}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Restore
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deleteNotePermanently(selectedNote.id);
+                          setSelectedNoteId(null);
+                        }}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Delete Forever
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setIsAddingTag(true)}
-                      className="px-2 py-0.5 text-[11px] rounded border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1"
+                      onClick={() => {
+                        moveNoteToTrash(selectedNote.id);
+                        setSelectedNoteId(null);
+                      }}
+                      title="Move to Trash"
+                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 dark:hover:bg-rose-950/30 text-slate-500 dark:text-slate-300"
                     >
-                      <Plus className="w-2.5 h-2.5" />
-                      <span>Tag</span>
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
               </div>
 
-              {/* The Live Document Body or Markdown/LaTeX Preview */}
-              {isPreviewMode ? (
-                <div
-                  key={`preview_${selectedNote.id}`}
-                  className="flex-1 w-full min-h-[500px] text-slate-800 dark:text-slate-200 p-4 sm:p-6 bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-xs"
-                >
-                  <div className="mb-4 flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 text-xs text-slate-500">
-                    <span className="flex items-center gap-1.5 font-semibold text-blue-600 dark:text-blue-400">
-                      <Eye className="w-3.5 h-3.5" />
-                      Executive Reading View (Rendered LaTeX, Diagrams, Definitions & Checklists)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsPreviewMode(false)}
-                      className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-blue-600 flex items-center gap-1 font-medium transition-colors"
-                    >
-                      <Edit3 className="w-3 h-3" />
-                      <span>Switch to Live Edit</span>
-                    </button>
-                  </div>
-                  <MarkdownRenderer content={selectedNote.content} />
-                </div>
-              ) : (
-                <div
-                  key={`editor_${selectedNote.id}`}
-                  ref={editorRef}
-                  contentEditable
-                  suppressContentEditableWarning
-                  onInput={handleEditorInput}
-                  onPaste={handleEditorPaste}
-                  onMouseUp={saveSelection}
-                  onKeyUp={saveSelection}
-                  className="note-content-editor flex-1 w-full outline-none text-slate-800 dark:text-slate-200 leading-relaxed font-sans text-sm sm:text-base selection:bg-blue-100 dark:selection:bg-blue-900/40 min-h-[500px]"
+              {/* Block Editor keyed strictly by selectedNote.id to guarantee zero state leakage */}
+              <div className="flex-1 overflow-y-auto">
+                <NotionBlockEditor
+                  key={selectedNote.id}
+                  note={selectedNote}
+                  courses={courses}
+                  onSaveNote={handleSaveNote}
+                  onSaveStatusChange={setSaveStatus}
                 />
-              )}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
-          Select or create a note to begin.
-        </div>
-      )}
-
-      {/* Generic Code Block Modal with Live Syntax Highlighting */}
-      {codeModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden text-xs">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-              <div className="flex items-center gap-2">
-                <FileCode className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                  Insert Multi-Language Code Block
-                </h3>
               </div>
-              <button
-                type="button"
-                onClick={() => setCodeModalOpen(false)}
-                className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-4">
+                <FileText className="w-8 h-8" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Select or create a Notion note</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mt-1">
+                Write with `/` slash commands, drag-and-drop blocks, tables, KaTeX math, Prism code blocks, and export print-ready PDFs.
+              </p>
+              <div className="flex items-center gap-3 mt-5">
+                <button
+                  type="button"
+                  onClick={() => handleCreateBlankNote()}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm"
+                >
+                  + Blank Note
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTemplateModalOpen(true)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-semibold"
+                >
+                  Browse Templates
+                </button>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* ==================== NEW FOLDER MODAL ==================== */}
+      {isNewFolderOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <form
+            onSubmit={handleCreateFolder}
+            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                {newFolderParentId ? 'Create Subfolder' : 'Create Note Folder'}
+              </h3>
+              <button type="button" onClick={() => setIsNewFolderOpen(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-4 h-4" />
               </button>
             </div>
-
-            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto max-h-[80vh]">
-              {/* Language Selector & Quick Switch Pills */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-slate-700 dark:text-slate-300 text-xs">
-                    Programming Language
-                  </label>
-                  <select
-                    value={codeLanguage}
-                    onChange={e => {
-                      const newLang = e.target.value;
-                      setCodeLanguage(newLang);
-                      if (sampleSnippets[newLang]) {
-                        setCodeContent(sampleSnippets[newLang]);
-                      }
-                    }}
-                    className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 focus:outline-none"
-                  >
-                    <option value="cpp">C++ (cpp)</option>
-                    <option value="java">Java (java)</option>
-                    <option value="python">Python (py)</option>
-                    <option value="c">C (c)</option>
-                    <option value="typescript">TypeScript (ts)</option>
-                    <option value="javascript">JavaScript (js)</option>
-                    <option value="sql">SQL (sql)</option>
-                    <option value="bash">Bash / Shell (sh)</option>
-                  </select>
-                </div>
-
-                {/* Quick Language Pills */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {[
-                    { id: 'cpp', name: 'C++' },
-                    { id: 'java', name: 'Java' },
-                    { id: 'python', name: 'Python' },
-                    { id: 'c', name: 'C' },
-                    { id: 'typescript', name: 'TypeScript' },
-                    { id: 'sql', name: 'SQL' },
-                    { id: 'bash', name: 'Bash' }
-                  ].map(lang => (
-                    <button
-                      key={lang.id}
-                      type="button"
-                      onClick={() => {
-                        setCodeLanguage(lang.id);
-                        if (sampleSnippets[lang.id]) {
-                          setCodeContent(sampleSnippets[lang.id]);
-                        }
-                      }}
-                      className={`px-2.5 py-1 rounded text-[11px] font-mono transition-colors ${
-                        codeLanguage === lang.id
-                          ? 'bg-blue-600 text-white font-bold'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                      }`}
-                    >
-                      {lang.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Code Editor Input */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="font-semibold text-slate-700 dark:text-slate-300 text-xs">
-                    Code Content
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sampleSnippets[codeLanguage]) {
-                        setCodeContent(sampleSnippets[codeLanguage]);
-                      }
-                    }}
-                    className="text-[11px] text-blue-600 hover:underline"
-                  >
-                    Load Sample {codeLanguage.toUpperCase()} Snippet
-                  </button>
-                </div>
-                <textarea
-                  rows={8}
-                  value={codeContent}
-                  onChange={e => setCodeContent(e.target.value)}
-                  placeholder="Paste or write your code here..."
-                  className="w-full p-3 font-mono text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none resize-y selection:bg-blue-200 dark:selection:bg-blue-900"
-                />
-              </div>
-
-              {/* Real-time Syntax Highlighted Live Preview */}
-              <div>
-                <label className="font-semibold text-slate-700 dark:text-slate-300 text-xs block mb-1">
-                  Live Highlighted Preview ({codeLanguage.toUpperCase()})
-                </label>
-                <div className="rounded-xl border border-slate-700 bg-slate-950 overflow-hidden shadow-sm">
-                  <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-900 border-b border-slate-800 text-[11px] font-mono select-none">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-rose-500/80"></span>
-                      <span className="w-2 h-2 rounded-full bg-amber-500/80"></span>
-                      <span className="w-2 h-2 rounded-full bg-emerald-500/80"></span>
-                      <span className="text-blue-400 font-bold uppercase ml-1">{codeLanguage}</span>
-                    </div>
-                    <span className="text-slate-500 text-[10px]">Syntax Colored</span>
-                  </div>
-                  <pre
-                    className="p-4 text-xs font-mono leading-relaxed overflow-x-auto text-slate-100 bg-slate-950 max-h-52"
-                    dangerouslySetInnerHTML={{
-                      __html: (() => {
-                        try {
-                          const grammar = Prism.languages[codeLanguage] || Prism.languages.clike;
-                          return Prism.highlight(codeContent, grammar, codeLanguage);
-                        } catch {
-                          return codeContent.replace(/</g, '&lt;');
-                        }
-                      })()
-                    }}
-                  />
-                </div>
-              </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newFolderIcon}
+                onChange={e => setNewFolderIcon(e.target.value)}
+                className="w-12 text-center px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-base"
+                maxLength={2}
+              />
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                placeholder="Folder name (e.g. Week 4 Lectures)"
+                autoFocus
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white"
+              />
             </div>
-
-            {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-2 p-4 border-t border-slate-100 dark:border-slate-800 shrink-0">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Parent Folder (optional)</label>
+              <select
+                value={newFolderParentId}
+                onChange={e => setNewFolderParentId(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white"
+              >
+                <option value="">Top-level Folder</option>
+                {noteFolders.map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.icon || '📁'} {f.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setCodeModalOpen(false)}
-                className="px-3 py-1.5 rounded-md text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={() => setIsNewFolderOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300"
               >
                 Cancel
               </button>
               <button
-                type="button"
-                onClick={insertCodeBlock}
-                className="px-4 py-1.5 rounded-md bg-blue-600 text-white font-semibold hover:bg-blue-700 flex items-center gap-1.5 shadow-sm"
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold"
               >
-                <FileCode className="w-3.5 h-3.5" />
-                <span>Insert Code Block</span>
+                Create Folder
               </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ==================== TEMPLATES MODAL ==================== */}
+      {isTemplateModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Notion Note Templates</h3>
+                <p className="text-xs text-slate-500">Pick a structured template tailored for university coursework</p>
+              </div>
+              <button type="button" onClick={() => setIsTemplateModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {getNoteTemplates().map(tpl => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => handleApplyTemplate(tpl)}
+                  className="text-left p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 bg-slate-50/60 dark:bg-slate-800/60 transition space-y-1.5"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">{tpl.icon}</span>
+                    <span className="text-sm font-bold text-slate-900 dark:text-white">{tpl.name}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{tpl.description}</p>
+                </button>
+              ))}
             </div>
           </div>
         </div>
       )}
 
-      {/* Insert Link Modal */}
-      {linkModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-5 space-y-3 text-xs">
-            <h3 className="font-bold text-slate-900 dark:text-slate-100">Insert Hyperlink</h3>
-            <form onSubmit={handleInsertLink} className="space-y-3">
+      {/* ==================== AI NOTE GENERATOR MODAL ==================== */}
+      {isAiStudioOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-violet-600" />
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">AI Study Notes Studio</h3>
+              </div>
+              <button type="button" onClick={() => setIsAiStudioOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
               <div>
-                <label className="block text-slate-500 mb-1">Display Text</label>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Topic or Prompt
+                </label>
                 <input
                   type="text"
-                  value={linkText}
-                  onChange={e => setLinkText(e.target.value)}
-                  placeholder="e.g. Course Lecture Slides"
-                  className="w-full p-2 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  value={aiTopicPrompt}
+                  onChange={e => setAiTopicPrompt(e.target.value)}
+                  placeholder="e.g. Dynamic Programming & Memoization, Database B+ Trees..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white"
                 />
               </div>
+
               <div>
-                <label className="block text-slate-500 mb-1">URL</label>
-                <input
-                  type="url"
-                  required
-                  value={linkUrl}
-                  onChange={e => setLinkUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full p-2 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setLinkModalOpen(false)}
-                  className="px-3 py-1.5 rounded text-slate-500 hover:text-slate-800"
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Or Generate From Uploaded File (Optional)
+                </label>
+                <select
+                  value={aiSourceFileId}
+                  onChange={e => setAiSourceFileId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold"
-                >
-                  Insert Link
-                </button>
+                  <option value="">None (topic-based generation)</option>
+                  {files.map(f => (
+                    <option key={f.id} value={f.id}>
+                      {f.name} ({f.fileType.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
               </div>
-            </form>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Link Course
+                </label>
+                <select
+                  value={aiTargetCourseId}
+                  onChange={e => setAiTargetCourseId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white"
+                >
+                  <option value="">Auto / Unassigned</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} — {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsAiStudioOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!!aiBusyLabel}
+                onClick={handleAiGenerateNewNote}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-xs font-semibold hover:from-violet-700 hover:to-indigo-700 disabled:opacity-60"
+              >
+                {aiBusyLabel ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                Generate Notion Page
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Dynamic Table Inserter Modal */}
-      {tableModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <TableIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                  Insert Dynamic Table
-                </h3>
+      {/* ==================== PRINT-PERFECT PDF & EXPORT MODAL ==================== */}
+      {isExportModalOpen && selectedNote && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-5xl h-[90vh] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Export & Print Preview</h3>
+                <p className="text-xs text-slate-500">
+                  Preserves headings, highlights, tables, code syntax, KaTeX math, callouts, and Arabic RTL formatting.
+                </p>
               </div>
               <button
                 type="button"
-                onClick={() => setTableModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                onClick={() => setIsExportModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Interactive Grid Selector */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
-                <span className="font-semibold text-xs">Quick Grid Selector:</span>
-                <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">
-                  {hoverGridRow && hoverGridCol ? `${hoverGridRow} × ${hoverGridCol}` : `${tableRows} × ${tableCols}`} Table
-                </span>
-              </div>
-              <div 
-                className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex flex-col gap-1 items-center justify-center select-none"
-                onMouseLeave={() => { setHoverGridRow(0); setHoverGridCol(0); }}
-              >
-                {Array.from({ length: 6 }, (_, r) => (
-                  <div key={r} className="flex gap-1">
-                    {Array.from({ length: 6 }, (_, c) => {
-                      const rowNum = r + 1;
-                      const colNum = c + 1;
-                      const isHighlighted = (hoverGridRow >= rowNum && hoverGridCol >= colNum) || 
-                        (!hoverGridRow && tableRows >= rowNum && tableCols >= colNum);
-                      return (
-                        <div
-                          key={c}
-                          onMouseEnter={() => { setHoverGridRow(rowNum); setHoverGridCol(colNum); }}
-                          onClick={() => {
-                            setTableRows(rowNum);
-                            setTableCols(colNum);
-                            insertDynamicTable(rowNum, colNum, tableHasHeader);
-                          }}
-                          className={`w-6 h-6 rounded cursor-pointer border transition-colors ${
-                            isHighlighted
-                              ? 'bg-blue-600 border-blue-700 dark:bg-blue-500 dark:border-blue-400'
-                              : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 hover:border-blue-400'
-                          }`}
-                        />
-                      );
-                    })}
+            <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
+              {/* Export Options & Format Buttons */}
+              <div className="w-full lg:w-72 shrink-0 p-4 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 space-y-4 overflow-y-auto bg-slate-50/70 dark:bg-slate-900">
+                <div className="space-y-2.5">
+                  <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    PDF Layout Options
+                  </span>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">Paper Size</label>
+                    <select
+                      value={pdfOptions.paperSize}
+                      onChange={e =>
+                        setPdfOptions(prev => ({ ...prev, paperSize: e.target.value as 'A4' | 'Letter' }))
+                      }
+                      className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100"
+                    >
+                      <option value="A4">A4 (210 × 297 mm)</option>
+                      <option value="Letter">US Letter (8.5 × 11 in)</option>
+                    </select>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {/* Manual Dimensions Input */}
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Rows (1 - 20)
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={tableRows}
-                  onChange={e => setTableRows(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-center font-bold focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Columns (1 - 10)
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={tableCols}
-                  onChange={e => setTableCols(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-center font-bold focus:outline-none"
-                />
-              </div>
-            </div>
+                  <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={pdfOptions.includeCoverAndMeta}
+                      onChange={e => setPdfOptions(prev => ({ ...prev, includeCoverAndMeta: e.target.checked }))}
+                      className="rounded border-slate-300 text-indigo-600"
+                    />
+                    Include Cover & Course Banner
+                  </label>
 
-            {/* Include Header Row Checkbox */}
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="tableHeaderCheck"
-                checked={tableHasHeader}
-                onChange={e => setTableHasHeader(e.target.checked)}
-                className="rounded accent-blue-600 w-4 h-4 cursor-pointer"
-              />
-              <label htmlFor="tableHeaderCheck" className="text-slate-700 dark:text-slate-300 cursor-pointer font-medium">
-                Include Styled Header Row
-              </label>
-            </div>
+                  <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={pdfOptions.includeHeaderFooter}
+                      onChange={e => setPdfOptions(prev => ({ ...prev, includeHeaderFooter: e.target.checked }))}
+                      className="rounded border-slate-300 text-indigo-600"
+                    />
+                    Include Running Header & Footer
+                  </label>
 
-            {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setTableModalOpen(false)}
-                className="px-3 py-1.5 rounded text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => insertDynamicTable(tableRows, tableCols, tableHasHeader)}
-                className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors shadow-xs"
-              >
-                Insert {tableRows} × {tableCols} Table
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Floating Fixed Text Color Picker Popover (Unclipped by Ribbon) */}
-      {showColorPicker && colorPickerPos && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-transparent"
-            onMouseDown={() => setShowColorPicker(false)}
-          />
-          <div
-            style={{ top: `${colorPickerPos.top}px`, left: `${colorPickerPos.left}px` }}
-            className="fixed z-50 p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 select-none animate-in fade-in zoom-in-95 duration-100"
-            onMouseDown={e => e.preventDefault()}
-          >
-            <div className="flex items-center gap-1.5">
-              {[
-                { label: 'Default', color: '#0f172a' },
-                { label: 'Blue', color: '#2563eb' },
-                { label: 'Emerald', color: '#059669' },
-                { label: 'Red', color: '#dc2626' },
-                { label: 'Amber', color: '#d97706' },
-                { label: 'Purple', color: '#7c3aed' },
-                { label: 'Pink', color: '#db2777' }
-              ].map(({ label, color }) => (
-                <button
-                  key={color}
-                  type="button"
-                  title={label}
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => applyTextColor(color)}
-                  className="w-6 h-6 rounded-full border border-slate-300 dark:border-slate-600 hover:scale-110 transition-transform shadow-xs"
-                  style={{ backgroundColor: color }}
-                />
-              ))}
-            </div>
-
-            <div className="w-[1px] h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
-
-            {/* Custom Color Input */}
-            <label className="relative w-6 h-6 rounded-full border border-dashed border-slate-400 dark:border-slate-600 hover:border-blue-500 flex items-center justify-center cursor-pointer text-[10px]" title="Pick Custom Color">
-              <span>🎨</span>
-              <input
-                type="color"
-                className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
-                onChange={e => applyTextColor(e.target.value)}
-              />
-            </label>
-          </div>
-        </>
-      )}
-
-      {/* Floating Fixed Highlight Picker Popover (Unclipped by Ribbon) */}
-      {showHighlightPicker && highlightPickerPos && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-transparent"
-            onMouseDown={() => setShowHighlightPicker(false)}
-          />
-          <div
-            style={{ top: `${highlightPickerPos.top}px`, left: `${highlightPickerPos.left}px` }}
-            className="fixed z-50 p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 select-none animate-in fade-in zoom-in-95 duration-100"
-            onMouseDown={e => e.preventDefault()}
-          >
-            <div className="flex items-center gap-1.5">
-              {[
-                { label: 'Yellow', color: '#fef08a' },
-                { label: 'Green', color: '#bbf7d0' },
-                { label: 'Blue', color: '#bfdbfe' },
-                { label: 'Pink', color: '#fbcfe8' },
-                { label: 'Orange', color: '#fed7aa' },
-                { label: 'Purple', color: '#e9d5ff' },
-                { label: 'Remove Highlight', color: 'transparent' }
-              ].map(({ label, color }) => (
-                <button
-                  key={color}
-                  type="button"
-                  title={label}
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => applyHighlight(color)}
-                  className="w-6 h-6 rounded border border-slate-300 dark:border-slate-600 hover:scale-110 transition-transform shadow-xs flex items-center justify-center text-[10px] font-bold"
-                  style={{ backgroundColor: color === 'transparent' ? '#ffffff' : color }}
-                >
-                  {color === 'transparent' ? '✕' : ''}
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* AI Preview Modal */}
-      {aiModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-600" />
-                <h3 className="font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
-                  AI Study Assistant ({aiToolType})
-                </h3>
-              </div>
-              <button
-                onClick={() => setAiModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="max-h-80 overflow-y-auto p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 font-mono text-[11px] whitespace-pre-wrap leading-relaxed">
-              {aiGeneratedText}
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(aiGeneratedText);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                }}
-                className="px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center gap-1 font-medium"
-              >
-                {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                <span>{copied ? 'Copied' : 'Copy'}</span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAiModalOpen(false)}
-                  className="px-3 py-1.5 rounded text-slate-500 hover:text-slate-800"
-                >
-                  Close
-                </button>
-                {aiToolType !== 'flashcard_export' && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => applyAiContent('append')}
-                      className="px-3 py-1.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-medium"
-                    >
-                      Append to Note
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applyAiContent('replace')}
-                      className="px-4 py-1.5 rounded bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold"
-                    >
-                      Replace Note
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* LaTeX Mathematical Equation Builder Modal */}
-      {latexModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
-                  <Sigma className="w-4 h-4" />
+                  <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={pdfOptions.includePageNumbers}
+                      onChange={e => setPdfOptions(prev => ({ ...prev, includePageNumbers: e.target.checked }))}
+                      className="rounded border-slate-300 text-indigo-600"
+                    />
+                    Include Page Numbers
+                  </label>
                 </div>
-                <div>
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                    Insert LaTeX Equation
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Typeset mathematical formulas with KaTeX notation.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setLatexModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            {/* Live KaTeX Preview Box */}
-            <div>
-              <label className="block text-slate-500 font-semibold mb-1">Live Formula Preview</label>
-              <div
-                className="p-4 rounded-lg bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 min-h-[70px] flex items-center justify-center text-slate-900 dark:text-slate-100 overflow-x-auto text-sm sm:text-base"
-                dangerouslySetInnerHTML={{
-                  __html: renderFormulaWithKatex(latexFormula || 'E = mc^2', latexDisplayMode)
-                }}
-              />
-            </div>
-
-            {/* Formula Input */}
-            <div>
-              <label className="block text-slate-500 font-semibold mb-1">LaTeX Expression</label>
-              <textarea
-                rows={3}
-                value={latexFormula}
-                onChange={e => setLatexFormula(e.target.value)}
-                placeholder="e.g. \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}"
-                className="w-full p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-xs focus:outline-none"
-              />
-            </div>
-
-            {/* Display Mode Toggle */}
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
-                <input
-                  type="radio"
-                  name="latex_mode"
-                  checked={latexDisplayMode}
-                  onChange={() => setLatexDisplayMode(true)}
-                  className="accent-purple-600"
-                />
-                <span>Block Equation (Centered $$...$$)</span>
-              </label>
-
-              <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
-                <input
-                  type="radio"
-                  name="latex_mode"
-                  checked={!latexDisplayMode}
-                  onChange={() => setLatexDisplayMode(false)}
-                  className="accent-purple-600"
-                />
-                <span>Inline Equation ($...$)</span>
-              </label>
-            </div>
-
-            {/* Quick Math Presets */}
-            <div>
-              <label className="block text-slate-500 font-semibold mb-1.5">Common Academic Formulas</label>
-              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
-                {[
-                  { label: 'Quadratic', code: 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}' },
-                  { label: 'Definite Integral', code: '\\int_{a}^{b} f(x) \\, dx = F(b) - F(a)' },
-                  { label: 'Derivative Limit', code: '\\frac{df}{dx} = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}' },
-                  { label: 'Summation', code: '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}' },
-                  { label: '2x2 Matrix', code: '\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}' },
-                  { label: 'Normal Dist.', code: 'f(x) = \\frac{1}{\\sigma \\sqrt{2\\pi}} e^{-\\frac{(x-\\mu)^2}{2\\sigma^2}}' },
-                  { label: 'Pythagorean', code: 'a^2 + b^2 = c^2' },
-                  { label: 'Euler Identity', code: 'e^{i\\pi} + 1 = 0' },
-                  { label: 'Big-O', code: 'T(n) = 2T(n/2) + O(n) \\implies O(n \\log n)' },
-                  { label: 'Partial Deriv.', code: '\\frac{\\partial^2 f}{\\partial x^2} + \\frac{\\partial^2 f}{\\partial y^2} = 0' }
-                ].map(preset => (
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                  <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Export Formats
+                  </span>
                   <button
-                    key={preset.label}
                     type="button"
-                    onClick={() => setLatexFormula(preset.code)}
-                    className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 hover:bg-purple-100 dark:hover:bg-purple-950/50 hover:text-purple-600 text-[11px] font-mono text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors"
+                    onClick={() => exportNoteToPdf(selectedNote, selectedCourse, pdfOptions)}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm"
                   >
-                    {preset.label}
+                    <Download className="w-4 h-4" /> Save / Print as PDF
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    onClick={() => exportNoteToHtml(selectedNote, selectedCourse)}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200"
+                  >
+                    <FileCode2 className="w-4 h-4 text-emerald-600" /> Export Standalone HTML
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportNoteToMarkdown(selectedNote)}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200"
+                  >
+                    <FileDown className="w-4 h-4 text-sky-600" /> Export Markdown (.md)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await copyNoteFormatted(selectedNote);
+                      if (ok) {
+                        setCopiedHtmlFeedback(true);
+                        setTimeout(() => setCopiedHtmlFeedback(false), 2000);
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200"
+                  >
+                    {copiedHtmlFeedback ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-500" /> Copied Rich Formatting!
+                      </>
+                    ) : (
+                      <>
+                        <ClipboardCopy className="w-4 h-4 text-violet-500" /> Copy Formatted Content
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setLatexModalOpen(false)}
-                className="px-3 py-1.5 rounded text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => insertLatexEquation(latexFormula, latexDisplayMode)}
-                className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold flex items-center gap-1.5 shadow-sm"
-              >
-                <Sigma className="w-3.5 h-3.5" />
-                <span>Insert Equation</span>
-              </button>
+              {/* Live Styled Document Preview */}
+              <div className="flex-1 bg-slate-200 dark:bg-slate-950 p-4 overflow-hidden flex flex-col">
+                <iframe
+                  title="PDF Export Preview"
+                  srcDoc={exportPreviewHtml}
+                  className="w-full flex-1 rounded-xl bg-white shadow-xl border border-slate-300"
+                />
+              </div>
             </div>
           </div>
         </div>

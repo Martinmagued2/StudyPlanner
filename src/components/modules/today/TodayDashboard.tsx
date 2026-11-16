@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { MeetingSlot, AcademicMode } from '../../../types';
-import { getLiveScheduleStatus } from '../../../services/academicScheduleService';
+import { getLiveScheduleStatus, toLocalDateKey, formatTime12h } from '../../../services/academicScheduleService';
 import {
   CheckSquare,
   FileCheck2,
@@ -68,8 +68,17 @@ export const TodayDashboard: React.FC = () => {
     setIsBriefingOpen,
     setIsSyncModalOpen,
     updateAssignment,
-    generateRevisionPlanForExam
+    generateRevisionPlanForExam,
+    selectedDashboardDate,
+    setSelectedDashboardDate,
+    setIsVoiceAssistantOpen
   } = useApp();
+
+  const [, setLiveTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setLiveTick(t => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   const [timeWindow, setTimeWindow] = useState<number>(45);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
@@ -85,12 +94,15 @@ export const TodayDashboard: React.FC = () => {
   // Counters
   const openTasks = tasks.filter(t => !t.completed);
   const dueSoonAssignments = assignments.filter(a => a.status !== 'completed');
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = toLocalDateKey(new Date());
+  const selectedDateStr = selectedDashboardDate || todayStr;
+  const targetDateObj = new Date(`${selectedDateStr}T12:00:00`);
+  const isSelectedToday = selectedDateStr === todayStr;
   const dueFlashcards = flashcards.filter(f => f.dueDate <= todayStr);
   const upcomingExams = exams;
 
   // Academic Radar: Impending Deadlines & Exam Alert calculations
-  const todayMidnight = new Date();
+  const todayMidnight = new Date(targetDateObj);
   todayMidnight.setHours(0, 0, 0, 0);
 
   const radarAssignments = assignments
@@ -131,21 +143,74 @@ export const TodayDashboard: React.FC = () => {
     .filter(e => e.diffDays >= 0 && e.diffDays <= 14)
     .sort((a, b) => a.diffDays - b.diffDays);
 
-  // Live Schedule & Next Class Logic dynamically derived from courses
+  // Live Schedule & Next Class Logic dynamically derived from courses & selected date
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const currentDayNum = new Date().getDay();
+  const currentDayNum = targetDateObj.getDay();
   const currentDayName = days[currentDayNum];
-  const isExamMode = activeAcademicMode === 'midterm' || activeAcademicMode === 'final';
-  const isHolidayOrSuspendedToday = isClassSuspendedOnDate(todayStr);
 
-  // Regular classes are suspended during Midterm Mode, Final Exam Mode, or University Holidays
-  const liveSchedule = getLiveScheduleStatus(isExamMode ? [] : courses);
-  const todayClasses = isExamMode
-    ? []
-    : liveSchedule.todayClasses.filter(cls => !isClassSuspendedOnDate(todayStr, cls.courseId));
+  // Resolve effective academic mode for the viewed date
+  const effectiveModeForDate: AcademicMode = (() => {
+    if (isSelectedToday) return activeAcademicMode;
+    if (academicConfig.modePreference && academicConfig.modePreference !== 'auto') {
+      return academicConfig.modePreference;
+    }
+    if (academicConfig.finalStartDate && academicConfig.finalEndDate && selectedDateStr >= academicConfig.finalStartDate && selectedDateStr <= academicConfig.finalEndDate) {
+      return 'final';
+    }
+    if (academicConfig.midtermStartDate && academicConfig.midtermEndDate && selectedDateStr >= academicConfig.midtermStartDate && selectedDateStr <= academicConfig.midtermEndDate) {
+      return 'midterm';
+    }
+    return 'normal';
+  })();
+
+  const isExamMode = effectiveModeForDate === 'midterm' || effectiveModeForDate === 'final';
+  const suspensionStatus = isClassSuspendedOnDate(selectedDateStr);
+  const isHolidayOrSuspendedToday = suspensionStatus.suspended;
+  const suspensionReason = suspensionStatus.reason || 'Regular classes are suspended on this date per your Academic Calendar settings.';
+
+  // Regular classes are suspended ONLY if in Midterm/Final exam mode or explicit Holiday/Suspension
+  const liveSchedule = getLiveScheduleStatus(
+    isExamMode || isHolidayOrSuspendedToday ? [] : courses,
+    targetDateObj,
+    isClassSuspendedOnDate
+  );
+  const todayClasses = isExamMode || isHolidayOrSuspendedToday ? [] : liveSchedule.todayClasses;
   const activeOrNext = isExamMode || isHolidayOrSuspendedToday
-    ? { status: 'none' as const, classItem: null, badgeLabel: '', subLabel: '' }
+    ? { status: 'none' as const, classItem: null, badgeLabel: '', subLabel: '', countdownText: '', isToday: isSelectedToday }
     : liveSchedule.activeOrNextClass;
+
+  // Dynamic personalized headline message
+  const hourNow = new Date().getHours();
+  const timeGreeting = hourNow < 12 ? 'Good morning' : hourNow < 17 ? 'Good afternoon' : 'Good evening';
+  const dynamicHeadline = (() => {
+    if (courses.length === 0) {
+      return 'Your workspace is brand new and ready for your courses.';
+    }
+    const dayLabel = isSelectedToday ? 'today' : `on ${currentDayName}`;
+    if (isExamMode) {
+      const modeName = effectiveModeForDate === 'midterm' ? 'Midterm Exam Mode' : 'Final Exam Mode';
+      return `${modeName} active — regular lectures are suspended. Focus on exam revision.`;
+    }
+    if (isHolidayOrSuspendedToday) {
+      return suspensionReason;
+    }
+    if (todayClasses.length === 0) {
+      const urgent = radarAssignments[0];
+      return urgent
+        ? `No classes ${dayLabel}. Upcoming: ${urgent.title} (${urgent.courseCode}) due ${urgent.diffDays === 0 ? 'today' : urgent.diffDays === 1 ? 'tomorrow' : `in ${urgent.diffDays} days`}.`
+        : `You have no classes scheduled ${dayLabel}. Great window for focused study!`;
+    }
+    if (isSelectedToday && activeOrNext.status === 'happening_now' && liveSchedule.currentClass) {
+      return `You have ${todayClasses.length} class${todayClasses.length === 1 ? '' : 'es'} today. In progress now: ${liveSchedule.currentClass.courseName} (${liveSchedule.currentClass.remainingMinutes} min remaining).`;
+    }
+    if (isSelectedToday && activeOrNext.status === 'upcoming_today' && liveSchedule.nextTodayClass) {
+      return `You have ${todayClasses.length} class${todayClasses.length === 1 ? '' : 'es'} today. Next class: ${liveSchedule.nextTodayClass.courseName} ${activeOrNext.countdownText}.`;
+    }
+    if (isSelectedToday && liveSchedule.allClassesCompleted) {
+      return `You're done with classes today! Time to focus on your assignments${radarAssignments[0] ? ` — ${radarAssignments[0].title} is due ${radarAssignments[0].diffDays === 0 ? 'today' : radarAssignments[0].diffDays === 1 ? 'tomorrow' : `in ${radarAssignments[0].diffDays} days`}` : ''}.`;
+    }
+    return `You have ${todayClasses.length} class${todayClasses.length === 1 ? '' : 'es'} scheduled ${dayLabel}.`;
+  })();
 
   // Filtered exams for current mode or all upcoming exams
   const modeExams = exams
@@ -187,20 +252,26 @@ export const TodayDashboard: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-            Good day, {user?.name || 'Student'}
+            {timeGreeting}, {user?.name || 'Student'}
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            {courses.length === 0
-              ? 'Your workspace is brand new and ready for your courses.'
-              : `Today is ${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}. Here is your live overview.`}
+          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-0.5 font-medium">
+            {dynamicHeadline}
           </p>
         </div>
 
         {/* Quick Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
+            onClick={() => setIsVoiceAssistantOpen(true)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 transition-colors shadow-sm"
+            title="Talk to StudyPlanner Voice Assistant (Ctrl+Shift+V)"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Voice AI</span>
+          </button>
+          <button
             onClick={() => setIsBriefingOpen(true)}
-            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1.5 transition-colors shadow-2xs"
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1.5 transition-colors shadow-sm"
             title="Open Morning Academic Briefing"
           >
             <Sun className="w-3.5 h-3.5 text-amber-500" />
@@ -208,7 +279,7 @@ export const TodayDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setIsSyncModalOpen(true)}
-            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-2xs"
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
             title="Sync with Phone or Tablet"
           >
             <Smartphone className="w-3.5 h-3.5 text-blue-500" />
@@ -216,14 +287,14 @@ export const TodayDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setIsAiDrawerOpen(true)}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-2xs"
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 shadow-sm"
           >
             <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
             <span>Ask AI (Ctrl+J)</span>
           </button>
           <button
             onClick={() => startFocusTimer(25)}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 shadow-2xs"
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 shadow-sm"
           >
             <Play className="w-3.5 h-3.5" />
             <span>Start 25m Focus</span>
@@ -237,7 +308,7 @@ export const TodayDashboard: React.FC = () => {
           ? 'bg-amber-50/90 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800/80'
           : activeAcademicMode === 'final'
           ? 'bg-rose-50/90 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800/80'
-          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-2xs'
+          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm'
       }`}>
         <div className="flex items-start sm:items-center gap-3">
           <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 font-bold ${
@@ -598,7 +669,7 @@ export const TodayDashboard: React.FC = () => {
                         <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
                           <button
                             onClick={() => startFocusTimer(25, undefined, asg.courseId, 'Work on ' + asg.title)}
-                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1 shadow-2xs"
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1 shadow-sm"
                             title="Start 25m Focus Session"
                           >
                             <Play className="w-3 h-3 text-emerald-600" />
@@ -606,7 +677,7 @@ export const TodayDashboard: React.FC = () => {
                           </button>
                           <button
                             onClick={() => updateAssignment(asg.id, { status: 'completed' })}
-                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1 shadow-2xs"
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1 shadow-sm"
                             title="Mark Assignment Complete"
                           >
                             <CheckCircle2 className="w-3 h-3" />
@@ -688,7 +759,7 @@ export const TodayDashboard: React.FC = () => {
                         <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
                           <button
                             onClick={() => startFocusTimer(25, undefined, ex.courseId, 'Revision for ' + ex.name)}
-                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1 shadow-2xs"
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1 shadow-sm"
                             title="Start 25m Exam Revision"
                           >
                             <Play className="w-3 h-3 text-emerald-600" />
@@ -699,7 +770,7 @@ export const TodayDashboard: React.FC = () => {
                               generateRevisionPlanForExam(ex.id);
                               setActiveView('exams');
                             }}
-                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-amber-600 text-white hover:bg-amber-700 flex items-center gap-1 shadow-2xs"
+                            className="px-2.5 py-1 rounded text-[11px] font-semibold bg-amber-600 text-white hover:bg-amber-700 flex items-center gap-1 shadow-sm"
                             title="Open AI Revision Plan"
                           >
                             <Sparkles className="w-3 h-3" />
@@ -745,7 +816,7 @@ export const TodayDashboard: React.FC = () => {
                     onClick={() => setTimeWindow(mins)}
                     className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
                       timeWindow === mins
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs font-semibold'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm font-semibold'
                         : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                     }`}
                   >
@@ -1391,13 +1462,74 @@ export const TodayDashboard: React.FC = () => {
           ) : (
             <>
               {/* Next Class Banner & Countdown (Normal Semester Mode) */}
-              <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
-                <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  {activeOrNext.status === 'happening_now' ? 'Class In Progress' : 'Next Scheduled Class'}
+              <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    {activeOrNext.status === 'happening_now'
+                      ? 'Class In Progress'
+                      : activeOrNext.status === 'all_completed'
+                      ? "Today's Classes Complete"
+                      : 'Next Scheduled Class'}
+                  </div>
+
+                  {/* Interactive Schedule Date Picker */}
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDashboardDate(todayStr)}
+                      className={`px-2 py-0.5 rounded font-semibold transition-colors ${
+                        isSelectedToday
+                          ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tom = new Date();
+                        tom.setDate(tom.getDate() + 1);
+                        setSelectedDashboardDate(toLocalDateKey(tom));
+                      }}
+                      className={`px-2 py-0.5 rounded font-semibold transition-colors ${
+                        (() => {
+                          const tom = new Date();
+                          tom.setDate(tom.getDate() + 1);
+                          return selectedDateStr === toLocalDateKey(tom);
+                        })()
+                          ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      Tomorrow
+                    </button>
+                    <input
+                      type="date"
+                      value={selectedDateStr}
+                      onChange={e => e.target.value && setSelectedDashboardDate(e.target.value)}
+                      aria-label="Select schedule date"
+                      className="px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-[10px]"
+                    />
+                  </div>
                 </div>
-                {activeOrNext.classItem ? (
+
+                {activeOrNext.status === 'all_completed' ? (
+                  <div className="p-4 rounded-lg border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 space-y-2">
+                    <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>You're done with classes today!</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 leading-relaxed">
+                      Time to focus on your assignments and review tasks.
+                      {activeOrNext.classItem && (
+                        <> Next session: <strong>{activeOrNext.classItem.courseName}</strong> ({activeOrNext.classItem.isTomorrow ? 'Tomorrow' : activeOrNext.classItem.dayName} at {formatTime12h(activeOrNext.classItem.startTime)}).</>
+                      )}
+                    </p>
+                  </div>
+                ) : activeOrNext.classItem ? (
                   <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 space-y-1.5">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className={`px-2 py-0.5 text-[10px] font-semibold rounded ${
                         activeOrNext.status === 'happening_now'
                           ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1.5'
@@ -1406,7 +1538,7 @@ export const TodayDashboard: React.FC = () => {
                         {activeOrNext.status === 'happening_now' && (
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
                         )}
-                        {activeOrNext.classItem.time}
+                        {formatTime12h(activeOrNext.classItem.startTime)} – {formatTime12h(activeOrNext.classItem.endTime)}
                       </span>
                       <span className={`text-[10px] font-mono font-bold ${
                         activeOrNext.status === 'happening_now' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'
@@ -1415,16 +1547,16 @@ export const TodayDashboard: React.FC = () => {
                       </span>
                     </div>
                     <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      {activeOrNext.classItem.courseCode} — {activeOrNext.classItem.location}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
                       {activeOrNext.classItem.courseName}
+                    </h3>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                      {activeOrNext.classItem.courseCode} • {activeOrNext.classItem.location}
                     </p>
-                    <div className="text-[11px] text-slate-400 font-medium">
+                    <div className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">
                       {activeOrNext.subLabel}
                     </div>
-                    <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500">
-                      <span>{activeOrNext.classItem.instructor}</span>
+                    <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                      <span>Lecturer: {activeOrNext.classItem.instructor}</span>
                       <button
                         onClick={() => navigateToCourse(activeOrNext.classItem!.courseId)}
                         className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 font-medium"
@@ -1439,17 +1571,17 @@ export const TodayDashboard: React.FC = () => {
                     <Clock className="w-6 h-6 text-slate-300 dark:text-slate-700 mx-auto" />
                     <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                       {isHolidayOrSuspendedToday
-                        ? 'University Holiday / Classes Cancelled Today'
+                        ? 'University Holiday / Classes Suspended'
                         : courses.length === 0
                         ? 'No courses added yet'
-                        : 'No upcoming classes scheduled'}
+                        : `No classes scheduled on ${currentDayName}`}
                     </div>
                     <p className="text-[11px] text-slate-400">
                       {isHolidayOrSuspendedToday
-                        ? 'Regular classes are suspended today per your Academic Calendar settings.'
+                        ? suspensionReason
                         : courses.length === 0
                         ? 'Tell Ask AI what classes you have to build your timetable schedule.'
-                        : 'All sessions are complete for now. Check the Timetable tab for the rest of your week.'}
+                        : 'Your timetable has no class meetings on this day. Use the time to get ahead on assignments.'}
                     </p>
                     {courses.length === 0 && (
                       <button
@@ -1467,11 +1599,11 @@ export const TodayDashboard: React.FC = () => {
               <div className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
-                    Today's Classes ({todayClasses.length})
+                    {isSelectedToday ? "Today's Classes" : `${currentDayName}'s Classes`} ({todayClasses.length})
                   </h2>
                   <button
                     onClick={() => setActiveView('schedule')}
-                    className="text-[11px] text-blue-600 hover:underline"
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
                   >
                     Full Timetable
                   </button>
@@ -1479,24 +1611,25 @@ export const TodayDashboard: React.FC = () => {
 
                 {todayClasses.length === 0 ? (
                   <div className="py-4 text-center text-xs text-slate-400">
-                    0 classes on {currentDayName}.
+                    {isHolidayOrSuspendedToday ? suspensionReason : `0 classes scheduled on ${currentDayName} (${selectedDateStr}).`}
                   </div>
                 ) : (
                   <div className="space-y-2">
                     {todayClasses.map((cls, idx) => (
                       <div
-                        key={`${cls.courseId}_${cls.time}_${idx}`}
+                        key={`${cls.courseId}_${cls.startTime}_${idx}`}
                         onClick={() => navigateToCourse(cls.courseId)}
                         className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-1 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition-colors group"
                       >
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cls.color }} />
-                            <span className="font-semibold text-xs text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition-colors">
-                              {cls.courseCode}
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cls.color }} />
+                            <span className="font-semibold text-xs text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition-colors truncate">
+                              {cls.courseName}
                             </span>
+                            <span className="text-[10px] font-mono text-slate-400 shrink-0">({cls.courseCode})</span>
                           </div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             {cls.status === 'in_progress' && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold flex items-center gap-1">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
@@ -1513,12 +1646,9 @@ export const TodayDashboard: React.FC = () => {
                             </span>
                           </div>
                         </div>
-                        <div className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                          {cls.courseName}
-                        </div>
-                        <div className="text-[11px] text-slate-400 font-mono flex items-center justify-between">
-                          <span>{cls.time}</span>
-                          <span>{cls.location}</span>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between font-mono pt-0.5">
+                          <span>{formatTime12h(cls.startTime)} – {formatTime12h(cls.endTime)}</span>
+                          <span className="truncate ml-2 font-sans">{cls.location}{cls.instructor ? ` • ${cls.instructor}` : ''}</span>
                         </div>
                       </div>
                     ))}

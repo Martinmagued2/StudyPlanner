@@ -35,7 +35,10 @@ import {
   MeetingSlot,
   AcademicMode,
   AcademicCalendarConfig,
-  StoredAccountRecord
+  StoredAccountRecord,
+  NoteFolder,
+  NotificationPreferences,
+  EmailNotificationLog
 } from '../types';
 import { uploadToCloud, fetchFromCloud, CloudWorkspacePayload } from '../services/cloudSync';
 import {
@@ -52,6 +55,11 @@ import {
   pruneSupabaseBloat,
   dbSaveNote,
   dbDeleteNote,
+  dbSaveNoteFolder,
+  dbDeleteNoteFolder,
+  dbSaveNotificationPreferences,
+  dbLoadNotificationPreferences,
+  dbLoadEmailNotificationLogs,
   dbSaveFile,
   dbDeleteFile,
   dbSaveCourse,
@@ -86,7 +94,8 @@ import {
   getAcademicScheduleContext,
   isScheduleOrDateQuery,
   generateScheduleAnswer,
-  buildGeminiAcademicPrompt
+  buildGeminiAcademicPrompt,
+  toLocalDateKey
 } from '../services/academicScheduleService';
 import {
   initialUser,
@@ -235,9 +244,20 @@ interface AppContextType {
   notes: Note[];
   addNote: (note: Omit<Note, 'id' | 'createdAt' | 'updatedAt' | 'inTrash'>) => Note;
   updateNote: (id: string, updates: Partial<Note>) => void;
+  duplicateNote: (id: string) => Note | null;
   moveNoteToTrash: (id: string) => void;
   restoreNote: (id: string) => void;
   deleteNotePermanently: (id: string) => void;
+
+  noteFolders: NoteFolder[];
+  addNoteFolder: (folder: Omit<NoteFolder, 'id' | 'createdAt'>) => NoteFolder;
+  updateNoteFolder: (id: string, updates: Partial<NoteFolder>) => void;
+  deleteNoteFolder: (id: string) => void;
+
+  notesNavTarget: { noteId?: string; searchQuery?: string; courseId?: string } | null;
+  setNotesNavTarget: (target: { noteId?: string; searchQuery?: string; courseId?: string } | null) => void;
+  selectedDashboardDate: string;
+  setSelectedDashboardDate: (dateStr: string) => void;
 
   events: CalendarEvent[];
   addEvent: (event: Omit<CalendarEvent, 'id'>) => CalendarEvent;
@@ -310,6 +330,14 @@ interface AppContextType {
   markAllNotificationsRead: () => void;
   reminderLogs: ReminderLog[];
   triggerTestReminder: () => void;
+  notificationPreferences: NotificationPreferences;
+  updateNotificationPreferences: (updates: Partial<NotificationPreferences>) => Promise<void>;
+  emailNotificationLogs: EmailNotificationLog[];
+  refreshEmailNotificationLogs: () => Promise<void>;
+
+  // Voice Assistant
+  isVoiceAssistantOpen: boolean;
+  setIsVoiceAssistantOpen: (open: boolean) => void;
 
   // Intelligence
   getWhatShouldIDoNow: (minutesWindow?: number) => { topTask: Task | null; reason: string; alternatives: Task[] };
@@ -496,6 +524,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [assignments, setAssignments] = useState<Assignment[]>(() => loadStored('assignments', []));
   const [tasks, setTasks] = useState<Task[]>(() => loadStored('tasks', []));
   const [notes, setNotes] = useState<Note[]>(() => loadStored('notes', []));
+  const [noteFolders, setNoteFolders] = useState<NoteFolder[]>(() => loadStored('note_folders', []));
+  const [notesNavTarget, setNotesNavTarget] = useState<{ noteId?: string; searchQuery?: string; courseId?: string } | null>(null);
+  const [selectedDashboardDate, setSelectedDashboardDate] = useState<string>(() => toLocalDateKey(new Date()));
+  const [isVoiceAssistantOpen, setIsVoiceAssistantOpen] = useState<boolean>(false);
   const [events, setEvents] = useState<CalendarEvent[]>(() => loadStored('events', []));
   const [inboxItems, setInboxItems] = useState<InboxItem[]>(() => loadStored('inbox', []));
   const [files, setFiles] = useState<DocumentFile[]>(() => {
@@ -569,6 +601,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   ]));
   const [reminderLogs, setReminderLogs] = useState<ReminderLog[]>(() => loadStored('reminder_logs', []));
+  const defaultNotificationPrefs: NotificationPreferences = {
+    email: user?.email || '',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/London',
+    dailyDigestEnabled: true,
+    dailyDigestTime: '08:00',
+    deadlineRemindersEnabled: true,
+    reminderDaysBefore: [3, 2, 1],
+    antiProcrastinationEnabled: true,
+    antiProcrastinationFrequency: 'smart',
+    weeklySummaryEnabled: true,
+    enableClasses: true,
+    enableExams: true,
+    enableAssignments: true,
+    lastAppOpenAt: new Date().toISOString()
+  };
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(() =>
+    loadStored('notification_prefs', defaultNotificationPrefs)
+  );
+  const [emailNotificationLogs, setEmailNotificationLogs] = useState<EmailNotificationLog[]>([]);
 
   const updateAcademicConfig = useCallback((updates: Partial<AcademicCalendarConfig>) => {
     setAcademicConfig(prev => {
@@ -585,7 +636,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (academicConfig.modePreference && academicConfig.modePreference !== 'auto') {
       return academicConfig.modePreference;
     }
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = toLocalDateKey(new Date());
     if (
       academicConfig.finalStartDate &&
       academicConfig.finalEndDate &&
@@ -608,8 +659,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Determine whether regular classes are suspended on a given date (YYYY-MM-DD) without deleting them
   const isClassSuspendedOnDate = useCallback(
     (dateStr: string, courseId?: string): { suspended: boolean; reason?: string } => {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      // 1. Check explicit manual override if querying today
+      const todayStr = toLocalDateKey(new Date());
+      const isExplicitNormal = academicConfig.modePreference === 'normal';
+
+      // 1. Check explicit manual override when querying today
       if (dateStr === todayStr) {
         if (activeAcademicMode === 'midterm') {
           return { suspended: true, reason: 'Midterm Examination Week — Regular lectures suspended' };
@@ -618,33 +671,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return { suspended: true, reason: 'Final Examination Period — Regular lectures suspended' };
         }
       }
-      // 2. Check configured Final Exam date range
-      if (
-        academicConfig.finalStartDate &&
-        academicConfig.finalEndDate &&
-        dateStr >= academicConfig.finalStartDate &&
-        dateStr <= academicConfig.finalEndDate
-      ) {
-        return { suspended: true, reason: 'Final Examination Period — Regular lectures suspended' };
+
+      // 2 & 3. Only apply Midterm / Final date ranges automatically when NOT explicitly forced to Normal Schedule
+      if (!isExplicitNormal) {
+        if (
+          academicConfig.finalStartDate &&
+          academicConfig.finalEndDate &&
+          dateStr >= academicConfig.finalStartDate &&
+          dateStr <= academicConfig.finalEndDate
+        ) {
+          return { suspended: true, reason: 'Final Examination Period — Regular lectures suspended' };
+        }
+        if (
+          academicConfig.midtermStartDate &&
+          academicConfig.midtermEndDate &&
+          dateStr >= academicConfig.midtermStartDate &&
+          dateStr <= academicConfig.midtermEndDate
+        ) {
+          return { suspended: true, reason: 'Midterm Examination Week — Regular lectures suspended' };
+        }
       }
-      // 3. Check configured Midterm Week date range
-      if (
-        academicConfig.midtermStartDate &&
-        academicConfig.midtermEndDate &&
-        dateStr >= academicConfig.midtermStartDate &&
-        dateStr <= academicConfig.midtermEndDate
-      ) {
-        return { suspended: true, reason: 'Midterm Examination Week — Regular lectures suspended' };
-      }
+
       // 4. Check University Holidays
       const holiday = (academicConfig.holidays || []).find(h => {
-        if (!h.date) return false;
-        const end = h.endDate || h.date;
-        return dateStr >= h.date && dateStr <= end;
+        const start = h.date || h.startDate;
+        if (!start) return false;
+        const end = h.endDate || start;
+        return dateStr >= start && dateStr <= end;
       });
       if (holiday) {
-        return { suspended: true, reason: `University Holiday: ${holiday.name}` };
+        return { suspended: true, reason: `University Holiday: ${holiday.name || holiday.title || 'Academic Break'}` };
       }
+
       // 5. Check individual Cancelled Classes
       if (courseId) {
         const cancelled = (academicConfig.cancelledClasses || []).find(
@@ -702,6 +760,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => { saveStored('assignments', assignments); }, [assignments, storageKey]);
   useEffect(() => { saveStored('tasks', tasks); }, [tasks, storageKey]);
   useEffect(() => { saveStored('notes', notes); }, [notes, storageKey]);
+  useEffect(() => { saveStored('note_folders', noteFolders); }, [noteFolders, storageKey]);
   useEffect(() => { saveStored('events', events); }, [events, storageKey]);
   useEffect(() => { saveStored('inbox', inboxItems); }, [inboxItems, storageKey]);
   useEffect(() => { saveStored('files', files); }, [files, storageKey]);
@@ -719,6 +778,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => { saveStored('repos', githubRepos); }, [githubRepos, storageKey]);
   useEffect(() => { saveStored('notifications', notifications); }, [notifications, storageKey]);
   useEffect(() => { saveStored('reminder_logs', reminderLogs); }, [reminderLogs, storageKey]);
+  useEffect(() => { saveStored('notification_prefs', notificationPreferences); }, [notificationPreferences, storageKey]);
+
+  const refreshEmailNotificationLogs = useCallback(async () => {
+    if (!user || !isSupabaseConfigured()) return;
+    const logs = await dbLoadEmailNotificationLogs(user.id);
+    if (Array.isArray(logs)) {
+      setEmailNotificationLogs(logs);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const nowIso = new Date().toISOString();
+    setNotificationPreferences(prev => ({
+      ...prev,
+      email: prev.email || user.email || '',
+      lastAppOpenAt: nowIso
+    }));
+    if (isSupabaseConfigured()) {
+      dbLoadNotificationPreferences(user.id).then(remotePrefs => {
+        if (remotePrefs) {
+          setNotificationPreferences(prev => ({ ...remotePrefs, lastAppOpenAt: nowIso }));
+          dbSaveNotificationPreferences(user.id, { ...remotePrefs, lastAppOpenAt: nowIso }).catch(() => {});
+        } else if (user.email) {
+          dbSaveNotificationPreferences(user.id, {
+            ...notificationPreferences,
+            email: notificationPreferences.email || user.email,
+            lastAppOpenAt: nowIso
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+      refreshEmailNotificationLogs().catch(() => {});
+    }
+  }, [user?.id]);
 
   // Auto-fetch real commits for any linked repo that hasn't fetched commits yet
   useEffect(() => {
@@ -1033,6 +1126,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAssignments(readUserKey('assignments', []));
     setTasks(readUserKey('tasks', []));
     setNotes(readUserKey('notes', []));
+    setNoteFolders(readUserKey('note_folders', []));
     setEvents(readUserKey('events', []));
     setInboxItems(readUserKey('inbox', []));
     setFiles(readUserKey('files', []));
@@ -1086,6 +1180,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (Array.isArray(dbData.assignments)) setAssignments(dbData.assignments);
           if (Array.isArray(dbData.tasks)) setTasks(dbData.tasks);
           if (Array.isArray(dbData.notes)) setNotes(dbData.notes);
+          if (Array.isArray(dbData.noteFolders)) setNoteFolders(dbData.noteFolders);
           if (Array.isArray(dbData.files)) setFiles(dbData.files);
           if (Array.isArray(dbData.exams)) setExams(dbData.exams);
           if (Array.isArray(dbData.events)) setEvents(dbData.events);
@@ -1749,6 +1844,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return updated;
     });
+  };
+
+  const duplicateNote = (id: string): Note | null => {
+    const source = notes.find(n => n.id === id);
+    if (!source) return null;
+    const clone = addNote({
+      title: `${source.title || 'Untitled'} (Copy)`,
+      content: source.content,
+      blocks: source.blocks ? JSON.parse(JSON.stringify(source.blocks)) : undefined,
+      courseId: source.courseId,
+      folderId: source.folderId,
+      icon: source.icon,
+      coverImage: source.coverImage,
+      tags: [...(source.tags || [])],
+      pinned: false,
+      isFavorite: false,
+      isArchived: false,
+      highlightedTerms: [...(source.highlightedTerms || [])]
+    });
+    return clone;
+  };
+
+  const addNoteFolder = (folderData: Omit<NoteFolder, 'id' | 'createdAt'>): NoteFolder => {
+    const folder: NoteFolder = {
+      ...folderData,
+      id: generateUniqueId('folder'),
+      createdAt: new Date().toISOString()
+    };
+    setNoteFolders(prev => [...prev, folder]);
+    if (user && isSupabaseConfigured()) {
+      dbSaveNoteFolder(user.id, folder).catch(err => console.warn('DB folder save:', err));
+    }
+    return folder;
+  };
+
+  const updateNoteFolder = (id: string, updates: Partial<NoteFolder>) => {
+    setNoteFolders(prev => {
+      const updated = prev.map(f => f.id === id ? { ...f, ...updates } : f);
+      const target = updated.find(f => f.id === id);
+      if (target && user && isSupabaseConfigured()) {
+        dbSaveNoteFolder(user.id, target).catch(err => console.warn('DB folder update:', err));
+      }
+      return updated;
+    });
+  };
+
+  const deleteNoteFolder = (id: string) => {
+    // Reassign notes in this folder (and subfolders) back to root cleanly instead of deleting notes!
+    const subfolderIds = new Set<string>([id]);
+    noteFolders.forEach(f => {
+      if (f.parentId === id) subfolderIds.add(f.id);
+    });
+    setNotes(prev => prev.map(n => n.folderId && subfolderIds.has(n.folderId) ? { ...n, folderId: undefined } : n));
+    setNoteFolders(prev => prev.filter(f => !subfolderIds.has(f.id)));
+    if (user && isSupabaseConfigured()) {
+      subfolderIds.forEach(fid => {
+        dbDeleteNoteFolder(user.id, fid).catch(() => {});
+      });
+    }
   };
 
   const moveNoteToTrash = (id: string) => {
@@ -4147,6 +4301,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 
+  const updateNotificationPreferences = async (updates: Partial<NotificationPreferences>) => {
+    let nextPrefs!: NotificationPreferences;
+    setNotificationPreferences(prev => {
+      nextPrefs = { ...prev, ...updates, updatedAt: new Date().toISOString() };
+      saveStored('notification_prefs', nextPrefs);
+      return nextPrefs;
+    });
+    if (user && isSupabaseConfigured() && nextPrefs) {
+      await dbSaveNotificationPreferences(user.id, nextPrefs);
+    }
+  };
+
   const triggerTestReminder = () => {
     const newLog: ReminderLog = {
       id: `log_${Date.now()}`,
@@ -4240,6 +4406,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assignments,
         tasks,
         notes,
+        noteFolders,
+        notificationPreferences,
         events,
         inboxItems,
         files: files.map(f => ({
@@ -4441,6 +4609,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assignments,
         tasks,
         notes,
+        noteFolders,
+        notificationPreferences,
         events,
         inboxItems,
         files,
@@ -4488,6 +4658,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(data.assignments)) setIfChanged(setAssignments, data.assignments);
     if (Array.isArray(data.tasks)) setIfChanged(setTasks, data.tasks);
     if (Array.isArray(data.notes)) setIfChanged(setNotes, data.notes);
+    if (Array.isArray(data.noteFolders)) setIfChanged(setNoteFolders, data.noteFolders);
     if (Array.isArray(data.events)) setIfChanged(setEvents, data.events);
     if (Array.isArray(data.inboxItems)) setIfChanged(setInboxItems, data.inboxItems);
     if (Array.isArray(data.files)) setIfChanged(setFiles, data.files);
@@ -4703,9 +4874,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notes,
         addNote,
         updateNote,
+        duplicateNote,
         moveNoteToTrash,
         restoreNote,
         deleteNotePermanently,
+        noteFolders,
+        addNoteFolder,
+        updateNoteFolder,
+        deleteNoteFolder,
+        notesNavTarget,
+        setNotesNavTarget,
+        selectedDashboardDate,
+        setSelectedDashboardDate,
         events,
         addEvent,
         updateEvent,
@@ -4766,6 +4946,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         markAllNotificationsRead,
         reminderLogs,
         triggerTestReminder,
+        notificationPreferences,
+        updateNotificationPreferences,
+        emailNotificationLogs,
+        refreshEmailNotificationLogs,
+        isVoiceAssistantOpen,
+        setIsVoiceAssistantOpen,
         getWhatShouldIDoNow,
         calculateCumulativeGpa,
         calculateTargetExamScore,

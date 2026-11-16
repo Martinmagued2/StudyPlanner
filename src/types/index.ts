@@ -73,13 +73,68 @@ export interface Task {
   source: 'user' | 'github' | 'ai' | 'moodle' | 'breakdown' | 'revision';
 }
 
+export type NoteBlockType =
+  | 'paragraph'
+  | 'h1'
+  | 'h2'
+  | 'h3'
+  | 'bullet'
+  | 'numbered'
+  | 'todo'
+  | 'quote'
+  | 'code'
+  | 'divider'
+  | 'table'
+  | 'image'
+  | 'math'
+  | 'callout'
+  | 'toggle';
+
+export interface NoteBlock {
+  id: string;
+  type: NoteBlockType;
+  content: string; // Rich inline HTML or code/latex string
+  indent?: number; // 0..3 nested indentation
+  props?: {
+    checked?: boolean;
+    language?: string;
+    calloutTone?: 'info' | 'tip' | 'warning' | 'danger' | 'neutral';
+    calloutIcon?: string;
+    toggleOpen?: boolean;
+    toggleBody?: string; // Rich HTML or sub-content inside toggle
+    children?: NoteBlock[]; // Nested blocks inside toggle or parent
+    tableRows?: string[][];
+    tableHasHeader?: boolean;
+    imageUrl?: string;
+    imageCaption?: string;
+    imageWidth?: number; // percentage 25..100
+    displayMode?: boolean; // KaTeX math display mode
+  };
+}
+
+export interface NoteFolder {
+  id: string;
+  name: string;
+  parentId?: string;
+  courseId?: string;
+  icon?: string;
+  color?: string;
+  createdAt: string;
+}
+
 export interface Note {
   id: string;
   title: string;
-  content: string; // HTML or Markdown
+  content: string; // Semantic HTML synced from blocks
+  blocks?: NoteBlock[];
   courseId?: string;
+  folderId?: string;
+  icon?: string;
+  coverImage?: string;
   tags: string[];
   pinned: boolean;
+  isFavorite?: boolean;
+  isArchived?: boolean;
   inTrash: boolean;
   createdAt: string;
   updatedAt: string;
@@ -400,6 +455,42 @@ export interface ReminderLog {
   category: string;
   status: 'delivered' | 'failed' | 'pending';
   latenessMinutes: number;
+  notificationType?: string;
+  recipientEmail?: string;
+  errorMessage?: string;
+}
+
+export interface NotificationPreferences {
+  email: string;
+  timezone: string;
+  dailyDigestEnabled: boolean;
+  dailyDigestTime: string; // "08:00"
+  deadlineRemindersEnabled: boolean;
+  reminderDaysBefore: number[]; // e.g. [3, 2, 1]
+  antiProcrastinationEnabled: boolean;
+  antiProcrastinationFrequency: 'smart' | 'gentle' | 'weekly_only';
+  weeklySummaryEnabled: boolean;
+  enableClasses: boolean;
+  enableExams: boolean;
+  enableAssignments: boolean;
+  lastAppOpenAt?: string;
+  updatedAt?: string;
+}
+
+export interface EmailNotificationLog {
+  id: string;
+  userId: string;
+  recipientEmail: string;
+  notificationType: 'daily_digest' | 'deadline_reminder' | 'anti_procrastination' | 'weekly_summary' | 'test_email';
+  entityId?: string;
+  daysBefore?: number;
+  scheduledForDate: string;
+  subject: string;
+  status: 'sent' | 'failed' | 'skipped';
+  providerMessageId?: string;
+  errorMessage?: string;
+  retryCount: number;
+  sentAt: string;
 }
 
 export interface AppNotification {

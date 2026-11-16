@@ -18,6 +18,9 @@
 -- ==============================================================================
 
 -- 1. Safely drop any older broken tables so column types and constraints are 100% clean
+DROP TABLE IF EXISTS public.email_notification_logs CASCADE;
+DROP TABLE IF EXISTS public.notification_preferences CASCADE;
+DROP TABLE IF EXISTS public.note_folders CASCADE;
 DROP TABLE IF EXISTS public.workspaces CASCADE;
 DROP TABLE IF EXISTS public.chat_sessions CASCADE;
 DROP TABLE IF EXISTS public.previous_term_courses CASCADE;
@@ -66,15 +69,33 @@ CREATE TABLE public.courses (
 );
 CREATE INDEX idx_courses_user ON public.courses(user_id);
 
--- 4. Create Notes Table (Stores 100% of rich lecture notes, markdown, and study guides)
+-- 4. Create Note Folders & Notes Tables (Notion-grade structured notes)
+CREATE TABLE public.note_folders (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    parent_id TEXT,
+    course_id TEXT,
+    icon TEXT,
+    color TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX idx_note_folders_user ON public.note_folders(user_id);
+
 CREATE TABLE public.notes (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     course_id TEXT,
+    folder_id TEXT,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
+    blocks JSONB DEFAULT '[]'::jsonb,
+    icon TEXT,
+    cover_image TEXT,
     tags TEXT[] DEFAULT '{}',
     pinned BOOLEAN DEFAULT false,
+    is_favorite BOOLEAN DEFAULT false,
+    is_archived BOOLEAN DEFAULT false,
     in_trash BOOLEAN DEFAULT false,
     highlighted_terms TEXT[] DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
@@ -311,6 +332,43 @@ CREATE TABLE public.workspaces (
 );
 CREATE INDEX idx_workspaces_user ON public.workspaces(user_id);
 
+-- 18. Create Notification Preferences & Email Notification Logs Tables
+CREATE TABLE public.notification_preferences (
+    user_id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'Europe/London',
+    daily_digest_enabled BOOLEAN DEFAULT true,
+    daily_digest_time TEXT DEFAULT '08:00',
+    deadline_reminders_enabled BOOLEAN DEFAULT true,
+    reminder_days_before INTEGER[] DEFAULT ARRAY[3, 2, 1],
+    anti_procrastination_enabled BOOLEAN DEFAULT true,
+    anti_procrastination_frequency TEXT DEFAULT 'smart',
+    weekly_summary_enabled BOOLEAN DEFAULT true,
+    enable_classes BOOLEAN DEFAULT true,
+    enable_exams BOOLEAN DEFAULT true,
+    enable_assignments BOOLEAN DEFAULT true,
+    last_app_open_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE public.email_notification_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    recipient_email TEXT NOT NULL,
+    notification_type TEXT NOT NULL,
+    entity_id TEXT DEFAULT '',
+    days_before INTEGER DEFAULT 0,
+    scheduled_for_date TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'sent',
+    provider_message_id TEXT,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    sent_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT unique_email_dedup UNIQUE (user_id, notification_type, entity_id, days_before, scheduled_for_date)
+);
+CREATE INDEX idx_email_logs_user ON public.email_notification_logs(user_id);
+
 -- ==============================================================================
 -- ENABLE ROW LEVEL SECURITY (RLS) ON ALL TABLES
 -- Permits seamless synchronization with both public anon key and authenticated users
@@ -319,10 +377,11 @@ DO $$
 DECLARE
     tbl text;
     tables text[] := ARRAY[
-        'profiles', 'courses', 'notes', 'files', 'tasks', 
+        'profiles', 'courses', 'note_folders', 'notes', 'files', 'tasks', 
         'assignments', 'exams', 'flashcard_decks', 'flashcards', 
         'quizzes', 'calendar_events', 'grade_items', 'previous_term_courses',
-        'chat_sessions', 'focus_sessions', 'inbox_items', 'workspaces'
+        'chat_sessions', 'focus_sessions', 'inbox_items', 'workspaces',
+        'notification_preferences', 'email_notification_logs'
     ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP

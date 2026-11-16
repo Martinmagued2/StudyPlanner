@@ -403,7 +403,7 @@ export const CourseDetailView: React.FC = () => {
                   </div>
                   <button
                     onClick={() => setActiveCourseTab('agent')}
-                    className="w-full py-1.5 px-3 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white flex items-center justify-center gap-1.5 shadow-2xs transition-colors"
+                    className="w-full py-1.5 px-3 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white flex items-center justify-center gap-1.5 shadow-sm transition-colors"
                   >
                     <Bot className="w-3.5 h-3.5" />
                     <span>Prepare with AI Agent</span>
@@ -652,7 +652,7 @@ export const CourseDetailView: React.FC = () => {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors">
+                <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-colors">
                   <UploadCloud className="w-3.5 h-3.5" />
                   <span>{isUploadingCourseFile ? 'Extracting...' : `Upload to ${course.code}`}</span>
                   <input

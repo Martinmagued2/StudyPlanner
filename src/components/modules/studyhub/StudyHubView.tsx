@@ -121,7 +121,7 @@ export const StudyHubView: React.FC = () => {
             onClick={() => setActiveTab('flashcards')}
             className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
               activeTab === 'flashcards'
-                ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold'
+                ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
           >
@@ -132,7 +132,7 @@ export const StudyHubView: React.FC = () => {
             onClick={() => setActiveTab('timer')}
             className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
               activeTab === 'timer'
-                ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold'
+                ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
           >
@@ -143,7 +143,7 @@ export const StudyHubView: React.FC = () => {
             onClick={() => setActiveTab('insights')}
             className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
               activeTab === 'insights'
-                ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold'
+                ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
           >

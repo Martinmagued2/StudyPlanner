@@ -16,6 +16,7 @@ export interface CloudWorkspacePayload {
   assignments: any[];
   tasks: any[];
   notes: any[];
+  noteFolders?: any[];
   events: any[];
   inboxItems: any[];
   files: any[];
@@ -32,6 +33,7 @@ export interface CloudWorkspacePayload {
   githubRepos: any[];
   notifications: any[];
   reminderLogs: any[];
+  notificationPreferences?: any;
   chatSessions?: any[];
   activeChatSessionId?: string;
   theme?: string;

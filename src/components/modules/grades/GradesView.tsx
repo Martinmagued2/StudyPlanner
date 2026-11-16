@@ -301,7 +301,7 @@ export const GradesView: React.FC = () => {
                       onClick={() => setSelectedCourseId(c.id)}
                       className={`px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-2 shrink-0 ${
                         isSelected
-                          ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold shadow-xs'
+                          ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-semibold shadow-sm'
                           : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
                       }`}
                     >
@@ -400,7 +400,7 @@ export const GradesView: React.FC = () => {
               )}
 
               {/* Assessment Breakdown Table */}
-              <div className="border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                 <div className="p-3 bg-slate-50/70 dark:bg-slate-950/40 border-b border-slate-100 dark:border-slate-800 grid grid-cols-12 text-xs font-semibold text-slate-500">
                   <div className="col-span-5">Assessment Component</div>
                   <div className="col-span-2">Category</div>
@@ -446,7 +446,7 @@ export const GradesView: React.FC = () => {
               </div>
 
               {/* Add Assessment Component Form */}
-              <form onSubmit={handleAddAssessment} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center gap-2 text-xs shadow-xs">
+              <form onSubmit={handleAddAssessment} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center gap-2 text-xs shadow-sm">
                 <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">Add Assessment:</span>
 
                 <select
@@ -556,7 +556,7 @@ export const GradesView: React.FC = () => {
               const termGpa = termCredits > 0 ? (termPoints / termCredits).toFixed(2) : '0.00';
 
               return (
-                <div key={termName} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
+                <div key={termName} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                   {/* Term Header */}
                   <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -617,7 +617,7 @@ export const GradesView: React.FC = () => {
 
       {/* TAB 3: OFFICIAL GPA SCALE TABLE (MATCHES IMAGE 1-TO-1) */}
       {activeTab === 'scale' && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs space-y-4 p-5">
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm space-y-4 p-5">
           <div>
             <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
               Official University Academic Grading & GPA Scale

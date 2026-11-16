@@ -266,12 +266,12 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm">
               <Smartphone className="w-4 h-4" />
             </div>
             <div>
@@ -331,7 +331,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
             <button
               onClick={handleManualSyncNow}
               disabled={isManualSyncing}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1.5 transition-colors shrink-0 shadow-2xs"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1.5 transition-colors shrink-0 shadow-sm"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing ? 'animate-spin' : ''}`} />
               <span>{isManualSyncing ? 'Syncing...' : 'Sync Now'}</span>
@@ -344,7 +344,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
               onClick={() => setActiveTab('qr')}
               className={`flex-1 py-1.5 px-2 rounded-md flex items-center justify-center gap-1.5 transition-all ${
                 activeTab === 'qr'
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 font-semibold shadow-xs'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 font-semibold shadow-sm'
                   : 'hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
@@ -355,7 +355,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
               onClick={() => setActiveTab('code')}
               className={`flex-1 py-1.5 px-2 rounded-md flex items-center justify-center gap-1.5 transition-all ${
                 activeTab === 'code'
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 font-semibold shadow-xs'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 font-semibold shadow-sm'
                   : 'hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
@@ -366,7 +366,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
               onClick={() => setActiveTab('file')}
               className={`flex-1 py-1.5 px-2 rounded-md flex items-center justify-center gap-1.5 transition-all ${
                 activeTab === 'file'
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 font-semibold shadow-xs'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 font-semibold shadow-sm'
                   : 'hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
@@ -380,7 +380,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
             <div className="space-y-3">
               <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row items-center gap-4">
                 {/* QR Code Container */}
-                <div className="p-2.5 bg-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs shrink-0 flex flex-col items-center justify-center min-w-[136px] min-h-[136px]">
+                <div className="p-2.5 bg-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm shrink-0 flex flex-col items-center justify-center min-w-[136px] min-h-[136px]">
                   {qrCodeDataUrl ? (
                     <>
                       <img
@@ -421,7 +421,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
                     <button
                       onClick={handleCopyLink}
                       disabled={!syncUrl}
-                      className="px-2.5 py-1.5 text-xs font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1 shrink-0 transition-colors shadow-2xs"
+                      className="px-2.5 py-1.5 text-xs font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1 shrink-0 transition-colors shadow-sm"
                     >
                       {copiedLink ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                       <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
@@ -452,7 +452,7 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
                       <button
                         type="button"
                         onClick={handleCopyCode}
-                        className="px-2.5 py-1 text-xs font-semibold bg-white dark:bg-slate-800 rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors shadow-2xs flex items-center gap-1"
+                        className="px-2.5 py-1 text-xs font-semibold bg-white dark:bg-slate-800 rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors shadow-sm flex items-center gap-1"
                       >
                         {copiedCode ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                         <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
@@ -530,12 +530,12 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
                   placeholder="Enter 6-digit Sync Code (e.g. 582914)..."
                   value={inputCode}
                   onChange={e => setInputCode(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono tracking-wider font-bold"
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono tracking-wider font-bold"
                 />
                 <button
                   type="submit"
                   disabled={!inputCode.trim() || isManualSyncing}
-                  className="w-full px-4 py-2.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+                  className="w-full px-4 py-2.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5 transition-colors shadow-sm"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing ? 'animate-spin' : ''}`} />
                   <span>{isManualSyncing ? 'Syncing...' : 'Connect & Restore Workspace'}</span>

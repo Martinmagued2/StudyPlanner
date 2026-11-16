@@ -526,7 +526,7 @@ export const GlobalAiDrawer: React.FC = () => {
                 return (
                   <div
                     key={mem.id}
-                    className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col gap-2 text-xs shadow-2xs"
+                    className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col gap-2 text-xs shadow-sm"
                   >
                     {isEditing ? (
                       <div className="space-y-2">
@@ -669,7 +669,7 @@ export const GlobalAiDrawer: React.FC = () => {
                   </button>
                   <button
                     type="submit"
-                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-xs"
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-sm"
                   >
                     Save API Key
                   </button>

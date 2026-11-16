@@ -62,15 +62,35 @@ export function parseTimeToMinutes(timeStr: string): number {
   return h * 60 + m;
 }
 
+export function toLocalDateKey(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function formatCountdown(minutes: number): string {
+  if (minutes <= 0) return 'now';
+  if (minutes < 60) return `in ${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hrs = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `in ${hrs} hr ${mins} min` : `in ${hrs} hour${hrs === 1 ? '' : 's'}`;
+}
+
 export interface LiveScheduleStatus {
+  targetDateStr: string;
+  targetDayName: string;
+  isToday: boolean;
   currentClass: (ScheduledClassItem & { remainingMinutes: number }) | null;
   nextTodayClass: (ScheduledClassItem & { startsInMinutes: number }) | null;
   nextUpcomingClass: (ScheduledClassItem & { dayName: string; isTomorrow: boolean; daysAway: number }) | null;
+  allClassesCompleted: boolean;
   activeOrNextClass: {
-    status: 'happening_now' | 'upcoming_today' | 'upcoming_future' | 'none';
+    status: 'happening_now' | 'upcoming_today' | 'all_completed' | 'upcoming_future' | 'none';
     classItem: (ScheduledClassItem & { dayName?: string; isTomorrow?: boolean }) | null;
     badgeLabel: string;
     subLabel: string;
+    countdownText: string;
     isToday: boolean;
   };
   todayClasses: (ScheduledClassItem & {
@@ -80,68 +100,47 @@ export interface LiveScheduleStatus {
   })[];
 }
 
-export function getLiveScheduleStatus(courses: Course[]): LiveScheduleStatus {
+export function getLiveScheduleStatus(
+  courses: Course[],
+  targetDate: Date = new Date(),
+  isCourseSuspended?: (dateStr: string, courseId?: string) => { suspended: boolean; reason?: string }
+): LiveScheduleStatus {
   const now = new Date();
-  const currentDayNum = now.getDay();
+  const todayKey = toLocalDateKey(now);
+  const targetKey = toLocalDateKey(targetDate);
+  const isToday = targetKey === todayKey;
+  const targetDayNum = targetDate.getDay();
+  const targetDayName = DAY_NAMES[targetDayNum];
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-  // Get and sort today's classes chronologically by start time
-  const todayClasses = courses.flatMap(c => {
-    const slots = c.meetingSlots || [];
-    return slots
-      .filter(s => parseDayIndex(s.day) === currentDayNum)
-      .map(s => {
-        const startMin = parseTimeToMinutes(s.startTime);
-        const endMin = parseTimeToMinutes(s.endTime);
-        let status: 'completed' | 'in_progress' | 'upcoming' = 'upcoming';
-        if (currentMinutes >= endMin) {
-          status = 'completed';
-        } else if (currentMinutes >= startMin && currentMinutes < endMin) {
-          status = 'in_progress';
-        }
+  const activeCourses = courses.filter(c => !c.isArchived);
 
-        return {
-          courseId: c.id,
-          courseCode: c.code,
-          courseName: c.name,
-          time: `${s.startTime} - ${s.endTime}`,
-          startTime: s.startTime,
-          endTime: s.endTime,
-          location: s.location || c.location || 'Campus Hall',
-          type: s.type || 'Lecture',
-          instructor: c.instructor || 'Faculty Staff',
-          color: c.color || '#3b82f6',
-          startMinutes: startMin,
-          endMinutes: endMin,
-          status
-        };
-      });
-  }).sort((a, b) => a.startMinutes - b.startMinutes);
+  // Get and sort classes for targetDate chronologically by start time
+  const todayClasses = activeCourses
+    .flatMap(c => {
+      if (isCourseSuspended && isCourseSuspended(targetKey, c.id).suspended) {
+        return [];
+      }
+      const slots = c.meetingSlots || [];
+      return slots
+        .filter(s => parseDayIndex(s.day) === targetDayNum)
+        .map(s => {
+          const startMin = parseTimeToMinutes(s.startTime);
+          const endMin = parseTimeToMinutes(s.endTime);
+          let status: 'completed' | 'in_progress' | 'upcoming' = 'upcoming';
+          if (targetKey < todayKey) {
+            status = 'completed';
+          } else if (targetKey > todayKey) {
+            status = 'upcoming';
+          } else {
+            if (currentMinutes >= endMin) {
+              status = 'completed';
+            } else if (currentMinutes >= startMin && currentMinutes < endMin) {
+              status = 'in_progress';
+            }
+          }
 
-  // 1. Is any class in progress right now?
-  const currentClassItem = todayClasses.find(c => c.status === 'in_progress');
-  const currentClass = currentClassItem ? {
-    ...currentClassItem,
-    remainingMinutes: Math.max(0, currentClassItem.endMinutes - currentMinutes)
-  } : null;
-
-  // 2. Is there an upcoming class today?
-  const nextTodayItem = todayClasses.find(c => c.status === 'upcoming');
-  const nextTodayClass = nextTodayItem ? {
-    ...nextTodayItem,
-    startsInMinutes: Math.max(0, nextTodayItem.startMinutes - currentMinutes)
-  } : null;
-
-  // 3. If no active/upcoming class today, search upcoming 7 days
-  let nextUpcomingClass: (ScheduledClassItem & { dayName: string; isTomorrow: boolean; daysAway: number }) | null = null;
-  if (!currentClass && !nextTodayClass) {
-    for (let offset = 1; offset <= 7; offset++) {
-      const targetDay = (currentDayNum + offset) % 7;
-      const futureClasses = courses.flatMap(c => {
-        const slots = c.meetingSlots || [];
-        return slots
-          .filter(s => parseDayIndex(s.day) === targetDay)
-          .map(s => ({
+          return {
             courseId: c.id,
             courseCode: c.code,
             courseName: c.name,
@@ -152,14 +151,72 @@ export function getLiveScheduleStatus(courses: Course[]): LiveScheduleStatus {
             type: s.type || 'Lecture',
             instructor: c.instructor || 'Faculty Staff',
             color: c.color || '#3b82f6',
-            startMinutes: parseTimeToMinutes(s.startTime)
-          }));
-      }).sort((a, b) => a.startMinutes - b.startMinutes);
+            startMinutes: startMin,
+            endMinutes: endMin,
+            status
+          };
+        });
+    })
+    .sort((a, b) => a.startMinutes - b.startMinutes);
+
+  // 1. Is any class in progress right now (only applicable on Today)?
+  const currentClassItem = isToday ? todayClasses.find(c => c.status === 'in_progress') : undefined;
+  const currentClass = currentClassItem
+    ? {
+        ...currentClassItem,
+        remainingMinutes: Math.max(0, currentClassItem.endMinutes - currentMinutes)
+      }
+    : null;
+
+  // 2. Is there an upcoming class on targetDate?
+  const nextTodayItem = todayClasses.find(c => c.status === 'upcoming');
+  const nextTodayClass = nextTodayItem
+    ? {
+        ...nextTodayItem,
+        startsInMinutes: isToday
+          ? Math.max(0, nextTodayItem.startMinutes - currentMinutes)
+          : nextTodayItem.startMinutes
+      }
+    : null;
+
+  const allClassesCompleted =
+    isToday && todayClasses.length > 0 && todayClasses.every(c => c.status === 'completed');
+
+  // 3. If no active/upcoming class on targetDate, search upcoming 7 days after targetDate
+  let nextUpcomingClass: (ScheduledClassItem & { dayName: string; isTomorrow: boolean; daysAway: number }) | null = null;
+  if (!currentClass && !nextTodayClass) {
+    for (let offset = 1; offset <= 7; offset++) {
+      const futureDate = new Date(targetDate);
+      futureDate.setDate(targetDate.getDate() + offset);
+      const futureKey = toLocalDateKey(futureDate);
+      const futureDay = futureDate.getDay();
+
+      const futureClasses = activeCourses
+        .flatMap(c => {
+          if (isCourseSuspended && isCourseSuspended(futureKey, c.id).suspended) return [];
+          const slots = c.meetingSlots || [];
+          return slots
+            .filter(s => parseDayIndex(s.day) === futureDay)
+            .map(s => ({
+              courseId: c.id,
+              courseCode: c.code,
+              courseName: c.name,
+              time: `${s.startTime} - ${s.endTime}`,
+              startTime: s.startTime,
+              endTime: s.endTime,
+              location: s.location || c.location || 'Campus Hall',
+              type: s.type || 'Lecture',
+              instructor: c.instructor || 'Faculty Staff',
+              color: c.color || '#3b82f6',
+              startMinutes: parseTimeToMinutes(s.startTime)
+            }));
+        })
+        .sort((a, b) => a.startMinutes - b.startMinutes);
 
       if (futureClasses.length > 0) {
         nextUpcomingClass = {
           ...futureClasses[0],
-          dayName: DAY_NAMES[targetDay],
+          dayName: DAY_NAMES[futureDay],
           isTomorrow: offset === 1,
           daysAway: offset
         };
@@ -174,19 +231,30 @@ export function getLiveScheduleStatus(courses: Course[]): LiveScheduleStatus {
     activeOrNextClass = {
       status: 'happening_now',
       classItem: currentClass,
-      badgeLabel: 'Happening Now',
-      subLabel: `Ends in ${currentClass.remainingMinutes}m (${currentClass.endTime})`,
+      badgeLabel: 'In Progress',
+      subLabel: `${currentClass.remainingMinutes} min remaining (ends at ${formatTime12h(currentClass.endTime)})`,
+      countdownText: `${currentClass.remainingMinutes}m left`,
       isToday: true
     };
   } else if (nextTodayClass) {
-    const hours = Math.floor(nextTodayClass.startsInMinutes / 60);
-    const mins = nextTodayClass.startsInMinutes % 60;
-    const timeNotice = hours > 0 ? `Starts in ${hours}h ${mins}m` : `Starts in ${mins}m`;
+    const countdownStr = isToday ? formatCountdown(nextTodayClass.startsInMinutes) : `at ${formatTime12h(nextTodayClass.startTime)}`;
     activeOrNextClass = {
       status: 'upcoming_today',
       classItem: nextTodayClass,
-      badgeLabel: 'Next Today',
-      subLabel: `${nextTodayClass.startTime} (${timeNotice})`,
+      badgeLabel: isToday ? 'Next Today' : targetDayName,
+      subLabel: `${formatTime12h(nextTodayClass.startTime)} (${countdownStr})`,
+      countdownText: countdownStr,
+      isToday
+    };
+  } else if (allClassesCompleted) {
+    activeOrNextClass = {
+      status: 'all_completed',
+      classItem: nextUpcomingClass,
+      badgeLabel: 'Done Today',
+      subLabel: nextUpcomingClass
+        ? `Next class: ${nextUpcomingClass.courseName} (${nextUpcomingClass.isTomorrow ? 'Tomorrow' : nextUpcomingClass.dayName} at ${formatTime12h(nextUpcomingClass.startTime)})`
+        : "You're done with classes today! Time to focus on your assignments.",
+      countdownText: 'All done today',
       isToday: true
     };
   } else if (nextUpcomingClass) {
@@ -195,7 +263,8 @@ export function getLiveScheduleStatus(courses: Course[]): LiveScheduleStatus {
       status: 'upcoming_future',
       classItem: nextUpcomingClass,
       badgeLabel: dayLabel,
-      subLabel: `${dayLabel} at ${nextUpcomingClass.startTime}`,
+      subLabel: `${dayLabel} at ${formatTime12h(nextUpcomingClass.startTime)}`,
+      countdownText: `${dayLabel} at ${formatTime12h(nextUpcomingClass.startTime)}`,
       isToday: false
     };
   } else {
@@ -203,15 +272,20 @@ export function getLiveScheduleStatus(courses: Course[]): LiveScheduleStatus {
       status: 'none',
       classItem: null,
       badgeLabel: 'No Classes',
-      subLabel: 'Schedule flexible',
+      subLabel: 'No upcoming classes found in your timetable.',
+      countdownText: 'No classes',
       isToday: false
     };
   }
 
   return {
+    targetDateStr: targetKey,
+    targetDayName,
+    isToday,
     currentClass,
     nextTodayClass,
     nextUpcomingClass,
+    allClassesCompleted,
     activeOrNextClass,
     todayClasses
   };

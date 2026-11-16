@@ -173,7 +173,7 @@ export const ExamsView: React.FC = () => {
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setActiveView('settings')}
-            className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 flex items-center gap-1.5 shadow-2xs"
+            className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 flex items-center gap-1.5 shadow-sm"
           >
             <Settings className="w-3.5 h-3.5" />
             <span>Academic Period Dates</span>
@@ -498,7 +498,7 @@ export const ExamsView: React.FC = () => {
                   className={`p-3.5 rounded-lg border transition-colors flex items-center justify-between gap-4 text-xs ${
                     session.completed
                       ? 'bg-slate-50 dark:bg-slate-950/40 border-slate-200 dark:border-slate-800 opacity-60'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm'
                   }`}
                 >
                   <div className="flex items-center gap-3">

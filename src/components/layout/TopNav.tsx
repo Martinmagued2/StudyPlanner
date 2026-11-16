@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Search,
   Sparkles,
+  Mic,
   Bell,
   Plus,
   Play,
@@ -115,6 +116,7 @@ export const TopNav: React.FC = () => {
     navHistory,
     setIsCommandPaletteOpen,
     setIsAiDrawerOpen,
+    setIsVoiceAssistantOpen,
     openQuickCreate,
     notifications,
     focusState,
@@ -262,7 +264,7 @@ export const TopNav: React.FC = () => {
         {/* Cloud Database (Supabase PostgreSQL) Button */}
         <button
           onClick={() => setIsDbModalOpen(true)}
-          className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors border border-emerald-200/60 dark:border-emerald-800/60 shadow-2xs"
+          className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors border border-emerald-200/60 dark:border-emerald-800/60 shadow-sm"
           title="Cloud PostgreSQL Database & Real-Time Sync (Supabase)"
         >
           <Database className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -298,6 +300,16 @@ export const TopNav: React.FC = () => {
             </button>
           </div>
         )}
+
+        {/* Voice AI Assistant button */}
+        <button
+          onClick={() => setIsVoiceAssistantOpen(true)}
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 text-xs font-medium rounded-md bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700 transition-all shadow-sm"
+          title="Voice AI Assistant (Ctrl+Shift+V)"
+        >
+          <Mic className="w-3.5 h-3.5" />
+          <span className="hidden md:inline">Voice AI</span>
+        </button>
 
         {/* Global Ask AI button */}
         <button

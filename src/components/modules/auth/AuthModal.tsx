@@ -112,7 +112,7 @@ export const AuthModal: React.FC = () => {
               onClick={() => { setMode('login'); setErrorMsg(''); }}
               className={`py-2 rounded-md transition-all ${
                 mode === 'login'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
@@ -123,7 +123,7 @@ export const AuthModal: React.FC = () => {
               onClick={() => { setMode('register'); setErrorMsg(''); }}
               className={`py-2 rounded-md transition-all ${
                 mode === 'register'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
@@ -134,7 +134,7 @@ export const AuthModal: React.FC = () => {
               onClick={() => { setMode('sync'); setErrorMsg(''); }}
               className={`py-2 rounded-md transition-all flex items-center justify-center gap-1 ${
                 mode === 'sync'
-                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >

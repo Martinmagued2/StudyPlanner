@@ -196,7 +196,7 @@ export const AiTutorView: React.FC = () => {
         <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 space-y-2.5">
           <button
             onClick={() => createNewChatSession()}
-            className="w-full py-2.5 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white text-xs font-semibold flex items-center justify-between shadow-xs transition-all group"
+            className="w-full py-2.5 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white text-xs font-semibold flex items-center justify-between shadow-sm transition-all group"
           >
             <div className="flex items-center gap-2">
               <Plus className="w-4 h-4 transition-transform group-hover:rotate-90" />
@@ -318,7 +318,7 @@ export const AiTutorView: React.FC = () => {
       {/* 2. Main Chat Conversation Screen */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-slate-50 dark:bg-slate-950">
         {/* Top Navbar */}
-        <div className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 flex items-center justify-between shrink-0 z-10 shadow-xs">
+        <div className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 flex items-center justify-between shrink-0 z-10 shadow-sm">
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -456,7 +456,7 @@ export const AiTutorView: React.FC = () => {
                   className={`max-w-[85%] rounded-2xl p-4 text-xs leading-relaxed ${
                     msg.sender === 'user'
                       ? 'bg-blue-600 text-white font-medium shadow-md shadow-blue-500/10'
-                      : 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border border-slate-200/80 dark:border-slate-800 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border border-slate-200/80 dark:border-slate-800 shadow-sm'
                   }`}
                 >
                   <div
@@ -595,7 +595,7 @@ export const AiTutorView: React.FC = () => {
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm animate-pulse">
                   <Sparkles className="w-4 h-4" />
                 </div>
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-xs text-slate-500 flex items-center gap-2 shadow-xs">
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-xs text-slate-500 flex items-center gap-2 shadow-sm">
                   <div className="w-2 h-2 rounded-full bg-blue-600 animate-ping" />
                   <span>Gemini is thinking and drafting your answer...</span>
                 </div>

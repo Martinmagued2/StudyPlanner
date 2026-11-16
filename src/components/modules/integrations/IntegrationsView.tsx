@@ -178,7 +178,7 @@ export const IntegrationsView: React.FC = () => {
 
         <button
           onClick={() => setAddRepoModalOpen(true)}
-          className="px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 transition-colors self-start sm:self-center shadow-xs"
+          className="px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 transition-colors self-start sm:self-center shadow-sm"
         >
           <FolderGit2 className="w-3.5 h-3.5" />
           <span>Add GitHub Repository</span>
@@ -367,7 +367,7 @@ export const IntegrationsView: React.FC = () => {
                         type="button"
                         onClick={() => handleSyncSingleRepo(repo.id)}
                         disabled={syncingRepoId === repo.id}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-md text-xs inline-flex items-center gap-1.5 transition-colors shadow-xs"
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-md text-xs inline-flex items-center gap-1.5 transition-colors shadow-sm"
                       >
                         <RefreshCw className={`w-3 h-3 ${syncingRepoId === repo.id ? 'animate-spin' : ''}`} />
                         <span>{syncingRepoId === repo.id ? 'Fetching commits...' : 'Fetch Commits Now'}</span>

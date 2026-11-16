@@ -75,14 +75,14 @@ export const AssignmentsView: React.FC = () => {
           <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-md text-xs">
             <button
               onClick={() => setViewMode('board')}
-              className={`p-1.5 rounded transition-colors ${viewMode === 'board' ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold' : 'text-slate-500'}`}
+              className={`p-1.5 rounded transition-colors ${viewMode === 'board' ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold' : 'text-slate-500'}`}
               title="Kanban Board"
             >
               <LayoutGrid className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded transition-colors ${viewMode === 'list' ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold' : 'text-slate-500'}`}
+              className={`p-1.5 rounded transition-colors ${viewMode === 'list' ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold' : 'text-slate-500'}`}
               title="List View"
             >
               <ListIcon className="w-3.5 h-3.5" />

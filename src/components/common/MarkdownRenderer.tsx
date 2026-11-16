@@ -46,7 +46,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
       return displayMode ? (
         <div
           key={key}
-          className="my-3 py-3 px-4 overflow-x-auto text-center rounded-xl bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 shadow-xs text-slate-900 dark:text-slate-100"
+          className="my-3 py-3 px-4 overflow-x-auto text-center rounded-xl bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 shadow-sm text-slate-900 dark:text-slate-100"
           dangerouslySetInnerHTML={{ __html: renderedHtml }}
         />
       ) : (
@@ -255,7 +255,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         blocks.push(
           <div
             key={`trap_${blockKey++}`}
-            className="my-4 rounded-xl border border-amber-300 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 p-4 shadow-2xs space-y-2"
+            className="my-4 rounded-xl border border-amber-300 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 p-4 shadow-sm space-y-2"
           >
             <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-bold text-xs uppercase tracking-wider">
               <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -303,7 +303,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         blocks.push(
           <div
             key={`scenario_${blockKey++}`}
-            className="my-4 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/25 p-4 shadow-2xs space-y-2"
+            className="my-4 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/25 p-4 shadow-sm space-y-2"
           >
             <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200 font-bold text-xs uppercase tracking-wider">
               <Lightbulb className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
@@ -355,7 +355,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         }
 
         blocks.push(
-          <div key={`table_${blockKey++}`} className="overflow-x-auto my-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div key={`table_${blockKey++}`} className="overflow-x-auto my-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <table className="w-full text-xs sm:text-sm text-left border-collapse">
               <thead className="bg-slate-100 dark:bg-slate-800/90 text-slate-900 dark:text-slate-100 font-bold border-b border-slate-200 dark:border-slate-700">
                 <tr>
@@ -448,7 +448,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         blocks.push(
           <div
             key={`why_matters_${blockKey++}`}
-            className="my-3 px-3.5 py-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 font-bold text-xs uppercase tracking-wide flex items-center gap-2 shadow-xs"
+            className="my-3 px-3.5 py-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 font-bold text-xs uppercase tracking-wide flex items-center gap-2 shadow-sm"
           >
             <Lightbulb className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
             <span>{whyMattersMatch[1]}</span>
@@ -516,7 +516,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
         const titleText = chapterMatch[2];
         blocks.push(
           <div key={`chapter_${blockKey++}`} className="mt-7 mb-3 flex items-center gap-2.5 pt-2">
-            <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center shadow-xs shrink-0">
+            <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center shadow-sm shrink-0">
               {num}
             </span>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">

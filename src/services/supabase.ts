@@ -21,7 +21,10 @@ import {
   ChatSession,
   AiMemory,
   UserAccount,
-  StoredAccountRecord
+  StoredAccountRecord,
+  NoteFolder,
+  NotificationPreferences,
+  EmailNotificationLog
 } from '../types';
 
 export interface SupabaseConfig {
@@ -509,22 +512,61 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
       if (error) console.warn('Supabase courses upsert error:', error.message);
     }
 
-    // Notes (Full rich content, unlimited size)
+    // Note Folders
+    if (Array.isArray(data.noteFolders) && data.noteFolders.length > 0) {
+      const folderRecords = data.noteFolders.map((f: NoteFolder) => ({
+        id: f.id,
+        user_id: userId,
+        name: f.name,
+        parent_id: f.parentId || null,
+        course_id: f.courseId || null,
+        icon: f.icon || null,
+        color: f.color || null,
+        created_at: f.createdAt || new Date().toISOString()
+      }));
+      const { error } = await client.from('note_folders').upsert(folderRecords, { onConflict: 'id' });
+      if (error) console.warn('Supabase note_folders upsert note:', error.message);
+    }
+
+    // Notes (Full rich content + Notion blocks)
     if (Array.isArray(data.notes) && data.notes.length > 0) {
       const records = data.notes.map((n: Note) => ({
         id: n.id,
         user_id: userId,
         course_id: n.courseId || null,
+        folder_id: n.folderId || null,
         title: n.title,
         content: n.content,
+        blocks: n.blocks || [],
+        icon: n.icon || null,
+        cover_image: n.coverImage || null,
         tags: n.tags || [],
         pinned: n.pinned || false,
+        is_favorite: n.isFavorite || false,
+        is_archived: n.isArchived || false,
         in_trash: n.inTrash || false,
         highlighted_terms: n.highlightedTerms || [],
         updated_at: new Date().toISOString()
       }));
       const { error } = await client.from('notes').upsert(records, { onConflict: 'id' });
-      if (error) console.warn('Supabase notes upsert error:', error.message);
+      if (error && error.message?.includes('column')) {
+        // Fallback if user hasn't run the new schema SQL yet
+        const legacyRecords = data.notes.map((n: Note) => ({
+          id: n.id,
+          user_id: userId,
+          course_id: n.courseId || null,
+          title: n.title,
+          content: n.content,
+          tags: n.tags || [],
+          pinned: n.pinned || false,
+          in_trash: n.inTrash || false,
+          highlighted_terms: n.highlightedTerms || [],
+          updated_at: new Date().toISOString()
+        }));
+        await client.from('notes').upsert(legacyRecords, { onConflict: 'id' });
+      } else if (error) {
+        console.warn('Supabase notes upsert error:', error.message);
+      }
     }
 
     // Files (Smart Hybrid: Lightweight metadata and preview chunks in DB, full text locally/Drive)
@@ -808,6 +850,7 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
     // 2. Fetch individual tables with deterministic secondary ID ordering to prevent PostgreSQL MVCC heap shuffling
     const [
       coursesRes,
+      noteFoldersRes,
       notesRes,
       filesRes,
       tasksRes,
@@ -825,6 +868,7 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       memoriesRes
     ] = await Promise.all([
       client.from('courses').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
+      client.from('note_folders').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
       client.from('notes').select('*').eq('user_id', userId).order('created_at', { ascending: false }).order('id', { ascending: true }),
       client.from('files').select('*').eq('user_id', userId).order('uploaded_at', { ascending: false }).order('id', { ascending: true }),
       client.from('tasks').select('*').eq('user_id', userId).order('created_at', { ascending: true }).order('id', { ascending: true }),
@@ -862,19 +906,36 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
       : baseData.courses || [];
     const courses = preserveSnapshotOrder(rawCourses, baseData.courses);
 
+    const snapshotNotesMap = new Map<string, Note>();
+    if (Array.isArray(baseData.notes)) {
+      baseData.notes.forEach((sn: Note) => {
+        if (sn && sn.id) snapshotNotesMap.set(sn.id, sn);
+      });
+    }
+
     const rawNotes: Note[] = (notesRes.data && notesRes.data.length > 0)
-      ? notesRes.data.map(n => ({
-          id: n.id,
-          courseId: n.course_id,
-          title: n.title,
-          content: n.content,
-          tags: n.tags || [],
-          pinned: n.pinned || false,
-          inTrash: n.in_trash || false,
-          highlightedTerms: n.highlighted_terms || [],
-          createdAt: n.created_at || new Date().toISOString(),
-          updatedAt: n.updated_at || new Date().toISOString()
-        }))
+      ? notesRes.data.map(n => {
+          const snapNote = snapshotNotesMap.get(n.id);
+          return {
+            ...(snapNote || {}),
+            id: n.id,
+            courseId: n.course_id ?? snapNote?.courseId,
+            folderId: n.folder_id ?? snapNote?.folderId,
+            title: n.title,
+            content: n.content,
+            blocks: (Array.isArray(n.blocks) && n.blocks.length > 0) ? n.blocks : snapNote?.blocks,
+            icon: n.icon ?? snapNote?.icon,
+            coverImage: n.cover_image ?? snapNote?.coverImage,
+            tags: n.tags || snapNote?.tags || [],
+            pinned: n.pinned ?? snapNote?.pinned ?? false,
+            isFavorite: n.is_favorite ?? snapNote?.isFavorite ?? false,
+            isArchived: n.is_archived ?? snapNote?.isArchived ?? false,
+            inTrash: n.in_trash ?? snapNote?.inTrash ?? false,
+            highlightedTerms: n.highlighted_terms || snapNote?.highlightedTerms || [],
+            createdAt: n.created_at || snapNote?.createdAt || new Date().toISOString(),
+            updatedAt: n.updated_at || snapNote?.updatedAt || new Date().toISOString()
+          };
+        })
       : baseData.notes || [];
     const notes = preserveSnapshotOrder(rawNotes, baseData.notes);
 
@@ -1090,9 +1151,22 @@ export async function dbLoadAllTablesFromDatabase(userId: string): Promise<any |
         }))
       : baseData.aiMemories || [];
 
+    const noteFolders: NoteFolder[] = (noteFoldersRes && noteFoldersRes.data && noteFoldersRes.data.length > 0)
+      ? noteFoldersRes.data.map((f: any) => ({
+          id: f.id,
+          name: f.name,
+          parentId: f.parent_id || undefined,
+          courseId: f.course_id || undefined,
+          icon: f.icon || undefined,
+          color: f.color || undefined,
+          createdAt: f.created_at || new Date().toISOString()
+        }))
+      : baseData.noteFolders || [];
+
     return {
       ...baseData,
       courses,
+      noteFolders,
       notes,
       files,
       tasks,
@@ -1133,14 +1207,36 @@ export async function dbSaveNote(userId: string, note: Note): Promise<{ success:
       id: note.id,
       user_id: userId,
       course_id: note.courseId || null,
+      folder_id: note.folderId || null,
       title: note.title,
       content: note.content,
+      blocks: note.blocks || [],
+      icon: note.icon || null,
+      cover_image: note.coverImage || null,
       tags: note.tags || [],
       pinned: note.pinned || false,
+      is_favorite: note.isFavorite || false,
+      is_archived: note.isArchived || false,
       in_trash: note.inTrash || false,
       highlighted_terms: note.highlightedTerms || [],
-      updated_at: new Date().toISOString()
+      updated_at: note.updatedAt || new Date().toISOString()
     });
+    if (error && error.message?.includes('column')) {
+      const { error: legacyErr } = await client.from('notes').upsert({
+        id: note.id,
+        user_id: userId,
+        course_id: note.courseId || null,
+        title: note.title,
+        content: note.content,
+        tags: note.tags || [],
+        pinned: note.pinned || false,
+        in_trash: note.inTrash || false,
+        highlighted_terms: note.highlightedTerms || [],
+        updated_at: note.updatedAt || new Date().toISOString()
+      });
+      if (legacyErr) return { success: false, error: legacyErr.message };
+      return { success: true };
+    }
     if (error) {
       console.warn('Failed saving note to DB:', error.message);
       return { success: false, error: error.message };
@@ -1149,6 +1245,128 @@ export async function dbSaveNote(userId: string, note: Note): Promise<{ success:
   } catch (err: any) {
     console.warn('Failed saving note to DB:', err);
     return { success: false, error: err?.message || 'Failed saving note' };
+  }
+}
+
+export async function dbSaveNoteFolder(userId: string, folder: NoteFolder): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    markLocalDbWrite();
+    await client.from('note_folders').upsert({
+      id: folder.id,
+      user_id: userId,
+      name: folder.name,
+      parent_id: folder.parentId || null,
+      course_id: folder.courseId || null,
+      icon: folder.icon || null,
+      color: folder.color || null,
+      created_at: folder.createdAt || new Date().toISOString()
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.warn('Failed saving note folder to DB:', err);
+  }
+}
+
+export async function dbDeleteNoteFolder(userId: string, folderId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return;
+  try {
+    markLocalDbWrite();
+    await client.from('note_folders').delete().eq('id', folderId).eq('user_id', userId);
+  } catch (err) {
+    console.warn('Failed deleting note folder from DB:', err);
+  }
+}
+
+export async function dbSaveNotificationPreferences(userId: string, prefs: NotificationPreferences): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return { success: false, error: 'Database not configured' };
+  try {
+    markLocalDbWrite();
+    const { error } = await client.from('notification_preferences').upsert({
+      user_id: userId,
+      email: prefs.email,
+      timezone: prefs.timezone || 'Europe/London',
+      daily_digest_enabled: prefs.dailyDigestEnabled,
+      daily_digest_time: prefs.dailyDigestTime || '08:00',
+      deadline_reminders_enabled: prefs.deadlineRemindersEnabled,
+      reminder_days_before: prefs.reminderDaysBefore || [3, 2, 1],
+      anti_procrastination_enabled: prefs.antiProcrastinationEnabled,
+      anti_procrastination_frequency: prefs.antiProcrastinationFrequency || 'smart',
+      weekly_summary_enabled: prefs.weeklySummaryEnabled,
+      enable_classes: prefs.enableClasses,
+      enable_exams: prefs.enableExams,
+      enable_assignments: prefs.enableAssignments,
+      last_app_open_at: prefs.lastAppOpenAt || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed saving preferences' };
+  }
+}
+
+export async function dbLoadNotificationPreferences(userId: string): Promise<NotificationPreferences | null> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return null;
+  try {
+    const { data, error } = await client
+      .from('notification_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      email: data.email || '',
+      timezone: data.timezone || 'Europe/London',
+      dailyDigestEnabled: data.daily_digest_enabled ?? true,
+      dailyDigestTime: data.daily_digest_time || '08:00',
+      deadlineRemindersEnabled: data.deadline_reminders_enabled ?? true,
+      reminderDaysBefore: Array.isArray(data.reminder_days_before) ? data.reminder_days_before : [3, 2, 1],
+      antiProcrastinationEnabled: data.anti_procrastination_enabled ?? true,
+      antiProcrastinationFrequency: data.anti_procrastination_frequency || 'smart',
+      weeklySummaryEnabled: data.weekly_summary_enabled ?? true,
+      enableClasses: data.enable_classes ?? true,
+      enableExams: data.enable_exams ?? true,
+      enableAssignments: data.enable_assignments ?? true,
+      lastAppOpenAt: data.last_app_open_at,
+      updatedAt: data.updated_at
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function dbLoadEmailNotificationLogs(userId: string): Promise<EmailNotificationLog[]> {
+  const client = getSupabaseClient();
+  if (!client || !userId) return [];
+  try {
+    const { data, error } = await client
+      .from('email_notification_logs')
+      .select('*')
+      .eq('user_id', userId)
+      .order('sent_at', { ascending: false })
+      .limit(50);
+    if (error || !data) return [];
+    return data.map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      recipientEmail: row.recipient_email,
+      notificationType: row.notification_type,
+      entityId: row.entity_id,
+      daysBefore: row.days_before,
+      scheduledForDate: row.scheduled_for_date,
+      subject: row.subject,
+      status: row.status,
+      providerMessageId: row.provider_message_id,
+      errorMessage: row.error_message,
+      retryCount: row.retry_count || 0,
+      sentAt: row.sent_at
+    }));
+  } catch {
+    return [];
   }
 }
 

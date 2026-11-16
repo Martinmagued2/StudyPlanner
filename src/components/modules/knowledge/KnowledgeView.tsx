@@ -214,7 +214,7 @@ export const KnowledgeView: React.FC = () => {
             onClick={() => setActiveTab('graph')}
             className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
               activeTab === 'graph'
-                ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold'
+                ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold'
                 : 'text-slate-500 hover:text-slate-900'
             }`}
           >
@@ -225,7 +225,7 @@ export const KnowledgeView: React.FC = () => {
             onClick={() => setActiveTab('catalogue')}
             className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
               activeTab === 'catalogue'
-                ? 'bg-white dark:bg-slate-900 shadow-xs text-slate-900 dark:text-slate-100 font-semibold'
+                ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100 font-semibold'
                 : 'text-slate-500 hover:text-slate-900'
             }`}
           >

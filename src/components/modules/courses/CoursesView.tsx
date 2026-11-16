@@ -390,7 +390,7 @@ export const CoursesView: React.FC = () => {
                     navigateToCourse(course.id);
                     setActiveCourseTab('agent');
                   }}
-                  className="py-1.5 px-3 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 shadow-2xs transition-colors shrink-0"
+                  className="py-1.5 px-3 text-xs font-semibold rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white flex items-center gap-1.5 shadow-sm transition-colors shrink-0"
                   title={`Chat with ${course.code} Dedicated Study Agent`}
                 >
                   <Bot className="w-3.5 h-3.5 text-blue-400 dark:text-blue-600" />
