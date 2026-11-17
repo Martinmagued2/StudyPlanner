@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { Lock, Mail, User, Sparkles, Moon, Sun, ArrowRight, CheckCircle2, ShieldCheck, Smartphone, RefreshCw, KeyRound, AtSign } from 'lucide-react';
+import { isSupabaseConfigured } from '../../../services/supabase';
 
 export const AuthModal: React.FC = () => {
   const { registerAccount, authenticateUser, loginDemo, theme, setTheme, loadFromCloud } = useApp();
@@ -99,8 +100,26 @@ export const AuthModal: React.FC = () => {
             Nook Study Workspace
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-            Academic intelligence, timetable scheduling, coursework tracking & AI study assistant.
+            Academic intelligence, timetable scheduling, coursework tracking &amp; AI study assistant.
           </p>
+          <div className="pt-1 flex justify-center">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                isSupabaseConfigured()
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                  : 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isSupabaseConfigured() ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                }`}
+              />
+              {isSupabaseConfigured()
+                ? 'Supabase Cloud Sync Active'
+                : 'Offline Local Mode (Add VITE_SUPABASE_* env vars in Vercel for cross-device sync)'}
+            </span>
+          </div>
         </div>
 
         {/* Auth Card */}

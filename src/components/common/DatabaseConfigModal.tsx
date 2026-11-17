@@ -40,7 +40,21 @@ export const DatabaseConfigModal: React.FC<{ isOpen: boolean; onClose: () => voi
   isOpen,
   onClose
 }) => {
-  const { user, login, saveToDatabase, courses, notes, tasks, files, exams, gradeItems, chatSessions } = useApp();
+  const {
+    user,
+    login,
+    authenticateUser,
+    registerAccount,
+    saveToDatabase,
+    loadFromDatabase,
+    courses,
+    notes,
+    tasks,
+    files,
+    exams,
+    gradeItems,
+    chatSessions
+  } = useApp();
 
   const [activeTab, setActiveTab] = useState<'config' | 'auth' | 'status'>('config');
   const [supabaseUrl, setSupabaseUrl] = useState('');
@@ -542,19 +556,23 @@ END $$;`;
 
     try {
       if (authMode === 'signup') {
-        const res = await supabaseSignUp(authEmail, authPassword, authName);
-        if (res.user) {
-          setAuthMessage({ msg: 'Account created! If email confirmation is enabled, check your inbox.' });
-          setSupabaseAuthUser(res.user);
-          login(authEmail, authName || authEmail.split('@')[0]);
+        const regRes = await registerAccount(authName || authEmail.split('@')[0], authEmail, authPassword);
+        if (!regRes.success) {
+          setAuthMessage({ error: true, msg: regRes.error || 'Registration failed.' });
+          return;
         }
+        const u = await getSupabaseUser().catch(() => null);
+        setSupabaseAuthUser(u);
+        setAuthMessage({ msg: 'Account created and synced to Supabase Cloud!' });
       } else if (authMode === 'signin') {
-        const res = await supabaseSignIn(authEmail, authPassword);
-        if (res.user) {
-          setAuthMessage({ msg: 'Signed in successfully! Your workspace is synchronizing...' });
-          setSupabaseAuthUser(res.user);
-          login(authEmail, res.user.user_metadata?.name || authEmail.split('@')[0]);
+        const authRes = await authenticateUser(authEmail, authPassword);
+        if (!authRes.success) {
+          setAuthMessage({ error: true, msg: authRes.error || 'Authentication failed.' });
+          return;
         }
+        const u = await getSupabaseUser().catch(() => null);
+        setSupabaseAuthUser(u);
+        setAuthMessage({ msg: 'Signed in successfully! Your workspace is synchronizing...' });
       } else if (authMode === 'otp') {
         await supabaseSignInWithOtp(authEmail);
         setAuthMessage({ msg: 'Magic link sent! Check your email to sign in.' });
@@ -1023,19 +1041,46 @@ END $$;`;
                 )}
 
                 {/* Force Full Sync Action */}
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                  <div className="text-[11px] text-slate-500">
-                    Active data: <strong>{courses.length}</strong> courses, <strong>{notes.length}</strong> notes, <strong>{tasks.length}</strong> tasks
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] text-slate-500 space-y-0.5">
+                    <div>
+                      Active data: <strong>{courses.length}</strong> courses, <strong>{notes.length}</strong> notes, <strong>{tasks.length}</strong> tasks
+                    </div>
+                    <div className="font-mono text-[10px] text-slate-400">
+                      Sync Account ID: {user?.id || 'not signed in'}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleForceSync}
-                    disabled={isForceSyncing}
-                    className="py-1 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium text-[11px] flex items-center gap-1.5 transition-colors"
-                  >
-                    <UploadCloud className={`w-3.5 h-3.5 ${isForceSyncing ? 'animate-bounce' : ''}`} />
-                    <span>{isForceSyncing ? 'Backing up...' : 'Backup All Data Now'}</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setIsForceSyncing(true);
+                        setForceSyncResult(null);
+                        const ok = await loadFromDatabase();
+                        setIsForceSyncing(false);
+                        setForceSyncResult({
+                          success: ok,
+                          message: ok
+                            ? 'Pulled latest workspace data from Supabase Cloud!'
+                            : 'No existing remote data found for this Account ID.'
+                        });
+                      }}
+                      disabled={isForceSyncing}
+                      className="py-1 px-2.5 rounded-lg border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-medium text-[11px] flex items-center gap-1 transition-colors"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isForceSyncing ? 'animate-spin' : ''}`} />
+                      <span>Pull From Cloud</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleForceSync}
+                      disabled={isForceSyncing}
+                      className="py-1 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium text-[11px] flex items-center gap-1.5 transition-colors"
+                    >
+                      <UploadCloud className={`w-3.5 h-3.5 ${isForceSyncing ? 'animate-bounce' : ''}`} />
+                      <span>{isForceSyncing ? 'Backing up...' : 'Backup All Data Now'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {forceSyncResult && (

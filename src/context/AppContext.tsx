@@ -52,6 +52,7 @@ import {
   isRecentLocalDbWrite,
   dbSaveProfile,
   dbLoadAllProfiles,
+  dbResolveCloudAccount,
   pruneSupabaseBloat,
   dbSaveNote,
   dbDeleteNote,
@@ -571,6 +572,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   const isApplyingRemoteRef = useRef<boolean>(false);
+  const isHydratingFromRemoteRef = useRef<boolean>(false);
+  const loadedRemoteUserIdRef = useRef<string | null>(null);
 
   const [flashcards, setFlashcards] = useState<Flashcard[]>(() => loadStored('flashcards', []));
   const [flashcardDecks, setFlashcardDecks] = useState<FlashcardDeck[]>(() => loadStored('flashcard_decks', []));
@@ -748,37 +751,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   useEffect(() => {
+    if (isApplyingRemoteRef.current || isHydratingFromRemoteRef.current) return;
     saveStored('chat_sessions', chatSessions);
   }, [chatSessions, storageKey]);
 
   useEffect(() => {
+    if (isApplyingRemoteRef.current || isHydratingFromRemoteRef.current) return;
     saveStored('active_chat_session_id', activeChatSessionId);
   }, [activeChatSessionId, storageKey]);
 
   // Persistent Local Storage Synchronization for All Workspace Entities
-  useEffect(() => { saveStored('courses', courses); }, [courses, storageKey]);
-  useEffect(() => { saveStored('assignments', assignments); }, [assignments, storageKey]);
-  useEffect(() => { saveStored('tasks', tasks); }, [tasks, storageKey]);
-  useEffect(() => { saveStored('notes', notes); }, [notes, storageKey]);
-  useEffect(() => { saveStored('note_folders', noteFolders); }, [noteFolders, storageKey]);
-  useEffect(() => { saveStored('events', events); }, [events, storageKey]);
-  useEffect(() => { saveStored('inbox', inboxItems); }, [inboxItems, storageKey]);
-  useEffect(() => { saveStored('files', files); }, [files, storageKey]);
-  useEffect(() => { saveStored('flashcards', flashcards); }, [flashcards, storageKey]);
-  useEffect(() => { saveStored('flashcard_decks', flashcardDecks); }, [flashcardDecks, storageKey]);
-  useEffect(() => { saveStored('focus_sessions', focusSessions); }, [focusSessions, storageKey]);
-  useEffect(() => { saveStored('quizzes', quizzes); }, [quizzes, storageKey]);
-  useEffect(() => { saveStored('exams', exams); }, [exams, storageKey]);
-  useEffect(() => { saveStored('grade_items', gradeItems); }, [gradeItems, storageKey]);
-  useEffect(() => { saveStored('previous_term_courses', previousTermCourses); }, [previousTermCourses, storageKey]);
-  useEffect(() => { saveStored('ai_memories', aiMemories); }, [aiMemories, storageKey]);
-  useEffect(() => { saveStored('academic_config', academicConfig); }, [academicConfig, storageKey]);
-  useEffect(() => { saveStored('daily_plan', dailyPlan); }, [dailyPlan, storageKey]);
-  useEffect(() => { saveStored('integrations', integrations); }, [integrations, storageKey]);
-  useEffect(() => { saveStored('repos', githubRepos); }, [githubRepos, storageKey]);
-  useEffect(() => { saveStored('notifications', notifications); }, [notifications, storageKey]);
-  useEffect(() => { saveStored('reminder_logs', reminderLogs); }, [reminderLogs, storageKey]);
-  useEffect(() => { saveStored('notification_prefs', notificationPreferences); }, [notificationPreferences, storageKey]);
+  useEffect(() => {
+    if (isApplyingRemoteRef.current || isHydratingFromRemoteRef.current) return;
+    saveStored('courses', courses);
+    saveStored('assignments', assignments);
+    saveStored('tasks', tasks);
+    saveStored('notes', notes);
+    saveStored('note_folders', noteFolders);
+    saveStored('events', events);
+    saveStored('inbox', inboxItems);
+    saveStored('files', files);
+    saveStored('flashcards', flashcards);
+    saveStored('flashcard_decks', flashcardDecks);
+    saveStored('focus_sessions', focusSessions);
+    saveStored('quizzes', quizzes);
+    saveStored('exams', exams);
+    saveStored('grade_items', gradeItems);
+    saveStored('previous_term_courses', previousTermCourses);
+    saveStored('ai_memories', aiMemories);
+    saveStored('academic_config', academicConfig);
+    saveStored('daily_plan', dailyPlan);
+    saveStored('integrations', integrations);
+    saveStored('repos', githubRepos);
+    saveStored('notifications', notifications);
+    saveStored('reminder_logs', reminderLogs);
+    saveStored('notification_prefs', notificationPreferences);
+  }, [
+    courses,
+    assignments,
+    tasks,
+    notes,
+    noteFolders,
+    events,
+    inboxItems,
+    files,
+    flashcards,
+    flashcardDecks,
+    focusSessions,
+    quizzes,
+    exams,
+    gradeItems,
+    previousTermCourses,
+    aiMemories,
+    academicConfig,
+    dailyPlan,
+    integrations,
+    githubRepos,
+    notifications,
+    reminderLogs,
+    notificationPreferences,
+    storageKey
+  ]);
 
   const refreshEmailNotificationLogs = useCallback(async () => {
     if (!user || !isSupabaseConfigured()) return;
@@ -1077,6 +1110,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   map.set(rp.id, {
                     ...existing,
                     name: rp.name || existing.name,
+                    email: rp.email || existing.email,
+                    username: existing.username || rp.username,
+                    passwordHash: existing.passwordHash || rp.passwordHash || '',
                     avatarUrl: rp.avatarUrl || existing.avatarUrl
                   });
                 }
@@ -1094,6 +1130,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Strictly load only the target user's isolated workspace data and clear any previous user's state from memory
   const hydrateUserIsolatedWorkspace = (userId: string, isBrandNewRegistration: boolean = false) => {
     isApplyingRemoteRef.current = true;
+    if (isBrandNewRegistration) {
+      isHydratingFromRemoteRef.current = false;
+      loadedRemoteUserIdRef.current = userId;
+    } else {
+      isHydratingFromRemoteRef.current = isSupabaseConfigured();
+      loadedRemoteUserIdRef.current = isSupabaseConfigured() ? null : userId;
+    }
+
     const userStorageKey = `nook_workspace_${userId}`;
 
     const readUserKey = <T,>(suffix: string, fallback: T): T => {
@@ -1121,7 +1165,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: new Date().toISOString()
     };
 
-    // Immediately set every state slice to this user's isolated storage (or empty arrays for a new user)
+    // Immediately set every state slice to this user's isolated local storage (or empty arrays for a new user)
     setCourses(readUserKey('courses', []));
     setAssignments(readUserKey('assignments', []));
     setTasks(readUserKey('tasks', []));
@@ -1166,46 +1210,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     setReminderLogs(readUserKey('reminder_logs', []));
 
-    setTimeout(() => {
-      isApplyingRemoteRef.current = false;
-    }, 300);
-
-    // Fetch authoritative user-isolated data from Supabase if configured (and not a brand new registration)
-    if (isSupabaseConfigured() && !isBrandNewRegistration) {
-      dbLoadAllTablesFromDatabase(userId)
-        .then(dbData => {
-          if (!dbData) return;
-          isApplyingRemoteRef.current = true;
-          if (Array.isArray(dbData.courses)) setCourses(dbData.courses);
-          if (Array.isArray(dbData.assignments)) setAssignments(dbData.assignments);
-          if (Array.isArray(dbData.tasks)) setTasks(dbData.tasks);
-          if (Array.isArray(dbData.notes)) setNotes(dbData.notes);
-          if (Array.isArray(dbData.noteFolders)) setNoteFolders(dbData.noteFolders);
-          if (Array.isArray(dbData.files)) setFiles(dbData.files);
-          if (Array.isArray(dbData.exams)) setExams(dbData.exams);
-          if (Array.isArray(dbData.events)) setEvents(dbData.events);
-          if (Array.isArray(dbData.inboxItems)) setInboxItems(dbData.inboxItems);
-          if (Array.isArray(dbData.flashcards)) setFlashcards(dbData.flashcards);
-          if (Array.isArray(dbData.flashcardDecks)) setFlashcardDecks(dbData.flashcardDecks);
-          if (Array.isArray(dbData.gradeItems)) setGradeItems(dbData.gradeItems);
-          if (Array.isArray(dbData.previousTermCourses)) setPreviousTermCourses(dbData.previousTermCourses);
-          if (Array.isArray(dbData.chatSessions) && dbData.chatSessions.length > 0) {
-            setChatSessions(dbData.chatSessions);
-            if (dbData.activeChatSessionId) setActiveChatSessionId(dbData.activeChatSessionId);
-          }
-          if (dbData.dailyPlan) setDailyPlan(dbData.dailyPlan);
-          if (dbData.academicConfig) setAcademicConfig(dbData.academicConfig);
-          if (Array.isArray(dbData.integrations)) setIntegrations(dbData.integrations);
-          if (Array.isArray(dbData.githubRepos)) setGithubRepos(dbData.githubRepos);
-          if (Array.isArray(dbData.aiMemories)) setAiMemories(dbData.aiMemories);
-          if (Array.isArray(dbData.notifications)) setNotifications(dbData.notifications);
-          if (Array.isArray(dbData.reminderLogs)) setReminderLogs(dbData.reminderLogs);
-          setTimeout(() => {
-            isApplyingRemoteRef.current = false;
-          }, 300);
-        })
-        .catch(err => console.warn('Supabase DB fetch on login error:', err));
+    if (isBrandNewRegistration || !isSupabaseConfigured()) {
+      setTimeout(() => {
+        isApplyingRemoteRef.current = false;
+        isHydratingFromRemoteRef.current = false;
+      }, 200);
     }
+    // Note: Authoritative remote hydration runs automatically via useEffect([user?.id]) -> loadFromDatabase()
+    // without unlocking auto-save early, preventing empty mobile state from overwriting cloud data!
+  };
+
+  const upsertLocalAccountRecord = (record: StoredAccountRecord) => {
+    const accounts = getRegisteredAccounts();
+    const idx = accounts.findIndex(a => a.id === record.id || a.email.toLowerCase() === record.email.toLowerCase());
+    const next = idx >= 0
+      ? accounts.map((a, i) => (i === idx ? { ...a, ...record, passwordHash: record.passwordHash || a.passwordHash } : a))
+      : [...accounts, record];
+    saveRegisteredAccounts(next);
+    setRegisteredAccounts(next);
   };
 
   const registerAccount = async (
@@ -1229,7 +1251,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const duplicate = accounts.find(
       a => a.email.toLowerCase() === cleanEmail || (cleanUsername && a.username.toLowerCase() === cleanUsername)
     );
-    if (duplicate) {
+    if (duplicate && duplicate.passwordHash) {
       return {
         success: false,
         error:
@@ -1242,15 +1264,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const userId = 'usr_' + encodeURIComponent(cleanEmail).replace(/[^a-zA-Z0-9]/g, '_');
     const passwordHash = await hashPassword(password);
 
-    // Check if an existing workspace in Supabase already has a different password hash for this userId
+    // Check Supabase for existing email or username across all devices
     if (isSupabaseConfigured()) {
       try {
-        const existingRemote = await dbLoadAllTablesFromDatabase(userId);
-        if (existingRemote && existingRemote.user && (existingRemote.user as any).passwordHash) {
+        const existingByEmail = await dbResolveCloudAccount(cleanEmail);
+        if (existingByEmail && existingByEmail.passwordHash) {
           return {
             success: false,
-            error: 'An account with this email is already registered in the cloud database. Please sign in.'
+            error: 'An account with this email already exists in cloud sync. Please sign in instead.'
           };
+        }
+        if (cleanUsername) {
+          const existingByUsername = await dbResolveCloudAccount(cleanUsername);
+          if (existingByUsername && existingByUsername.userId !== userId && existingByUsername.passwordHash) {
+            return {
+              success: false,
+              error: 'This username is already registered in cloud sync. Please sign in or pick another username.'
+            };
+          }
         }
       } catch { }
     }
@@ -1263,9 +1294,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       passwordHash,
       createdAt: new Date().toISOString()
     };
-    const updatedAccounts = [...accounts, newRecord];
-    saveRegisteredAccounts(updatedAccounts);
-    setRegisteredAccounts(updatedAccounts);
+    upsertLocalAccountRecord(newRecord);
 
     const newUser: UserAccount = {
       id: userId,
@@ -1278,7 +1307,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       passwordHash
     };
 
-    // Clear any stale local keys for this userId before initializing fresh workspace
     const userStorageKey = `nook_workspace_${userId}`;
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -1289,7 +1317,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
 
-    // Initialize user's isolated local workspace storage
     localStorage.setItem(`${userStorageKey}_courses`, JSON.stringify([]));
     localStorage.setItem(`${userStorageKey}_notes`, JSON.stringify([]));
     localStorage.setItem(`${userStorageKey}_tasks`, JSON.stringify([]));
@@ -1301,9 +1328,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUser(newUser);
     localStorage.setItem('nook_current_user', JSON.stringify(newUser));
 
-    // Save profile to Supabase public.profiles and workspaces so it immediately appears in the database!
     if (isSupabaseConfigured()) {
-      dbSaveProfile(newUser, passwordHash).catch(err => console.warn('Cloud profile registration error:', err));
+      await dbSaveProfile(newUser, passwordHash).catch(err =>
+        console.warn('Cloud profile registration error:', err)
+      );
       supabaseSignUp(cleanEmail, password, cleanName).catch(() => { });
     }
 
@@ -1325,74 +1353,139 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const inputHash = await hashPassword(password);
     const accounts = getRegisteredAccounts();
     const matchedLocal = accounts.find(
-      a => a.email.toLowerCase() === identifier || a.username.toLowerCase() === identifier
+      a => a.email.toLowerCase() === identifier || (a.username && a.username.toLowerCase() === identifier)
     );
 
-    if (matchedLocal) {
-      if (matchedLocal.passwordHash !== inputHash) {
-        return { success: false, error: 'Incorrect password. Please check your password and try again.' };
-      }
-
+    // Fast path: local record already has a valid passwordHash matching inputHash
+    if (matchedLocal && matchedLocal.passwordHash && matchedLocal.passwordHash === inputHash) {
       const loggedInUser: UserAccount = {
         id: matchedLocal.id,
         name: matchedLocal.name,
         username: matchedLocal.username,
         email: matchedLocal.email,
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+        avatarUrl: matchedLocal.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
         isDemo: false,
-        createdAt: matchedLocal.createdAt
+        createdAt: matchedLocal.createdAt,
+        passwordHash: matchedLocal.passwordHash
       };
-      (loggedInUser as any).passwordHash = matchedLocal.passwordHash;
-
       hydrateUserIsolatedWorkspace(matchedLocal.id, false);
       setUser(loggedInUser);
       localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
+      if (isSupabaseConfigured()) {
+        dbSaveProfile(loggedInUser, matchedLocal.passwordHash).catch(() => {});
+      }
       return { success: true };
     }
 
-    // Check if account exists in Supabase workspaces or localStorage from before password registry was added
-    const candidateEmail = identifier.includes('@') ? identifier : `${identifier}@university.edu`;
-    const candidateUserId = 'usr_' + encodeURIComponent(identifier).replace(/[^a-zA-Z0-9]/g, '_');
-
+    // Cross-device cloud lookup via Supabase (`profiles` + `workspaces` + Supabase Auth)
     if (isSupabaseConfigured()) {
       try {
-        const remoteData = await dbLoadAllTablesFromDatabase(candidateUserId);
-        if (remoteData && remoteData.user) {
-          const remoteHash = (remoteData.user as any).passwordHash;
-          if (remoteHash && remoteHash !== inputHash) {
-            return { success: false, error: 'Incorrect password for this account.' };
+        const cloudAcc = await dbResolveCloudAccount(identifier);
+        const resolvedEmail = cloudAcc?.email || matchedLocal?.email || (identifier.includes('@') ? identifier : '');
+        const resolvedUserId =
+          cloudAcc?.userId ||
+          matchedLocal?.id ||
+          (resolvedEmail ? 'usr_' + encodeURIComponent(resolvedEmail).replace(/[^a-zA-Z0-9]/g, '_') : '');
+
+        if (cloudAcc || matchedLocal) {
+          const remoteHash = cloudAcc?.passwordHash || '';
+          let verified = Boolean(remoteHash && remoteHash === inputHash);
+
+          // If remote workspace has no passwordHash or hash didn't match (e.g. password created via Supabase Auth),
+          // verify directly against Supabase Auth `signInWithPassword`!
+          if (!verified && resolvedEmail) {
+            try {
+              const authRes = await supabaseSignIn(resolvedEmail, password);
+              if (authRes?.user) {
+                verified = true;
+              }
+            } catch {
+              // If Supabase Auth rejected because user wasn't created in auth.users / email unconfirmed,
+              // check if remoteHash explicitly disagrees
+            }
           }
-          // Save to local registry for fast future logins
-          const recoveredRecord: StoredAccountRecord = {
-            id: candidateUserId,
-            name: remoteData.user.name || identifier.split('@')[0],
-            email: remoteData.user.email || candidateEmail,
-            username: remoteData.user.username || identifier.split('@')[0],
-            passwordHash: remoteHash || inputHash,
-            createdAt: remoteData.user.createdAt || new Date().toISOString()
+
+          // Legacy accounts saved only in `profiles` without any passwordHash anywhere: allow seamless cloud recovery + set passwordHash
+          if (!verified && !remoteHash && !matchedLocal?.passwordHash && cloudAcc && !cloudAcc.hasWorkspaceData) {
+            verified = true;
+          } else if (!verified && !remoteHash && !matchedLocal?.passwordHash && cloudAcc) {
+            // Legacy profile-only / `login()` account with existing workspace data created without passwordHash
+            verified = true;
+          }
+
+          if (!verified) {
+            return { success: false, error: 'Incorrect password. Please check your password and try again.' };
+          }
+
+          const finalRecord: StoredAccountRecord = {
+            id: resolvedUserId,
+            name: cloudAcc?.name || matchedLocal?.name || resolvedEmail.split('@')[0] || identifier,
+            email: resolvedEmail,
+            username: cloudAcc?.username || matchedLocal?.username || identifier.split('@')[0],
+            passwordHash: inputHash,
+            createdAt: cloudAcc?.createdAt || matchedLocal?.createdAt || new Date().toISOString(),
+            avatarUrl: cloudAcc?.avatarUrl || matchedLocal?.avatarUrl
           };
-          saveRegisteredAccounts([...accounts, recoveredRecord]);
+          upsertLocalAccountRecord(finalRecord);
 
           const loggedInUser: UserAccount = {
-            id: candidateUserId,
-            name: recoveredRecord.name,
-            username: recoveredRecord.username,
-            email: recoveredRecord.email,
-            avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+            id: finalRecord.id,
+            name: finalRecord.name,
+            username: finalRecord.username,
+            email: finalRecord.email,
+            avatarUrl: finalRecord.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
             isDemo: false,
-            createdAt: recoveredRecord.createdAt
+            createdAt: finalRecord.createdAt,
+            passwordHash: inputHash
           };
-          (loggedInUser as any).passwordHash = recoveredRecord.passwordHash;
 
-          hydrateUserIsolatedWorkspace(candidateUserId, false);
+          hydrateUserIsolatedWorkspace(finalRecord.id, false);
           setUser(loggedInUser);
           localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
+          // Backfill passwordHash into workspaces metadata safely (never overwriting courses/notes)
+          dbSaveProfile(loggedInUser, inputHash).catch(() => {});
           return { success: true };
         }
-      } catch { }
+
+        // Last cloud resort: user signed up directly inside Supabase Auth (`auth.users`) before a `profiles` row existed
+        if (identifier.includes('@')) {
+          try {
+            const authRes = await supabaseSignIn(identifier, password);
+            if (authRes?.user) {
+              const authEmail = (authRes.user.email || identifier).toLowerCase();
+              const canonicalId = 'usr_' + encodeURIComponent(authEmail).replace(/[^a-zA-Z0-9]/g, '_');
+              const finalRecord: StoredAccountRecord = {
+                id: canonicalId,
+                name: authRes.user.user_metadata?.name || authEmail.split('@')[0],
+                email: authEmail,
+                username: authEmail.split('@')[0],
+                passwordHash: inputHash,
+                createdAt: new Date().toISOString()
+              };
+              upsertLocalAccountRecord(finalRecord);
+              const loggedInUser: UserAccount = {
+                ...finalRecord,
+                avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+                isDemo: false
+              };
+              hydrateUserIsolatedWorkspace(canonicalId, false);
+              setUser(loggedInUser);
+              localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
+              dbSaveProfile(loggedInUser, inputHash).catch(() => {});
+              return { success: true };
+            }
+          } catch { }
+        }
+      } catch (err) {
+        console.warn('Cloud account authentication check error:', err);
+      }
+    } else if (matchedLocal && matchedLocal.passwordHash && matchedLocal.passwordHash !== inputHash) {
+      return { success: false, error: 'Incorrect password. Please check your password and try again.' };
     }
 
-    // Check if legacy local workspace exists for this email on this browser
+    // Legacy local-only fallback on same browser
+    const candidateEmail = identifier.includes('@') ? identifier : `${identifier}@university.edu`;
+    const candidateUserId = 'usr_' + encodeURIComponent(identifier).replace(/[^a-zA-Z0-9]/g, '_');
     const legacyCourses = localStorage.getItem(`nook_workspace_${candidateUserId}_courses`);
     if (legacyCourses !== null) {
       const recoveredRecord: StoredAccountRecord = {
@@ -1403,17 +1496,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         passwordHash: inputHash,
         createdAt: new Date().toISOString()
       };
-      saveRegisteredAccounts([...accounts, recoveredRecord]);
+      upsertLocalAccountRecord(recoveredRecord);
       const loggedInUser: UserAccount = {
-        id: candidateUserId,
-        name: recoveredRecord.name,
-        username: recoveredRecord.username,
-        email: recoveredRecord.email,
+        ...recoveredRecord,
         avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-        isDemo: false,
-        createdAt: recoveredRecord.createdAt
+        isDemo: false
       };
-      (loggedInUser as any).passwordHash = inputHash;
       hydrateUserIsolatedWorkspace(candidateUserId, false);
       setUser(loggedInUser);
       localStorage.setItem('nook_current_user', JSON.stringify(loggedInUser));
@@ -1426,7 +1514,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  // Legacy direct login helper (used when restoring session)
+  // Direct login helper (used after Supabase Auth OTP / Cloud DB sign in)
   const login = (email: string, name?: string) => {
     const sanitizedEmail = email.toLowerCase().trim();
     const userId = 'usr_' + encodeURIComponent(sanitizedEmail).replace(/[^a-zA-Z0-9]/g, '_');
@@ -1434,6 +1522,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newUser: UserAccount = {
       id: userId,
       name: name || sanitizedEmail.split('@')[0],
+      username: sanitizedEmail.split('@')[0],
       email: sanitizedEmail,
       avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
       isDemo: false
@@ -1441,17 +1530,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     hydrateUserIsolatedWorkspace(userId, false);
     setUser(newUser);
     localStorage.setItem('nook_current_user', JSON.stringify(newUser));
+    if (isSupabaseConfigured()) {
+      dbSaveProfile(newUser).catch(() => {});
+    }
   };
 
   const logout = () => {
     isApplyingRemoteRef.current = true;
+    isHydratingFromRemoteRef.current = false;
+    loadedRemoteUserIdRef.current = null;
     setUser(null);
     localStorage.removeItem('nook_current_user');
-    // Reset in-memory state so previous account's data never leaks into the next login
     setCourses([]);
     setAssignments([]);
     setTasks([]);
     setNotes([]);
+    setNoteFolders([]);
     setEvents([]);
     setInboxItems([]);
     setFiles([]);
@@ -1513,28 +1607,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     hydrateUserIsolatedWorkspace(target.id, false);
     setUser(targetUser);
     localStorage.setItem('nook_current_user', JSON.stringify(targetUser));
-
-    if (isSupabaseConfigured()) {
-      dbLoadAllTablesFromDatabase(target.id)
-        .then(dbData => {
-          if (!dbData) return;
-          isApplyingRemoteRef.current = true;
-          if (Array.isArray(dbData.courses)) setCourses(dbData.courses);
-          if (Array.isArray(dbData.assignments)) setAssignments(dbData.assignments);
-          if (Array.isArray(dbData.tasks)) setTasks(dbData.tasks);
-          if (Array.isArray(dbData.notes)) setNotes(dbData.notes);
-          if (Array.isArray(dbData.events)) setEvents(dbData.events);
-          if (Array.isArray(dbData.inboxItems)) setInboxItems(dbData.inboxItems);
-          if (Array.isArray(dbData.files)) setFiles(dbData.files);
-          if (Array.isArray(dbData.exams)) setExams(dbData.exams);
-          if (Array.isArray(dbData.flashcards)) setFlashcards(dbData.flashcards);
-          if (Array.isArray(dbData.gradeItems)) setGradeItems(dbData.gradeItems);
-          setTimeout(() => {
-            isApplyingRemoteRef.current = false;
-          }, 300);
-        })
-        .catch(err => console.warn('Supabase DB fetch on switchAccount error:', err));
-    }
     return true;
   };
 
@@ -4676,6 +4748,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(data.githubRepos)) setIfChanged(setGithubRepos, data.githubRepos);
     if (Array.isArray(data.chatSessions) && data.chatSessions.length > 0) {
       setIfChanged(setChatSessions, data.chatSessions);
+      if (data.activeChatSessionId) setIfChanged(setActiveChatSessionId, data.activeChatSessionId);
     }
     if (Array.isArray(data.notifications)) setIfChanged(setNotifications, data.notifications);
     if (Array.isArray(data.reminderLogs)) setIfChanged(setReminderLogs, data.reminderLogs);
@@ -4686,26 +4759,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const loadFromDatabase = async (): Promise<boolean> => {
-    if (!user || !isSupabaseConfigured()) return false;
+    if (!user || !isSupabaseConfigured()) {
+      isHydratingFromRemoteRef.current = false;
+      isApplyingRemoteRef.current = false;
+      if (user) loadedRemoteUserIdRef.current = user.id;
+      return false;
+    }
+
+    isHydratingFromRemoteRef.current = true;
+    const targetUserId = user.id;
+
     try {
-      const data = await dbLoadAllTablesFromDatabase(user.id);
-      if (!data) return false;
+      const data = await dbLoadAllTablesFromDatabase(targetUserId);
+      if (!data) {
+        loadedRemoteUserIdRef.current = targetUserId;
+        isHydratingFromRemoteRef.current = false;
+        isApplyingRemoteRef.current = false;
+        return false;
+      }
+
+      const remoteCount =
+        (Array.isArray(data.courses) ? data.courses.length : 0) +
+        (Array.isArray(data.notes) ? data.notes.length : 0) +
+        (Array.isArray(data.tasks) ? data.tasks.length : 0) +
+        (Array.isArray(data.assignments) ? data.assignments.length : 0) +
+        (Array.isArray(data.exams) ? data.exams.length : 0);
+
+      let localCount = 0;
+      try {
+        const readLen = (k: string) => {
+          const raw = localStorage.getItem(`nook_workspace_${targetUserId}_${k}`);
+          const parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) ? parsed.length : 0;
+        };
+        localCount =
+          readLen('courses') +
+          readLen('notes') +
+          readLen('tasks') +
+          readLen('assignments') +
+          readLen('exams');
+      } catch { }
+
+      if (remoteCount === 0 && localCount > 0) {
+        // Local device holds unsynced data while remote is still empty — do NOT overwrite local with []!
+        loadedRemoteUserIdRef.current = targetUserId;
+        isHydratingFromRemoteRef.current = false;
+        isApplyingRemoteRef.current = false;
+        return true;
+      }
+
       applyRemoteDataSafely(data);
+      loadedRemoteUserIdRef.current = targetUserId;
+      isHydratingFromRemoteRef.current = false;
       return true;
     } catch (e) {
       console.warn('Failed loading from Supabase database:', e);
+      loadedRemoteUserIdRef.current = targetUserId;
+      isHydratingFromRemoteRef.current = false;
+      isApplyingRemoteRef.current = false;
       return false;
     }
   };
 
   // Realtime WebSocket Subscription to Supabase Postgres (Suppressed during local writes to eliminate shuffling)
   useEffect(() => {
-    if (!user || !isSupabaseConfigured()) return;
+    if (!user || user.isDemo || !isSupabaseConfigured()) {
+      isHydratingFromRemoteRef.current = false;
+      isApplyingRemoteRef.current = false;
+      if (user) loadedRemoteUserIdRef.current = user.id;
+      return;
+    }
 
     loadFromDatabase().catch(err => console.warn('Initial DB load warning:', err));
 
     const unsubscribe = subscribeToWorkspaceRealtime(user.id, remoteData => {
-      if (isRecentLocalDbWrite() || isApplyingRemoteRef.current) return;
+      if (isRecentLocalDbWrite() || isApplyingRemoteRef.current || isHydratingFromRemoteRef.current) return;
       if (remoteData) {
         applyRemoteDataSafely(remoteData);
       }
@@ -4716,26 +4844,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [user?.id, applyRemoteDataSafely]);
 
-  // Debounced auto-save to Supabase PostgreSQL database ONLY on genuine local edits!
+  // Debounced auto-save to Supabase PostgreSQL database ONLY on genuine local edits AFTER initial remote hydration!
   useEffect(() => {
-    if (!user || !isSupabaseConfigured() || isApplyingRemoteRef.current) return;
+    if (
+      !user ||
+      user.isDemo ||
+      !isSupabaseConfigured() ||
+      isApplyingRemoteRef.current ||
+      isHydratingFromRemoteRef.current ||
+      loadedRemoteUserIdRef.current !== user.id
+    ) {
+      return;
+    }
     const timer = setTimeout(() => {
-      if (isApplyingRemoteRef.current) return;
+      if (
+        isApplyingRemoteRef.current ||
+        isHydratingFromRemoteRef.current ||
+        loadedRemoteUserIdRef.current !== user.id
+      ) {
+        return;
+      }
       saveToDatabase().catch(err => console.warn('Auto DB sync failed:', err));
-    }, 3000);
+    }, 2500);
     return () => clearTimeout(timer);
   }, [
     courses,
     assignments,
     tasks,
     notes,
+    noteFolders,
+    events,
+    files,
+    quizzes,
     exams,
     gradeItems,
+    previousTermCourses,
     flashcards,
     flashcardDecks,
+    focusSessions,
     aiMemories,
     academicConfig,
     dailyPlan,
+    chatSessions,
     user?.id
   ]);
 

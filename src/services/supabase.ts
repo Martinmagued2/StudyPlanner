@@ -313,10 +313,16 @@ export async function dbSaveProfile(user: UserAccount, passwordHash?: string): P
       return { success: false, error: profileError.message };
     }
 
-    // Ensure a workspace row exists for this user
+    // Ensure a workspace row exists without EVER overwriting existing courses/notes/tasks!
     try {
-      await client.from('workspaces').upsert(
-        {
+      const { data: existingWs } = await client
+        .from('workspaces')
+        .select('user_id, data')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!existingWs) {
+        await client.from('workspaces').insert({
           user_id: user.id,
           version: '1.0.0',
           data: {
@@ -329,15 +335,115 @@ export async function dbSaveProfile(user: UserAccount, passwordHash?: string): P
             events: []
           },
           updated_at: new Date().toISOString()
-        },
-        { onConflict: 'user_id' }
-      );
+        });
+      } else {
+        const existingData = existingWs.data || {};
+        const mergedUser = {
+          ...(existingData.user || {}),
+          ...user,
+          passwordHash: passwordHash || existingData.user?.passwordHash || user.passwordHash
+        };
+        await client
+          .from('workspaces')
+          .update({
+            data: { ...existingData, user: mergedUser },
+            updated_at: new Date().toISOString()
+          })
+          .eq('user_id', user.id);
+      }
     } catch { }
 
     return { success: true };
   } catch (err: any) {
     console.warn('dbSaveProfile exception:', err);
     return { success: false, error: err?.message || 'Failed saving profile' };
+  }
+}
+
+export interface ResolvedCloudAccount {
+  userId: string;
+  email: string;
+  name: string;
+  username: string;
+  passwordHash: string;
+  avatarUrl?: string;
+  createdAt: string;
+  hasWorkspaceData: boolean;
+}
+
+/**
+ * Resolves a user's canonical Supabase userId, email, username, and passwordHash
+ * by email OR username across both `profiles` and `workspaces` tables.
+ */
+export async function dbResolveCloudAccount(identifier: string): Promise<ResolvedCloudAccount | null> {
+  const client = getSupabaseClient();
+  const clean = (identifier || '').trim().toLowerCase();
+  if (!client || !clean) return null;
+
+  try {
+    const candidateEmailId = clean.includes('@')
+      ? 'usr_' + encodeURIComponent(clean).replace(/[^a-zA-Z0-9]/g, '_')
+      : '';
+
+    const [profilesRes, workspacesRes] = await Promise.all([
+      client.from('profiles').select('id, email, name, avatar_url, created_at'),
+      client.from('workspaces').select('user_id, data, updated_at')
+    ]);
+
+    const profiles = profilesRes.data || [];
+    const workspaces = workspacesRes.data || [];
+
+    // 1. Search workspaces first (contains username + passwordHash + canonical user_id + courses count)
+    const matchedWs = workspaces.find((w: any) => {
+      const u = w?.data?.user;
+      const wId = String(w?.user_id || '').toLowerCase();
+      const wEmail = String(u?.email || '').toLowerCase();
+      const wUser = String(u?.username || '').toLowerCase();
+      return (
+        (candidateEmailId && wId === candidateEmailId.toLowerCase()) ||
+        wEmail === clean ||
+        wUser === clean ||
+        (wEmail && wEmail.split('@')[0] === clean)
+      );
+    });
+
+    // 2. Search profiles (covers accounts where workspaces row wasn't created yet or ID differs)
+    const matchedProfile = profiles.find((p: any) => {
+      const pId = String(p?.id || '').toLowerCase();
+      const pEmail = String(p?.email || '').toLowerCase();
+      return (
+        (candidateEmailId && pId === candidateEmailId.toLowerCase()) ||
+        pEmail === clean ||
+        (pEmail && pEmail.split('@')[0] === clean)
+      );
+    });
+
+    if (!matchedWs && !matchedProfile) {
+      return null;
+    }
+
+    const wsUser = matchedWs?.data?.user || {};
+    const resolvedUserId = matchedWs?.user_id || matchedProfile?.id || candidateEmailId;
+    const resolvedEmail = (wsUser.email || matchedProfile?.email || (clean.includes('@') ? clean : '')).toLowerCase();
+    const resolvedName = wsUser.name || matchedProfile?.name || resolvedEmail.split('@')[0] || clean;
+    const resolvedUsername = (wsUser.username || resolvedEmail.split('@')[0] || clean).toLowerCase();
+    const wsCourses = Array.isArray(matchedWs?.data?.courses) ? matchedWs.data.courses.length : 0;
+    const wsNotes = Array.isArray(matchedWs?.data?.notes) ? matchedWs.data.notes.length : 0;
+    const wsTasks = Array.isArray(matchedWs?.data?.tasks) ? matchedWs.data.tasks.length : 0;
+
+    return {
+      userId: resolvedUserId,
+      email: resolvedEmail,
+      name: resolvedName,
+      username: resolvedUsername,
+      passwordHash: wsUser.passwordHash || '',
+      avatarUrl: wsUser.avatarUrl || matchedProfile?.avatar_url || undefined,
+      createdAt: wsUser.createdAt || matchedProfile?.created_at || new Date().toISOString(),
+      hasWorkspaceData: wsCourses + wsNotes + wsTasks > 0
+    };
+  } catch (err) {
+    console.warn('dbResolveCloudAccount exception:', err);
+    return null;
   }
 }
 
@@ -349,25 +455,34 @@ export async function dbLoadAllProfiles(): Promise<StoredAccountRecord[]> {
   if (!client) return [];
 
   try {
-    const { data, error } = await client
-      .from('profiles')
-      .select('id, email, name, avatar_url, created_at')
-      .order('created_at', { ascending: false });
+    const [{ data, error }, { data: wsRows }] = await Promise.all([
+      client.from('profiles').select('id, email, name, avatar_url, created_at').order('created_at', { ascending: false }),
+      client.from('workspaces').select('user_id, data')
+    ]);
 
     if (error || !data) {
       console.warn('Error loading profiles from Supabase:', error?.message);
       return [];
     }
 
-    return data.map((p: any) => ({
-      id: p.id,
-      email: p.email || '',
-      name: p.name || (p.email ? p.email.split('@')[0] : 'Student'),
-      username: (p.email ? p.email.split('@')[0] : p.id).toLowerCase(),
-      passwordHash: '',
-      createdAt: p.created_at || new Date().toISOString(),
-      avatarUrl: p.avatar_url || undefined
-    }));
+    const wsMap = new Map<string, any>();
+    (wsRows || []).forEach((w: any) => {
+      if (w?.user_id) wsMap.set(w.user_id, w.data?.user || {});
+    });
+
+    return data.map((p: any) => {
+      const wsUser = wsMap.get(p.id) || {};
+      const email = p.email || wsUser.email || '';
+      return {
+        id: p.id,
+        email,
+        name: p.name || wsUser.name || (email ? email.split('@')[0] : 'Student'),
+        username: (wsUser.username || (email ? email.split('@')[0] : p.id)).toLowerCase(),
+        passwordHash: wsUser.passwordHash || '',
+        createdAt: p.created_at || new Date().toISOString(),
+        avatarUrl: p.avatar_url || wsUser.avatarUrl || undefined
+      };
+    });
   } catch (err) {
     console.warn('dbLoadAllProfiles exception:', err);
     return [];
