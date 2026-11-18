@@ -398,6 +398,7 @@ export const NotesView: React.FC = () => {
       icon: overrides?.icon || '📝',
       coverImage: overrides?.coverImage,
       pinned: false,
+      highlightedTerms: [],
       isFavorite: false,
       isArchived: false
     });
@@ -710,7 +711,7 @@ export const NotesView: React.FC = () => {
         uploadedAt: new Date().toISOString(),
         isFavorite: false,
         rawText,
-        chunks: [{ id: 'c1', content: rawText, page: 1 }]
+        chunks: [{ id: 'c1', content: rawText, page: 1, hasVisuals: false }]
       };
       const generated = await generateQuizFromFiles([virtualFile], {
         difficulty: 'medium',
