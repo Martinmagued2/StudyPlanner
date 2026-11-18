@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Course, Assignment, Note, DocumentFile, Quiz } from '../../../types';
+import { Course, Assignment, Note, DocumentFile, Quiz, GitHubRepo } from '../../../types';
 import { useApp } from '../../../context/AppContext';
 import { MarkdownRenderer } from '../../common/MarkdownRenderer';
 import { getGeminiApiKey } from '../../../services/fileAiService';
 import { askCourseAgent, CourseAgentMessage } from '../../../services/courseAgentService';
+import {
+  fetchRepoTree,
+  fetchRepoFileContent,
+  parseGitHubOwnerRepo,
+  RepoTreeFile
+} from '../../../services/githubService';
 import {
   Bot,
   Sparkles,
@@ -24,7 +30,16 @@ import {
   Zap,
   HelpCircle,
   Layers,
-  ArrowRight
+  ArrowRight,
+  GitBranch,
+  FileCode2,
+  FolderGit2,
+  Search,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  X
 } from 'lucide-react';
 
 interface CourseStudyAgentProps {
@@ -33,6 +48,7 @@ interface CourseStudyAgentProps {
   notes: Note[];
   files: DocumentFile[];
   quizzes: Quiz[];
+  repos?: GitHubRepo[];
 }
 
 export const CourseStudyAgent: React.FC<CourseStudyAgentProps> = ({
@@ -40,7 +56,8 @@ export const CourseStudyAgent: React.FC<CourseStudyAgentProps> = ({
   assignments,
   notes,
   files,
-  quizzes
+  quizzes,
+  repos = []
 }) => {
   const { addNote, addTask, startFocusTimer, setIsAiDrawerOpen, addFlashcard, addFlashcardDeck, setActiveView } = useApp();
 
@@ -67,9 +84,10 @@ I am your personal AI tutor and academic study partner for this course. I have r
 - 📁 **${files.length} indexed lecture slides & files**
 - 📝 **${notes.length} course notes**
 - 📅 **${assignments.length} assignments & deadlines**
+- 💻 **${repos.length} linked GitHub project ${repos.length === 1 ? 'repository' : 'repositories'}**${repos.length > 0 ? ` (\`${repos.map(r => `${r.owner}/${r.repo}`).join('`, `')}\`) — I can read your repo files & explain how the project works!` : ''}
 - 🏫 **Timetable & Instructor info**: ${course.instructor} • ${course.location || 'Classroom'}
 
-How would you like to prepare today? You can ask me to **explain complex concepts**, **summarize lecture slides**, **generate quiz questions**, or **create a revision schedule**!`,
+How would you like to prepare today? You can ask me to **explain your GitHub project codebase**, **walk through specific repo files**, **summarize lecture slides**, **generate quiz questions**, or **create a revision schedule**!`,
         citations: files.length > 0 ? [`${files[0].name}`] : undefined,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
@@ -87,7 +105,75 @@ How would you like to prepare today? You can ask me to **explain complex concept
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Linked GitHub Repo File Explorer State
+  const [isRepoExplorerOpen, setIsRepoExplorerOpen] = useState(false);
+  const [repoTreeFiles, setRepoTreeFiles] = useState<Array<{ repoId: string; repoLabel: string; branch: string; files: RepoTreeFile[] }>>([]);
+  const [isScanningRepo, setIsScanningRepo] = useState(false);
+  const [repoScanError, setRepoScanError] = useState<string | null>(null);
+  const [repoSearch, setRepoSearch] = useState('');
+  const [pinnedRepoFiles, setPinnedRepoFiles] = useState<string[]>([]);
+  const [previewFile, setPreviewFile] = useState<{ path: string; content: string; loading: boolean } | null>(null);
+
   const hasApiKey = Boolean(getGeminiApiKey() && getGeminiApiKey().trim().length > 10);
+
+  const loadRepoTrees = async () => {
+    if (!repos || repos.length === 0) {
+      setRepoTreeFiles([]);
+      return;
+    }
+    setIsScanningRepo(true);
+    setRepoScanError(null);
+    try {
+      const results = await Promise.all(
+        repos.map(async r => {
+          const { owner, repo } = parseGitHubOwnerRepo(r.owner, r.repo);
+          const treeRes = await fetchRepoTree(owner, repo, r.branch || 'main');
+          return {
+            repoId: r.id,
+            repoLabel: `${owner}/${repo}`,
+            branch: treeRes.branch,
+            files: treeRes.files
+          };
+        })
+      );
+      setRepoTreeFiles(results);
+    } catch (err: any) {
+      setRepoScanError(err?.message || 'Unable to fetch repository files from GitHub.');
+    } finally {
+      setIsScanningRepo(false);
+    }
+  };
+
+  useEffect(() => {
+    setPinnedRepoFiles([]);
+    setPreviewFile(null);
+    if (repos && repos.length > 0) {
+      loadRepoTrees();
+    } else {
+      setRepoTreeFiles([]);
+    }
+  }, [course.id, repos.length]);
+
+  const togglePinRepoFile = (path: string) => {
+    setPinnedRepoFiles(prev =>
+      prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path].slice(-8)
+    );
+  };
+
+  const handlePreviewRepoFile = async (ownerRepo: string, branch: string, path: string) => {
+    const [owner, repo] = ownerRepo.split('/');
+    setPreviewFile({ path, content: '', loading: true });
+    try {
+      const content = await fetchRepoFileContent(owner, repo, path, branch);
+      setPreviewFile({ path, content, loading: false });
+    } catch (err: any) {
+      setPreviewFile({
+        path,
+        content: err?.message || 'Could not load file contents.',
+        loading: false
+      });
+    }
+  };
 
   // Sync with course changes or reload when course ID changes
   useEffect(() => {
@@ -124,7 +210,19 @@ How would you like to prepare today? You can ask me to **explain complex concept
     setIsGenerating(true);
 
     try {
-      const response = await askCourseAgent(query, course, assignments, notes, files, quizzes);
+      const response = await askCourseAgent(
+        query,
+        course,
+        assignments,
+        notes,
+        files,
+        quizzes,
+        repos,
+        pinnedRepoFiles
+      );
+      if (response.repoErrors && response.repoErrors.length > 0 && !repoScanError) {
+        setRepoScanError(response.repoErrors.join(' | '));
+      }
       const agentMessage: CourseAgentMessage = {
         id: `msg_agent_${Date.now()}`,
         sender: 'agent',
@@ -255,6 +353,18 @@ How would you like to prepare today? You can ask me to **explain complex concept
 
   // Dynamic context-aware chips
   const dynamicChips = [
+    ...(repos.length > 0
+      ? [
+          {
+            label: `Explain ${repos[0].repo} Project`,
+            prompt: `Explain the architecture and purpose of my linked GitHub project "${repos[0].owner}/${repos[0].repo}": main folders, key files, tech stack, and how everything connects.`
+          },
+          {
+            label: 'Walk Through Entry Point',
+            prompt: `Read the main entry point and core files of "${repos[0].owner}/${repos[0].repo}" and walk me through how execution flows step by step.`
+          }
+        ]
+      : []),
     ...(assignments.length > 0
       ? [{ label: `Plan "${assignments[0].title.slice(0, 22)}..."`, prompt: `Help me break down and schedule revision for my upcoming assignment: "${assignments[0].title}" due on ${assignments[0].dueDate ? new Date(assignments[0].dueDate).toLocaleDateString() : 'soon'}.` }]
       : []),
@@ -265,9 +375,8 @@ How would you like to prepare today? You can ask me to **explain complex concept
       ? [{ label: `Quiz me on "${notes[0].title.slice(0, 20)}..."`, prompt: `Create 3 active-recall test questions based on my recent notes "${notes[0].title}".` }]
       : []),
     { label: 'Prepare for next class', prompt: `What should I review and prepare before the next lecture in ${course.name}?` },
-    { label: '5 Active-Recall Flashcards', prompt: `Generate 5 high-yield active recall flashcard questions with concise answers for ${course.name}.` },
-    { label: 'Exam Revision Checklist', prompt: `Create a prioritized exam revision checklist for ${course.name} covering major topics and common pitfalls.` }
-  ].slice(0, 5);
+    { label: '5 Active-Recall Flashcards', prompt: `Generate 5 high-yield active recall flashcard questions with concise answers for ${course.name}.` }
+  ].slice(0, 6);
 
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm flex flex-col h-[650px]">
@@ -304,12 +413,50 @@ How would you like to prepare today? You can ask me to **explain complex concept
                 <Calendar className="w-3 h-3 text-slate-400" />
                 {assignments.length} coursework
               </span>
+              {repos.length > 0 && (
+                <>
+                  <span>•</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsRepoExplorerOpen(prev => !prev)}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition"
+                    title="Browse and pin GitHub repository files for Study Agent"
+                  >
+                    <FolderGit2 className="w-3 h-3" />
+                    <span>
+                      {repos[0].owner}/{repos[0].repo}
+                      {repos.length > 1 ? ` +${repos.length - 1}` : ''}
+                    </span>
+                    {pinnedRepoFiles.length > 0 && (
+                      <span className="ml-0.5 px-1 rounded bg-indigo-600 text-white text-[9px]">
+                        {pinnedRepoFiles.length} pinned
+                      </span>
+                    )}
+                    {isRepoExplorerOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
+                </>
+              )}
             </p>
           </div>
         </div>
 
         {/* AI Engine Status & Utility Buttons */}
         <div className="flex items-center gap-2">
+          {repos.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsRepoExplorerOpen(prev => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                isRepoExplorerOpen
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+              }`}
+              title="Browse & select repository files for the Study Agent to read"
+            >
+              <FileCode2 className="w-3.5 h-3.5" />
+              <span>Repo Files ({repoTreeFiles.reduce((s, r) => s + r.files.length, 0)})</span>
+            </button>
+          )}
           {hasApiKey ? (
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium"
@@ -357,12 +504,130 @@ How would you like to prepare today? You can ask me to **explain complex concept
             key={idx}
             onClick={() => handleSend(chip.prompt)}
             disabled={isGenerating}
-            className="px-2.5 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 shrink-0 font-medium text-[11px] transition-colors disabled:opacity-50"
+            className="px-2.5 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 shrink-0 font-medium text-[11px] transition-colors disabled:opacity-50"
           >
             {chip.label}
           </button>
         ))}
       </div>
+
+      {/* Collapsible GitHub Repo Files Explorer */}
+      {isRepoExplorerOpen && repos.length > 0 && (
+        <div className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/95 p-3 space-y-2.5 max-h-64 overflow-y-auto shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <GitBranch className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                Project Repository Files
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Pin files for deep reading, or click Explain File
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="w-3 h-3 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={repoSearch}
+                  onChange={e => setRepoSearch(e.target.value)}
+                  placeholder="Filter path..."
+                  className="pl-6 pr-2 py-1 text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 w-36 focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={loadRepoTrees}
+                disabled={isScanningRepo}
+                className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${isScanningRepo ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {repoScanError && (
+            <div className="text-[11px] px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200">
+              {repoScanError}
+            </div>
+          )}
+
+          {repoTreeFiles.map(repoEntry => {
+            const visibleFiles = repoEntry.files
+              .filter(f => !repoSearch.trim() || f.path.toLowerCase().includes(repoSearch.trim().toLowerCase()))
+              .slice(0, 60);
+            return (
+              <div key={repoEntry.repoId} className="space-y-1">
+                <div className="text-[10px] font-mono font-bold text-slate-500 uppercase">
+                  {repoEntry.repoLabel} ({repoEntry.branch}) — {repoEntry.files.length} files
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                  {visibleFiles.map(f => {
+                    const isPinned = pinnedRepoFiles.includes(f.path);
+                    return (
+                      <div
+                        key={f.path}
+                        className={`flex items-center justify-between gap-1.5 px-2 py-1 rounded-lg border text-[11px] ${
+                          isPinned
+                            ? 'bg-indigo-50 dark:bg-indigo-950/50 border-indigo-300 dark:border-indigo-700'
+                            : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700/80'
+                        }`}
+                      >
+                        <label className="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={isPinned}
+                            onChange={() => togglePinRepoFile(f.path)}
+                            className="rounded border-slate-300 text-indigo-600 shrink-0"
+                          />
+                          <span className="font-mono truncate text-slate-800 dark:text-slate-200" title={f.path}>
+                            {f.path}
+                          </span>
+                        </label>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handlePreviewRepoFile(repoEntry.repoLabel, repoEntry.branch, f.path)}
+                            className="p-0.5 text-slate-400 hover:text-indigo-600"
+                            title="Preview file code"
+                          >
+                            <Eye className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!isPinned) togglePinRepoFile(f.path);
+                              handleSend(`Read and explain "${f.path}" in ${repoEntry.repoLabel} — what does it do, how does it work, and how does it connect to the rest of the project?`);
+                            }}
+                            className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-semibold"
+                          >
+                            Explain
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+
+          {previewFile && (
+            <div className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-900 text-slate-100 p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span className="text-cyan-300">{previewFile.path}</span>
+                <button type="button" onClick={() => setPreviewFile(null)} className="text-slate-400 hover:text-white">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <pre className="text-[10px] overflow-x-auto max-h-36 whitespace-pre-wrap leading-relaxed text-slate-200">
+                {previewFile.loading ? 'Reading file from GitHub...' : previewFile.content.slice(0, 4000)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Chat Messages Stream */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30 dark:bg-slate-950/20">
@@ -376,8 +641,8 @@ How would you like to prepare today? You can ask me to **explain complex concept
               <div
                 className={`max-w-[90%] sm:max-w-[82%] rounded-2xl p-4 text-xs shadow-sm ${
                   isUser
-                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded-br-xs'
-                    : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-xs'
+                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded-br-sm'
+                    : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-sm'
                 }`}
               >
                 {/* Agent Header inside message */}
@@ -537,13 +802,13 @@ How would you like to prepare today? You can ask me to **explain complex concept
             >
               <Bot className="w-4 h-4" />
             </div>
-            <div className="p-3.5 rounded-2xl rounded-bl-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+            <div className="p-3.5 rounded-2xl rounded-bl-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
                 <Sparkles className="w-3.5 h-3.5 text-blue-500 animate-spin" />
                 <span>{course.code} Study Agent is reasoning...</span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Cross-referencing {files.length} lecture files, {notes.length} notes, and academic syllabus.
+                Cross-referencing {files.length} lecture files, {notes.length} notes{repos.length > 0 ? `, and ${repos.length} GitHub repo(s)` : ''}.
               </p>
             </div>
           </div>
@@ -567,7 +832,7 @@ How would you like to prepare today? You can ask me to **explain complex concept
               type="text"
               value={inputPrompt}
               onChange={e => setInputPrompt(e.target.value)}
-              placeholder={`Ask ${course.code} study agent anything about lectures, notes, or coursework...`}
+              placeholder={`Ask ${course.code} study agent about lectures, notes, coursework, or linked GitHub repo files...`}
               disabled={isGenerating}
               className="w-full pl-3.5 pr-10 py-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-slate-100 transition-all disabled:opacity-50"
             />

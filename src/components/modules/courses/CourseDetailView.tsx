@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { ClassType, MeetingSlot } from '../../../types';
 import { extractTextFromFile } from '../../../services/fileAiService';
+import { parseGitHubOwnerRepo } from '../../../services/githubService';
 import { CourseStudyAgent } from './CourseStudyAgent';
 
 export const CourseDetailView: React.FC = () => {
@@ -44,6 +45,8 @@ export const CourseDetailView: React.FC = () => {
     files,
     quizzes,
     githubRepos,
+    addGitHubRepo,
+    deleteGitHubRepo,
     exams,
     openQuickCreate,
     addNote,
@@ -111,6 +114,9 @@ export const CourseDetailView: React.FC = () => {
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [newRepoInput, setNewRepoInput] = useState('');
+  const [newRepoBranch, setNewRepoBranch] = useState('main');
+  const [isLinkingRepo, setIsLinkingRepo] = useState(false);
 
   // Edit Course Form State
   const [editCode, setEditCode] = useState(course.code);
@@ -754,43 +760,119 @@ export const CourseDetailView: React.FC = () => {
         {/* TAB 6: PROJECTS */}
         {activeCourseTab === 'projects' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Course GitHub Repositories</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Course GitHub Repositories
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Link a GitHub repo to this course — your Course Study Agent automatically reads its file tree and source code to help you understand the project.
+                </p>
+              </div>
               <button
                 onClick={() => setActiveView('integrations')}
-                className="text-xs text-blue-600 hover:underline"
+                className="text-xs text-blue-600 hover:underline shrink-0"
               >
-                Manage GitHub Integrations →
+                Manage GitHub Token & Integrations →
               </button>
             </div>
-            {courseRepos.map(repo => (
-              <div key={repo.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <GitBranch className="w-4 h-4 text-slate-800 dark:text-slate-200" />
-                    <span className="font-bold text-slate-900 dark:text-slate-100">{repo.owner}/{repo.repo}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">{repo.branch}</span>
+
+            {/* Quick Inline Repo Link Form */}
+            <form
+              onSubmit={async e => {
+                e.preventDefault();
+                const parsed = parseGitHubOwnerRepo('', newRepoInput);
+                if (!parsed.owner || !parsed.repo) return;
+                setIsLinkingRepo(true);
+                try {
+                  await addGitHubRepo(course.id, parsed.owner, parsed.repo, newRepoBranch.trim() || 'main');
+                  setNewRepoInput('');
+                } finally {
+                  setIsLinkingRepo(false);
+                }
+              }}
+              className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-col sm:flex-row gap-2 items-stretch sm:items-center"
+            >
+              <input
+                type="text"
+                value={newRepoInput}
+                onChange={e => setNewRepoInput(e.target.value)}
+                placeholder="Paste GitHub URL or owner/repo (e.g. Martinmagued2/StudyPlanner)"
+                className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              />
+              <input
+                type="text"
+                value={newRepoBranch}
+                onChange={e => setNewRepoBranch(e.target.value)}
+                placeholder="Branch (main)"
+                className="w-full sm:w-28 px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              />
+              <button
+                type="submit"
+                disabled={isLinkingRepo || !newRepoInput.trim()}
+                className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center gap-1.5 shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{isLinkingRepo ? 'Linking...' : 'Link Repo'}</span>
+              </button>
+            </form>
+
+            {courseRepos.length === 0 ? (
+              <div className="p-8 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-slate-400 text-xs">
+                No GitHub repository linked to {course.code} yet. Paste a repo URL or <code className="text-slate-600 dark:text-slate-300">owner/repo</code> above to connect it to your Study Agent!
+              </div>
+            ) : (
+              courseRepos.map(repo => (
+                <div key={repo.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="w-4 h-4 text-slate-800 dark:text-slate-200" />
+                      <span className="font-bold text-slate-900 dark:text-slate-100">{repo.owner}/{repo.repo}</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">{repo.branch}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveCourseTab('agent')}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-[11px] flex items-center gap-1"
+                      >
+                        <Bot className="w-3 h-3" />
+                        <span>Explain Project in Study Agent</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteGitHubRepo(repo.id)}
+                        className="p-1 text-slate-400 hover:text-rose-600"
+                        title="Unlink repo from course"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Recent Commits</span>
+                    {repo.commits.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">No cached commits yet — Study Agent still reads live files from GitHub.</p>
+                    ) : (
+                      repo.commits.map((c, idx) => (
+                        <div key={idx} className="p-2.5 rounded bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                          <div>
+                            <span className="font-mono text-[10px] text-blue-600 mr-2">{c.shortHash}</span>
+                            <span className="text-slate-800 dark:text-slate-200 font-medium">{c.message}</span>
+                            {c.aiSummary && (
+                              <div className="text-[11px] text-slate-500 mt-1 italic">
+                                AI Brief: {c.aiSummary}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 shrink-0 ml-2">{new Date(c.date).toLocaleDateString()}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Recent Commits</span>
-                  {repo.commits.map((c, idx) => (
-                    <div key={idx} className="p-2.5 rounded bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                      <div>
-                        <span className="font-mono text-[10px] text-blue-600 mr-2">{c.shortHash}</span>
-                        <span className="text-slate-800 dark:text-slate-200 font-medium">{c.message}</span>
-                        {c.aiSummary && (
-                          <div className="text-[11px] text-slate-500 mt-1 italic">
-                            AI Brief: {c.aiSummary}
-                          </div>
-                        )}
-                      </div>
-                      <span className="text-[10px] text-slate-400 shrink-0 ml-2">{new Date(c.date).toLocaleDateString()}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
 
@@ -802,6 +884,7 @@ export const CourseDetailView: React.FC = () => {
             notes={courseNotes}
             files={courseFiles}
             quizzes={courseQuizzes}
+            repos={courseRepos}
           />
         )}
       </div>

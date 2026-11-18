@@ -1,5 +1,6 @@
 import { Course, Assignment, Note, DocumentFile, Quiz, GitHubRepo } from '../types';
 import { queryGemini, getGeminiApiKey } from './fileAiService';
+import { fetchRepoSnapshotForAi, RepoReadFile } from './githubService';
 
 export interface CourseAgentMessage {
   id: string;
@@ -30,7 +31,9 @@ export function buildCourseAgentSystemInstruction(
   course: Course,
   assignments: Assignment[],
   notes: Note[],
-  files: DocumentFile[]
+  files: DocumentFile[],
+  repos: GitHubRepo[] = [],
+  repoContextText: string = ''
 ): string {
   const scheduleStr = formatCourseSchedule(course);
 
@@ -83,10 +86,20 @@ ${noteSummaries}
 === INDEXED COURSE FILES & LECTURE SLIDES ===
 ${fileExcerpts}
 
+=== LINKED COURSE PROJECT & GITHUB REPOSITORY CODEBASE ===
+${
+  repos.length === 0
+    ? 'No GitHub project repository is linked to this course yet.'
+    : repoContextText ||
+      repos
+        .map(r => `- ${r.owner}/${r.repo} (branch: ${r.branch}) — ${r.notes || 'Linked project repo'}`)
+        .join('\n')
+}
+
 === CORE INSTRUCTIONS ===
 1. Answer strictly as an authoritative, helpful, and academically rigorous tutor specialized in this course.
-2. Ground your explanations directly in the student's actual lecture slides, uploaded files, and course notes whenever possible.
-3. When referencing specific materials, cite the source clearly (e.g., "[Source: CS302_Lecture1.pptx • Slide 12]" or "[Source: Dynamic Programming Note]").
+2. Ground your explanations directly in the student's actual lecture slides, uploaded files, course notes, AND linked GitHub project repository files whenever possible.
+3. When explaining the course project or codebase, trace architecture, component/module responsibilities, data flow, and cite exact file paths (e.g., "[Repo: owner/repo • src/App.tsx]") alongside lecture sources ("[Source: CS302_Lecture1.pptx • Slide 12]").
 4. Format your output with clean, readable GitHub-flavored Markdown:
    - Use bolding for key terms and definitions.
    - Use headings (###) to organize long explanations.
@@ -107,45 +120,98 @@ export async function askCourseAgent(
   assignments: Assignment[],
   notes: Note[],
   files: DocumentFile[],
-  quizzes: Quiz[]
-): Promise<{ text: string; citations: string[]; isRealAi: boolean }> {
+  quizzes: Quiz[],
+  repos: GitHubRepo[] = [],
+  pinnedRepoPaths: string[] = []
+): Promise<{
+  text: string;
+  citations: string[];
+  isRealAi: boolean;
+  repoFilesRead?: RepoReadFile[];
+  repoErrors?: string[];
+}> {
   const apiKey = getGeminiApiKey();
+
+  // Fetch linked GitHub repo tree + relevant/pinned source files in real time
+  let repoSnapshot: Awaited<ReturnType<typeof fetchRepoSnapshotForAi>> = {
+    contextText: '',
+    filesRead: [],
+    treeByRepo: {},
+    errors: []
+  };
+
+  if (repos && repos.length > 0) {
+    try {
+      repoSnapshot = await fetchRepoSnapshotForAi(repos, userQuery, pinnedRepoPaths);
+    } catch (err) {
+      console.warn('Failed fetching GitHub repo snapshot for Study Agent:', err);
+    }
+  }
 
   // If Gemini API Key is available, use real Gemini LLM
   if (apiKey && apiKey.trim().length > 10) {
     try {
-      const systemInstruction = buildCourseAgentSystemInstruction(course, assignments, notes, files);
-      const geminiPrompt = `Student Question / Prompt: "${userQuery}"\n\nPlease provide a clear, comprehensive, and well-structured response for the course ${course.name} (${course.code}).`;
-      
+      const systemInstruction = buildCourseAgentSystemInstruction(
+        course,
+        assignments,
+        notes,
+        files,
+        repos,
+        repoSnapshot.contextText
+      );
+      const geminiPrompt = `Student Question / Prompt: "${userQuery}"\n\nPlease provide a clear, comprehensive, and well-structured response for the course ${course.name} (${course.code}). If the question involves the linked GitHub project or code files, reference the exact file paths and explain clearly how they work.`;
+
       const response = await queryGemini(geminiPrompt, systemInstruction);
       if (response && response.trim().length > 15) {
-        // Extract citations from the files or notes
         const citations: string[] = [];
-        
-        // Check if any uploaded files were referenced or match keywords
+
         for (const file of files) {
           const baseName = file.name.replace(/\.[^/.]+$/, '');
-          if (response.toLowerCase().includes(baseName.toLowerCase()) || userQuery.toLowerCase().includes(baseName.toLowerCase())) {
+          if (
+            response.toLowerCase().includes(baseName.toLowerCase()) ||
+            userQuery.toLowerCase().includes(baseName.toLowerCase())
+          ) {
             citations.push(`${file.name}${file.pageCount ? ` • ${file.pageCount} pages` : ''}`);
           }
         }
 
-        // If no explicit file citations matched but course has files, check if query matched note titles
         for (const note of notes) {
-          if (response.toLowerCase().includes(note.title.toLowerCase()) || userQuery.toLowerCase().includes(note.title.toLowerCase())) {
+          if (
+            response.toLowerCase().includes(note.title.toLowerCase()) ||
+            userQuery.toLowerCase().includes(note.title.toLowerCase())
+          ) {
             citations.push(`Note: "${note.title}"`);
           }
         }
 
-        // If files exist and query was about lectures/slides/summary, cite the first file
-        if (citations.length === 0 && files.length > 0 && (userQuery.toLowerCase().includes('lecture') || userQuery.toLowerCase().includes('slide') || userQuery.toLowerCase().includes('summarize'))) {
+        for (const rf of repoSnapshot.filesRead) {
+          const base = rf.path.split('/').pop()?.toLowerCase() || '';
+          if (
+            response.toLowerCase().includes(rf.path.toLowerCase()) ||
+            (base && response.toLowerCase().includes(base)) ||
+            pinnedRepoPaths.includes(rf.path) ||
+            /project|repo|github|code|architecture|file|how does/i.test(userQuery)
+          ) {
+            citations.push(`Repo: ${rf.repoLabel} • ${rf.path}`);
+          }
+        }
+
+        if (
+          citations.length === 0 &&
+          files.length > 0 &&
+          (userQuery.toLowerCase().includes('lecture') ||
+            userQuery.toLowerCase().includes('slide') ||
+            userQuery.toLowerCase().includes('summarize'))
+        ) {
           citations.push(`${files[0].name}${files[0].pageCount ? ` • Slide 1-${files[0].pageCount}` : ''}`);
         }
 
         return {
           text: response,
-          citations: Array.from(new Set(citations)),
-          isRealAi: true
+          citations: Array.from(new Set(citations)).slice(0, 8),
+          isRealAi: true,
+          repoFilesRead: repoSnapshot.filesRead,
+          repoErrors: repoSnapshot.errors
         };
       }
     } catch (err) {
@@ -154,10 +220,21 @@ export async function askCourseAgent(
   }
 
   // Fallback to Intelligent Local Academic Engine (No API key or network down)
-  const localResult = generateLocalCourseAgentAnswer(userQuery, course, assignments, notes, files, quizzes);
+  const localResult = generateLocalCourseAgentAnswer(
+    userQuery,
+    course,
+    assignments,
+    notes,
+    files,
+    quizzes,
+    repos,
+    repoSnapshot
+  );
   return {
     ...localResult,
-    isRealAi: false
+    isRealAi: false,
+    repoFilesRead: repoSnapshot.filesRead,
+    repoErrors: repoSnapshot.errors
   };
 }
 
@@ -170,10 +247,62 @@ function generateLocalCourseAgentAnswer(
   assignments: Assignment[],
   notes: Note[],
   files: DocumentFile[],
-  quizzes: Quiz[]
+  quizzes: Quiz[],
+  repos: GitHubRepo[] = [],
+  repoSnapshot?: {
+    contextText: string;
+    filesRead: RepoReadFile[];
+    treeByRepo: Record<string, { branch: string; files: Array<{ path: string; size: number }> }>;
+    errors: string[];
+  }
 ): { text: string; citations: string[] } {
   const lower = query.toLowerCase();
   const scheduleStr = formatCourseSchedule(course);
+
+  // 0. Project / GitHub Repository / Codebase Query
+  if (
+    repos.length > 0 &&
+    (/project|repo|repository|github|code|codebase|architecture|structure|commit|file|component|function|explain/i.test(lower) ||
+      (repoSnapshot?.filesRead || []).some(rf => lower.includes(rf.path.split('/').pop()?.toLowerCase() || '___')))
+  ) {
+    const firstRepo = repos[0];
+    const treeInfo = repoSnapshot?.treeByRepo?.[firstRepo.id];
+    const readFiles = repoSnapshot?.filesRead || [];
+    const errorsNote =
+      repoSnapshot?.errors && repoSnapshot.errors.length > 0
+        ? `\n\n> [!WARNING]\n> ${repoSnapshot.errors.join(' | ')}`
+        : '';
+
+    const filesSection =
+      readFiles.length > 0
+        ? readFiles
+            .slice(0, 4)
+            .map(
+              rf =>
+                `#### 📄 \`${rf.path}\`\n\`\`\`\n${rf.content.slice(0, 1200)}${rf.content.length > 1200 ? '\n...' : ''}\n\`\`\``
+            )
+            .join('\n\n')
+        : '_Could not read file contents yet — check if the repository is private (add a GitHub Personal Access Token in Integrations) or pin files in the Repo Files drawer._';
+
+    const treeSummary = treeInfo
+      ? `\n- **Indexed Repository Files**: ${treeInfo.files.length} files on branch \`${treeInfo.branch}\` (\`${treeInfo.files.slice(0, 10).map(f => f.path).join('`, `')}\`${treeInfo.files.length > 10 ? ', ...' : ''})`
+      : '';
+
+    const commitsSummary =
+      firstRepo.commits && firstRepo.commits.length > 0
+        ? `\n- **Recent Commits**: ${firstRepo.commits
+            .slice(0, 3)
+            .map(c => `\`${c.shortHash}\` ${c.message}`)
+            .join(' • ')}`
+        : '';
+
+    return {
+      text: `### 💻 Linked Course Project: \`${firstRepo.owner}/${firstRepo.repo}\`${treeSummary}${commitsSummary}\n\n${filesSection}${errorsNote}\n\n---\n💡 **Tip**: Connect your Gemini API key (` +
+        `"Connect Free Gemini Key"` +
+        `) for deep natural-language architecture walkthroughs and line-by-line code explanations across these repo files!`,
+      citations: readFiles.map(rf => `Repo: ${rf.repoLabel} • ${rf.path}`)
+    };
+  }
 
   // 1. Next Lecture / Class Preparation Query
   if (lower.includes('lecture') || lower.includes('class') || lower.includes('prepare') || lower.includes('schedule') || lower.includes('next')) {
