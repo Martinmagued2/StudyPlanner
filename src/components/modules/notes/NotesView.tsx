@@ -29,11 +29,20 @@ import {
   X,
   ArrowUpDown,
   Clock,
-  Layers
+  Layers,
+  Camera,
+  Share2,
+  UploadCloud
 } from 'lucide-react';
 import { useApp } from '../../../context/AppContext';
 import { Note, NoteFolder, NoteBlock } from '../../../types';
 import { NotionBlockEditor } from './NotionBlockEditor';
+import {
+  readImageFileAsBase64,
+  analyzeStudyImageWithVision,
+  VisionScanMode
+} from '../../../services/visionScannerService';
+import { createSharedStudyLink } from '../../../services/shareService';
 import {
   createBlock,
   blocksToHtml,
@@ -58,6 +67,7 @@ type SortMode = 'updated' | 'created' | 'title';
 
 export const NotesView: React.FC = () => {
   const {
+    user,
     notes,
     courses,
     files,
@@ -118,6 +128,106 @@ export const NotesView: React.FC = () => {
 
   const [newTagInput, setNewTagInput] = useState('');
   const [showSidebarMobile, setShowSidebarMobile] = useState(false);
+
+  // Vision Handwriting / Diagram Scanner State
+  const [isVisionOpen, setIsVisionOpen] = useState(false);
+  const [visionMode, setVisionMode] = useState<VisionScanMode>('handwriting');
+  const [visionFilePreview, setVisionFilePreview] = useState<{ base64: string; mimeType: string; dataUrl: string; name: string } | null>(null);
+  const [visionExtraPrompt, setVisionExtraPrompt] = useState('');
+  const [visionLoading, setVisionLoading] = useState(false);
+  const [visionError, setVisionError] = useState<string | null>(null);
+  const [appendToCurrentNote, setAppendToCurrentNote] = useState(false);
+
+  const handleVisionFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setVisionError(null);
+    try {
+      const parsed = await readImageFileAsBase64(file);
+      setVisionFilePreview({ ...parsed, name: file.name });
+    } catch (err: any) {
+      setVisionError(err?.message || 'Unable to read image.');
+    }
+  };
+
+  const handleRunVisionScan = async () => {
+    if (!visionFilePreview) return;
+    setVisionLoading(true);
+    setVisionError(null);
+    try {
+      const result = await analyzeStudyImageWithVision({
+        base64: visionFilePreview.base64,
+        mimeType: visionFilePreview.mimeType,
+        mode: visionMode,
+        courseName: selectedCourse ? `${selectedCourse.code} ${selectedCourse.name}` : undefined,
+        extraNotes: visionExtraPrompt
+      });
+      const scannedBlocks = parseHtmlOrMarkdownToBlocks(result.markdown);
+      if (appendToCurrentNote && selectedNote) {
+        const existing =
+          selectedNote.blocks && selectedNote.blocks.length > 0
+            ? selectedNote.blocks
+            : parseHtmlOrMarkdownToBlocks(selectedNote.content);
+        const merged = [
+          ...existing,
+          createBlock('divider', ''),
+          createBlock('callout', `<strong>Scanned via Vision AI (${visionMode}):</strong> ${result.title}`, {
+            calloutTone: 'info',
+            calloutIcon: '📷'
+          }),
+          ...scannedBlocks
+        ];
+        updateNote(selectedNote.id, { blocks: merged, content: blocksToHtml(merged) });
+        showToast('Imported scanned image blocks into your active note!', 'success');
+      } else {
+        handleCreateBlankNote({
+          title: result.title,
+          courseId: selectedNote?.courseId || (selectedCourseFilter !== 'all' ? selectedCourseFilter : courses[0]?.id || ''),
+          icon: visionMode === 'handwriting' ? '✍️' : visionMode === 'diagram' ? '📐' : '🧮',
+          tags: ['vision-scan', visionMode],
+          blocks: scannedBlocks,
+          content: blocksToHtml(scannedBlocks)
+        });
+        showToast('Created Notion page from your photo/handwriting!', 'success');
+      }
+      setIsVisionOpen(false);
+      setVisionFilePreview(null);
+      setVisionExtraPrompt('');
+    } catch (err: any) {
+      setVisionError(err?.message || 'Vision analysis failed.');
+    } finally {
+      setVisionLoading(false);
+    }
+  };
+
+  const handleShareSelectedNote = async () => {
+    if (!selectedNote) return;
+    const res = await createSharedStudyLink({
+      itemType: 'note',
+      title: selectedNote.title || 'Shared Note',
+      authorName: user?.name || 'Classmate',
+      courseLabel: selectedCourse ? `${selectedCourse.code} ${selectedCourse.name}` : undefined,
+      note: {
+        title: selectedNote.title,
+        content: selectedNote.content,
+        blocks: selectedNote.blocks,
+        icon: selectedNote.icon,
+        coverImage: selectedNote.coverImage,
+        tags: selectedNote.tags
+      }
+    });
+    try {
+      await navigator.clipboard.writeText(res.shareUrl);
+      showToast(
+        res.storedInCloud
+          ? `Share link copied! (${res.shareId}) — friends can view & clone cleanly.`
+          : 'Portable share link copied to clipboard!',
+        'success'
+      );
+    } catch {
+      showToast(`Share Room Ready: ${res.shareUrl}`, 'info');
+    }
+  };
 
   // Consume external navigation target (e.g. from Voice Assistant or Dashboard)
   useEffect(() => {
@@ -288,7 +398,6 @@ export const NotesView: React.FC = () => {
       icon: overrides?.icon || '📝',
       coverImage: overrides?.coverImage,
       pinned: false,
-      highlightedTerms: [],
       isFavorite: false,
       isArchived: false
     });
@@ -374,12 +483,12 @@ export const NotesView: React.FC = () => {
         const titleLabel = topic || sourceFile?.name.replace(/\.[^/.]+$/, '') || 'Study Notes';
         const snippet = materialText
           ? materialText
-              .split(/\n+/)
-              .map(s => s.trim())
-              .filter(s => s.length > 25)
-              .slice(0, 6)
-              .map(s => `- ${s}`)
-              .join('\n')
+            .split(/\n+/)
+            .map(s => s.trim())
+            .filter(s => s.length > 25)
+            .slice(0, 6)
+            .map(s => `- ${s}`)
+            .join('\n')
           : '- Core principle 1: Define key terminology and boundaries.\n- Core principle 2: Trace step-by-step mechanisms and examples.\n- Core principle 3: Identify edge cases and exam applications.';
 
         finalMd = `## Overview\nStructured study notes for **${titleLabel}**${targetCourse ? ` (${targetCourse.code} — ${targetCourse.name})` : ''}.\n\n> [!TIP] Key Objective: Focus on understanding the core invariant and applying it to unseen exam scenarios.\n\n## Key Concepts & Extracted Points\n${snippet}\n\n## Summary Matrix\n| Concept | Definition | Application |\n| --- | --- | --- |\n| Fundamentals | Core rules and notation | Foundation questions |\n| Edge Cases | Boundary conditions & limits | High-weight exam problems |\n\n## Revision Checklist\n- [ ] Review main definitions without looking at notes\n- [ ] Work through 2 practice examples\n- [ ] Test recall using flashcards or a quick quiz`;
@@ -487,12 +596,12 @@ export const NotesView: React.FC = () => {
         const fallbackMd =
           mode === 'key_concepts'
             ? `## Key Concepts (${selectedNote.title})\n` +
-              rawText
-                .split(/[.!?]\s+/)
-                .filter(s => s.trim().length > 20)
-                .slice(0, 5)
-                .map(s => `- ${s.trim()}`)
-                .join('\n')
+            rawText
+              .split(/[.!?]\s+/)
+              .filter(s => s.trim().length > 20)
+              .slice(0, 5)
+              .map(s => `- ${s.trim()}`)
+              .join('\n')
             : `## Exam Revision Sheet\n> [!WARNING] Double-check edge cases, units, and formal definitions.\n- [ ] Summarize "${selectedNote.title}" from memory\n- [ ] Practice applying each concept to a sample exam question`;
 
         const appended = parseHtmlOrMarkdownToBlocks(aiSection || fallbackMd);
@@ -601,7 +710,7 @@ export const NotesView: React.FC = () => {
         uploadedAt: new Date().toISOString(),
         isFavorite: false,
         rawText,
-        chunks: [{ id: 'c1', content: rawText, page: 1, hasVisuals: false }]
+        chunks: [{ id: 'c1', content: rawText, page: 1 }]
       };
       const generated = await generateQuizFromFiles([virtualFile], {
         difficulty: 'medium',
@@ -641,11 +750,10 @@ export const NotesView: React.FC = () => {
         <div key={folder.id}>
           <div
             style={{ paddingLeft: `${8 + depth * 14}px` }}
-            className={`group flex items-center justify-between pr-2 py-1.5 rounded-lg text-xs cursor-pointer transition ${
-              isSelected
-                ? 'bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/50 dark:text-indigo-300'
-                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
-            }`}
+            className={`group flex items-center justify-between pr-2 py-1.5 rounded-lg text-xs cursor-pointer transition ${isSelected
+              ? 'bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/50 dark:text-indigo-300'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
+              }`}
             onClick={() => setNavFilter({ folderId: folder.id })}
           >
             <div className="flex items-center gap-1.5 min-w-0">
@@ -721,11 +829,10 @@ export const NotesView: React.FC = () => {
       {/* Toast Notification */}
       {aiToast && (
         <div
-          className={`fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl border text-xs font-medium transition-all ${
-            aiToast.type === 'error'
-              ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-200 dark:border-rose-800'
-              : 'bg-white text-slate-800 border-slate-200 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-700'
-          }`}
+          className={`fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl border text-xs font-medium transition-all ${aiToast.type === 'error'
+            ? 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-200 dark:border-rose-800'
+            : 'bg-white text-slate-800 border-slate-200 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-700'
+            }`}
         >
           <Sparkles className="w-4 h-4 text-indigo-500 shrink-0" />
           <span>{aiToast.message}</span>
@@ -751,9 +858,8 @@ export const NotesView: React.FC = () => {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* PANE 1: Library / Folders / Views */}
         <aside
-          className={`${
-            showSidebarMobile ? 'flex fixed inset-y-0 left-0 z-40' : 'hidden lg:flex'
-          } w-60 shrink-0 flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 overflow-y-auto`}
+          className={`${showSidebarMobile ? 'flex fixed inset-y-0 left-0 z-40' : 'hidden lg:flex'
+            } w-60 shrink-0 flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 overflow-y-auto`}
         >
           <div className="p-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -822,11 +928,10 @@ export const NotesView: React.FC = () => {
                     setNavFilter(item.id);
                     setSelectedTagFilter(null);
                   }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition ${
-                    active
-                      ? 'bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/50 dark:text-indigo-300'
-                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
-                  }`}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition ${active
+                    ? 'bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/50 dark:text-indigo-300'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
+                    }`}
                 >
                   <span className="flex items-center gap-2">
                     <Icon className="w-3.5 h-3.5" />
@@ -870,11 +975,10 @@ export const NotesView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSelectedCourseFilter('all')}
-                className={`w-full text-left px-2.5 py-1 rounded-lg text-xs transition ${
-                  selectedCourseFilter === 'all'
-                    ? 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                }`}
+                className={`w-full text-left px-2.5 py-1 rounded-lg text-xs transition ${selectedCourseFilter === 'all'
+                  ? 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                  }`}
               >
                 All Courses
               </button>
@@ -885,11 +989,10 @@ export const NotesView: React.FC = () => {
                     key={c.id}
                     type="button"
                     onClick={() => setSelectedCourseFilter(c.id)}
-                    className={`w-full flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs transition ${
-                      selectedCourseFilter === c.id
-                        ? 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
-                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                    }`}
+                    className={`w-full flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs transition ${selectedCourseFilter === c.id
+                      ? 'bg-slate-100 dark:bg-slate-800 font-semibold text-slate-900 dark:text-white'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                      }`}
                   >
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
                     <span className="truncate">{c.code || c.name}</span>
@@ -910,11 +1013,10 @@ export const NotesView: React.FC = () => {
                     key={tag}
                     type="button"
                     onClick={() => setSelectedTagFilter(prev => (prev === tag ? null : tag))}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition ${
-                      selectedTagFilter === tag
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                    }`}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition ${selectedTagFilter === tag
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
                   >
                     #{tag} ({count})
                   </button>
@@ -994,11 +1096,10 @@ export const NotesView: React.FC = () => {
                   <div
                     key={note.id}
                     onClick={() => setSelectedNoteId(note.id)}
-                    className={`p-3 rounded-xl cursor-pointer border transition ${
-                      isSelected
-                        ? 'bg-white dark:bg-slate-800 border-indigo-400 dark:border-indigo-500 shadow-sm ring-1 ring-indigo-500/20'
-                        : 'bg-white/70 dark:bg-slate-900/70 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
-                    }`}
+                    className={`p-3 rounded-xl cursor-pointer border transition ${isSelected
+                      ? 'bg-white dark:bg-slate-800 border-indigo-400 dark:border-indigo-500 shadow-sm ring-1 ring-indigo-500/20'
+                      : 'bg-white/70 dark:bg-slate-900/70 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                      }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
@@ -1113,11 +1214,10 @@ export const NotesView: React.FC = () => {
                 {/* Status, AI Study Tools & Export Actions */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span
-                    className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                      saveStatus === 'saving'
-                        ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-                        : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                    }`}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${saveStatus === 'saving'
+                      ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                      : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                      }`}
                   >
                     {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
                   </span>
@@ -1199,6 +1299,19 @@ export const NotesView: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Scan Handwriting / Whiteboard Photo */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisionError(null);
+                      setIsVisionOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 dark:hover:bg-sky-900/50 text-sky-700 dark:text-sky-300 text-xs font-semibold transition"
+                    title="Scan handwriting, whiteboard, or problem photo into Notion blocks"
+                  >
+                    <Camera className="w-3.5 h-3.5" /> Scan Photo
+                  </button>
+
                   {/* Export PDF / Preview */}
                   <button
                     type="button"
@@ -1206,6 +1319,16 @@ export const NotesView: React.FC = () => {
                     className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 transition"
                   >
                     <Download className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" /> Export / PDF
+                  </button>
+
+                  {/* Share Collaborative Note */}
+                  <button
+                    type="button"
+                    onClick={handleShareSelectedNote}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 transition"
+                    title="Copy collaborative Study Room link for classmates"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-emerald-600" /> Share
                   </button>
 
                   {/* Favorite */}
@@ -1219,11 +1342,10 @@ export const NotesView: React.FC = () => {
                     className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                   >
                     <Star
-                      className={`w-3.5 h-3.5 ${
-                        selectedNote.isFavorite || selectedNote.pinned
-                          ? 'text-amber-500 fill-amber-400'
-                          : 'text-slate-400'
-                      }`}
+                      className={`w-3.5 h-3.5 ${selectedNote.isFavorite || selectedNote.pinned
+                        ? 'text-amber-500 fill-amber-400'
+                        : 'text-slate-400'
+                        }`}
                     />
                   </button>
 
@@ -1655,6 +1777,123 @@ export const NotesView: React.FC = () => {
                   className="w-full flex-1 rounded-xl bg-white shadow-xl border border-slate-300"
                 />
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MULTIMODAL VISION SCANNER MODAL ==================== */}
+      {isVisionOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Camera className="w-5 h-5 text-sky-600" />
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  AI Handwriting, Whiteboard &amp; Diagram Scanner
+                </h3>
+              </div>
+              <button type="button" onClick={() => setIsVisionOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5 text-xs">
+              {(
+                [
+                  { id: 'handwriting', label: '✍️ Handwriting → Notes' },
+                  { id: 'homework_hints', label: '🧮 Problem Hints' },
+                  { id: 'diagram', label: '📐 Explain Diagram' }
+                ] as const
+              ).map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setVisionMode(m.id)}
+                  className={`py-2 px-2 rounded-xl font-semibold border transition ${
+                    visionMode === m.id
+                      ? 'bg-sky-600 text-white border-sky-600'
+                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <label className="block border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-5 text-center cursor-pointer hover:border-sky-500 transition">
+              {visionFilePreview ? (
+                <div className="space-y-2">
+                  <img
+                    src={visionFilePreview.dataUrl}
+                    alt="Scan preview"
+                    className="max-h-48 mx-auto rounded-xl object-contain shadow-sm"
+                  />
+                  <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    {visionFilePreview.name} (Click to replace)
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5 text-xs text-slate-500">
+                  <UploadCloud className="w-8 h-8 mx-auto text-sky-500" />
+                  <p className="font-semibold text-slate-700 dark:text-slate-200">
+                    Take photo or upload notebook / whiteboard / worksheet
+                  </p>
+                  <p className="text-[11px]">Supports handwritten math (KaTeX), diagrams, &amp; PNG/JPG/WEBP</p>
+                </div>
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleVisionFileChange}
+                className="hidden"
+              />
+            </label>
+
+            <input
+              type="text"
+              value={visionExtraPrompt}
+              onChange={e => setVisionExtraPrompt(e.target.value)}
+              placeholder="Optional hint (e.g. 'Focus on the recurrence relation on the right')"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+            />
+
+            {selectedNote && (
+              <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={appendToCurrentNote}
+                  onChange={e => setAppendToCurrentNote(e.target.checked)}
+                  className="rounded border-slate-300 text-sky-600"
+                />
+                Append scanned blocks to "{selectedNote.title}" instead of creating a new note
+              </label>
+            )}
+
+            {visionError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+                {visionError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsVisionOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!visionFilePreview || visionLoading}
+                onClick={handleRunVisionScan}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold disabled:opacity-50"
+              >
+                {visionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                <span>{visionLoading ? 'Analyzing Image...' : 'Convert with Vision AI'}</span>
+              </button>
             </div>
           </div>
         </div>

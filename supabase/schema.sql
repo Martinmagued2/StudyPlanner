@@ -369,6 +369,16 @@ CREATE TABLE public.email_notification_logs (
 );
 CREATE INDEX idx_email_logs_user ON public.email_notification_logs(user_id);
 
+-- 19. Collaborative Study Rooms: Public Read/Clone Snapshots for Shared Notes, Quizzes & Decks
+CREATE TABLE IF NOT EXISTS public.shared_items (
+    id TEXT PRIMARY KEY,
+    item_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    author_name TEXT DEFAULT 'Student',
+    payload JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
 -- ==============================================================================
 -- ENABLE ROW LEVEL SECURITY (RLS) ON ALL TABLES
 -- Permits seamless synchronization with both public anon key and authenticated users
@@ -381,7 +391,7 @@ DECLARE
         'assignments', 'exams', 'flashcard_decks', 'flashcards', 
         'quizzes', 'calendar_events', 'grade_items', 'previous_term_courses',
         'chat_sessions', 'focus_sessions', 'inbox_items', 'workspaces',
-        'notification_preferences', 'email_notification_logs'
+        'notification_preferences', 'email_notification_logs', 'shared_items'
     ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP

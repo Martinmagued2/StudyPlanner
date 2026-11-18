@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopNav } from './components/layout/TopNav';
@@ -11,6 +11,7 @@ import { AuthModal } from './components/modules/auth/AuthModal';
 import { DailyBriefingModal } from './components/modules/today/DailyBriefingModal';
 import { DeviceSyncModal } from './components/common/DeviceSyncModal';
 import { DatabaseConfigModal } from './components/common/DatabaseConfigModal';
+import { SharedViewerModal } from './components/modules/studyhub/SharedViewerModal';
 
 // Views
 import { TodayDashboard } from './components/modules/today/TodayDashboard';
@@ -45,6 +46,29 @@ const WorkspaceContent: React.FC = () => {
     isDbModalOpen,
     setIsDbModalOpen
   } = useApp();
+
+  const [sharedRoomParam, setSharedRoomParam] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('share') || (params.get('shareData') ? window.location.href : null);
+    } catch {
+      return null;
+    }
+  });
+  const [isSharedRoomOpen, setIsSharedRoomOpen] = useState<boolean>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return Boolean(params.get('share') || params.get('shareData'));
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const handler = () => setIsSharedRoomOpen(true);
+    window.addEventListener('nook:open-shared-room', handler);
+    return () => window.removeEventListener('nook:open-shared-room', handler);
+  }, []);
 
   // If not logged in, show dedicated full-screen Register / Sign-in page
   if (!user) {
@@ -125,6 +149,14 @@ const WorkspaceContent: React.FC = () => {
       <DatabaseConfigModal
         isOpen={isDbModalOpen}
         onClose={() => setIsDbModalOpen(false)}
+      />
+      <SharedViewerModal
+        initialShareParam={sharedRoomParam}
+        isOpen={isSharedRoomOpen}
+        onClose={() => {
+          setIsSharedRoomOpen(false);
+          setSharedRoomParam(null);
+        }}
       />
     </div>
   );

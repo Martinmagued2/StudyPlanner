@@ -510,3 +510,37 @@ ${fileContentsSection || 'No file contents loaded.'}`);
     errors
   };
 }
+
+/**
+ * Fetches file-level diffs & patches for a specific commit SHA (used by Project Code Tutor)
+ */
+export async function fetchCommitDetail(
+  ownerInput: string,
+  repoInput: string,
+  sha: string,
+  token?: string
+): Promise<{ message: string; author: string; filesChanged: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }> }> {
+  const { owner, repo } = parseGitHubOwnerRepo(ownerInput, repoInput);
+  const headers = buildGitHubHeaders(token);
+  const resp = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(sha)}`,
+    { headers }
+  );
+  if (!resp.ok) {
+    throw new Error(`Could not fetch commit ${sha.slice(0, 7)} (${resp.status})`);
+  }
+  const data = await resp.json();
+  return {
+    message: data?.commit?.message || '',
+    author: data?.commit?.author?.name || data?.author?.login || 'Developer',
+    filesChanged: Array.isArray(data?.files)
+      ? data.files.slice(0, 12).map((f: any) => ({
+          filename: String(f.filename || ''),
+          status: String(f.status || 'modified'),
+          additions: Number(f.additions) || 0,
+          deletions: Number(f.deletions) || 0,
+          patch: typeof f.patch === 'string' ? f.patch.slice(0, 2500) : undefined
+        }))
+      : []
+  };
+}

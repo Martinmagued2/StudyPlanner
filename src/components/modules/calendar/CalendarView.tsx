@@ -20,6 +20,12 @@ import {
   Sparkles
 } from 'lucide-react';
 import { Assignment, Exam, CalendarEvent, Course } from '../../../types';
+import {
+  EnergyProfile,
+  ProposedStudyBlock,
+  generateAdaptiveWeeklyBlocks,
+  findMissedStudyEvents
+} from '../../../services/timeBlockingService';
 
 interface UnifiedCalendarItem {
   id: string;
@@ -49,6 +55,10 @@ export const CalendarView: React.FC = () => {
     assignments,
     exams,
     courses,
+    tasks,
+    addEvent,
+    deleteEvent,
+    isClassSuspendedOnDate,
     openQuickCreate,
     syncIntegration,
     setActiveView
@@ -59,6 +69,101 @@ export const CalendarView: React.FC = () => {
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<'all' | 'exam' | 'assignment' | 'event'>('all');
   const [selectedCourseFilter, setSelectedCourseFilter] = useState<string>('all');
   const [selectedItemDetail, setSelectedItemDetail] = useState<UnifiedCalendarItem | null>(null);
+
+  // AI Adaptive Time-Blocking Modal State
+  const [isTimeBlockModalOpen, setIsTimeBlockModalOpen] = useState(false);
+  const [energyProfile, setEnergyProfile] = useState<EnergyProfile>('morning');
+  const [blockMinutes, setBlockMinutes] = useState<number>(60);
+  const [maxHoursPerDay, setMaxHoursPerDay] = useState<number>(3);
+  const [proposedBlocks, setProposedBlocks] = useState<ProposedStudyBlock[]>([]);
+  const [timeBlockFeedback, setTimeBlockFeedback] = useState<string | null>(null);
+
+  const missedStudyEvents = useMemo(() => findMissedStudyEvents(events), [events]);
+
+  const handleOpenAiPlanner = () => {
+    const blocks = generateAdaptiveWeeklyBlocks({
+      courses,
+      assignments,
+      tasks,
+      exams,
+      events,
+      isClassSuspendedOnDate,
+      energyProfile,
+      blockMinutes,
+      maxHoursPerDay
+    });
+    setProposedBlocks(blocks);
+    setTimeBlockFeedback(null);
+    setIsTimeBlockModalOpen(true);
+  };
+
+  const handleRecomputeBlocks = (
+    nextEnergy: EnergyProfile = energyProfile,
+    nextDur: number = blockMinutes,
+    nextMax: number = maxHoursPerDay
+  ) => {
+    const blocks = generateAdaptiveWeeklyBlocks({
+      courses,
+      assignments,
+      tasks,
+      exams,
+      events,
+      isClassSuspendedOnDate,
+      energyProfile: nextEnergy,
+      blockMinutes: nextDur,
+      maxHoursPerDay: nextMax
+    });
+    setProposedBlocks(blocks);
+  };
+
+  const handleCommitBlocks = () => {
+    const chosen = proposedBlocks.filter(b => b.selected);
+    chosen.forEach(b => {
+      addEvent({
+        title: b.title,
+        description: `AI Adaptive Study Block • ${b.reason}`,
+        start: `${b.dateStr}T${b.startTime}`,
+        end: `${b.dateStr}T${b.endTime}`,
+        allDay: false,
+        type: 'event',
+        courseId: b.courseId,
+        provider: 'local'
+      });
+    });
+    setIsTimeBlockModalOpen(false);
+    setTimeBlockFeedback(`Scheduled ${chosen.length} adaptive study block(s) around your classes & deadlines!`);
+    setTimeout(() => setTimeBlockFeedback(null), 5000);
+  };
+
+  const handleReshiftMissed = () => {
+    const blocks = generateAdaptiveWeeklyBlocks({
+      courses,
+      assignments,
+      tasks,
+      exams,
+      events: events.filter(e => !missedStudyEvents.some(m => m.id === e.id)),
+      isClassSuspendedOnDate,
+      energyProfile,
+      blockMinutes,
+      maxHoursPerDay
+    });
+    missedStudyEvents.forEach(m => deleteEvent(m.id));
+    const replanted = blocks.slice(0, missedStudyEvents.length);
+    replanted.forEach(b => {
+      addEvent({
+        title: b.title,
+        description: `Reshifted Study Block • ${b.reason}`,
+        start: `${b.dateStr}T${b.startTime}`,
+        end: `${b.dateStr}T${b.endTime}`,
+        allDay: false,
+        type: 'event',
+        courseId: b.courseId,
+        provider: 'local'
+      });
+    });
+    setTimeBlockFeedback(`Shifted ${replanted.length} missed study block(s) into upcoming free gaps!`);
+    setTimeout(() => setTimeBlockFeedback(null), 5000);
+  };
 
   // Helper: Normalize date to YYYY-MM-DD in local time
   const toLocalDateStr = (d: Date | string): string => {
@@ -283,6 +388,14 @@ export const CalendarView: React.FC = () => {
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-5">
       {/* Top Header */}
+      {timeBlockFeedback && (
+        <div className="px-4 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
+          <span>✓ {timeBlockFeedback}</span>
+          <button type="button" onClick={() => setTimeBlockFeedback(null)}>
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2">
@@ -319,6 +432,25 @@ export const CalendarView: React.FC = () => {
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
+
+          <button
+            onClick={handleOpenAiPlanner}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white flex items-center gap-1.5 shadow-sm transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>AI Plan Week</span>
+          </button>
+
+          {missedStudyEvents.length > 0 && (
+            <button
+              onClick={handleReshiftMissed}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 flex items-center gap-1.5"
+              title="Move past incomplete study blocks into upcoming free slots"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reshift Missed ({missedStudyEvents.length})</span>
+            </button>
+          )}
 
           <button
             onClick={() => openQuickCreate('exam')}
@@ -883,6 +1015,145 @@ export const CalendarView: React.FC = () => {
                   className="px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI ADAPTIVE TIME-BLOCKING MODAL */}
+      {isTimeBlockModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[88vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600" /> AI Adaptive Weekly Time-Blocker
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Scans free gaps between your live classes, Academic Calendar holidays, exams, and deadlines.
+                </p>
+              </div>
+              <button type="button" onClick={() => setIsTimeBlockModalOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Energy Peak</label>
+                <select
+                  value={energyProfile}
+                  onChange={e => {
+                    const next = e.target.value as EnergyProfile;
+                    setEnergyProfile(next);
+                    handleRecomputeBlocks(next, blockMinutes, maxHoursPerDay);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                >
+                  <option value="morning">Morning Focus (8 AM – 1 PM)</option>
+                  <option value="afternoon">Afternoon Focus (1 PM – 6 PM)</option>
+                  <option value="night">Night Owl (6 PM – 11 PM)</option>
+                  <option value="balanced">Balanced All Day</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Block Duration</label>
+                <select
+                  value={blockMinutes}
+                  onChange={e => {
+                    const next = Number(e.target.value);
+                    setBlockMinutes(next);
+                    handleRecomputeBlocks(energyProfile, next, maxHoursPerDay);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                >
+                  <option value={45}>45 Minutes</option>
+                  <option value={60}>60 Minutes</option>
+                  <option value={90}>90 Minutes (Deep Work)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Max Study Hrs / Day</label>
+                <select
+                  value={maxHoursPerDay}
+                  onChange={e => {
+                    const next = Number(e.target.value);
+                    setMaxHoursPerDay(next);
+                    handleRecomputeBlocks(energyProfile, blockMinutes, next);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                >
+                  <option value={2}>2 Hours / day</option>
+                  <option value={3}>3 Hours / day</option>
+                  <option value={4}>4 Hours / day</option>
+                  <option value={6}>6 Hours / day (Exam Cram)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {proposedBlocks.length === 0 ? (
+                <p className="text-center py-8 text-xs text-slate-500">
+                  No open gaps matched your constraints this week — try expanding Max Study Hours/Day.
+                </p>
+              ) : (
+                proposedBlocks.map(b => (
+                  <label
+                    key={b.id}
+                    className={`p-3 rounded-xl border flex items-center justify-between gap-3 cursor-pointer text-xs transition ${
+                      b.selected
+                        ? 'bg-indigo-50/60 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-700'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={b.selected}
+                        onChange={() =>
+                          setProposedBlocks(prev =>
+                            prev.map(x => (x.id === b.id ? { ...x, selected: !x.selected } : x))
+                          )
+                        }
+                        className="rounded border-slate-300 text-indigo-600"
+                      />
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900 dark:text-white truncate">{b.title}</div>
+                        <div className="text-[11px] text-slate-500">{b.reason}</div>
+                      </div>
+                    </div>
+                    <div className="text-right font-mono text-[11px] shrink-0 text-slate-700 dark:text-slate-300">
+                      <div className="font-bold">{b.dateStr}</div>
+                      <div>
+                        {b.startTime} – {b.endTime}
+                      </div>
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                {proposedBlocks.filter(b => b.selected).length} block(s) selected
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTimeBlockModalOpen(false)}
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={proposedBlocks.filter(b => b.selected).length === 0}
+                  onClick={handleCommitBlocks}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold disabled:opacity-50"
+                >
+                  Schedule {proposedBlocks.filter(b => b.selected).length} Blocks to Calendar
                 </button>
               </div>
             </div>

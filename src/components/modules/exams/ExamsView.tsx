@@ -18,14 +18,23 @@ import {
   FileText,
   Settings,
   Building2,
-  Globe
+  Globe,
+  Loader2,
+  Brain
 } from 'lucide-react';
 import { Exam, RevisionSession, ExamPeriodType } from '../../../types';
+import { generateExamCramPack, PredictedExamPack } from '../../../services/examPredictorService';
+import { parseHtmlOrMarkdownToBlocks, blocksToHtml } from '../../../services/noteBlockService';
 
 export const ExamsView: React.FC = () => {
   const {
     exams,
     courses,
+    notes,
+    files,
+    quizzes,
+    addNote,
+    setNotesNavTarget,
     addExam,
     updateExam,
     deleteExam,
@@ -38,6 +47,11 @@ export const ExamsView: React.FC = () => {
     activeAcademicMode,
     setActiveView
   } = useApp();
+
+  const [cramPack, setCramPack] = useState<PredictedExamPack | null>(null);
+  const [isPredictingExam, setIsPredictingExam] = useState(false);
+  const [openModelIdx, setOpenModelIdx] = useState<number | null>(null);
+  const [savedCramToast, setSavedCramToast] = useState<string | null>(null);
 
   const [examFilter, setExamFilter] = useState<'all' | 'midterm' | 'final' | 'quiz'>('all');
   const [selectedExamId, setSelectedExamId] = useState<string>(exams[0]?.id || '');
@@ -487,6 +501,32 @@ export const ExamsView: React.FC = () => {
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>{selectedExam.revisionSessions.length > 0 ? 'Rebuild Revision Schedule' : 'Generate Revision Plan'}</span>
               </button>
+
+              <button
+                type="button"
+                disabled={isPredictingExam}
+                onClick={async () => {
+                  setIsPredictingExam(true);
+                  setOpenModelIdx(null);
+                  try {
+                    const course = courses.find(c => c.id === selectedExam.courseId);
+                    const pack = await generateExamCramPack({
+                      exam: selectedExam,
+                      course,
+                      notes: notes.filter(n => n.courseId === selectedExam.courseId && !n.inTrash),
+                      files: files.filter(f => f.courseId === selectedExam.courseId),
+                      quizzes: quizzes.filter(q => q.courseId === selectedExam.courseId)
+                    });
+                    setCramPack(pack);
+                  } finally {
+                    setIsPredictingExam(false);
+                  }
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white flex items-center gap-1.5 shadow-sm disabled:opacity-60"
+              >
+                {isPredictingExam ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5" />}
+                <span>{isPredictingExam ? 'Predicting...' : 'AI Question Predictor & Cram Sheet'}</span>
+              </button>
             </div>
           </div>
 
@@ -547,6 +587,97 @@ export const ExamsView: React.FC = () => {
               >
                 Click here to automatically generate up to 5 spaced revision blocks.
               </button>
+            </div>
+          )}
+
+          {/* AI Exam Question Predictor & Printable Cram Sheet */}
+          {cramPack && (
+            <div className="mt-5 pt-5 border-t border-slate-200 dark:border-slate-800 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-violet-600" />
+                    AI Predicted Exam Questions &amp; Cram Sheet ({selectedExam.name})
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Synthesized from your course slides, notes, and quiz weak topics.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blocks = parseHtmlOrMarkdownToBlocks(cramPack.cramSheetMarkdown);
+                    const created = addNote({
+                      title: `${selectedExam.name} — 1-Page Cram Sheet`,
+                      courseId: selectedExam.courseId || '',
+                      content: blocksToHtml(blocks),
+                      blocks,
+                      icon: '🎯',
+                      tags: ['cram-sheet', 'exam'],
+                      pinned: true,
+                      highlightedTerms: []
+                    });
+                    setSavedCramToast(`Saved "${created.title}" to Notion Notes (ready for PDF export)!`);
+                    setTimeout(() => {
+                      setSavedCramToast(null);
+                      setActiveView('notes');
+                      setNotesNavTarget({ noteId: created.id });
+                    }, 1200);
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <FileText className="w-3.5 h-3.5" /> Save Cram Sheet to Notes (PDF Ready)
+                </button>
+              </div>
+
+              {savedCramToast && (
+                <div className="px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-xs font-semibold">
+                  ✓ {savedCramToast}
+                </div>
+              )}
+
+              {cramPack.highYieldTraps.length > 0 && (
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" /> High-Yield Exam Traps to Avoid
+                  </div>
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    {cramPack.highYieldTraps.map((trap, i) => (
+                      <li key={i}>{trap}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {cramPack.likelyQuestions.map((q, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-xs space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-bold text-slate-900 dark:text-white">
+                        {idx + 1}. {q.question}
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 text-[10px] font-bold shrink-0">
+                        {q.probability}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOpenModelIdx(openModelIdx === idx ? null : idx)}
+                      className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                    >
+                      {openModelIdx === idx ? 'Hide Model Answer' : 'Reveal Model Answer'}
+                    </button>
+                    {openModelIdx === idx && (
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 leading-relaxed">
+                        {q.modelAnswer}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { Course, Assignment, Note, DocumentFile, Quiz, GitHubRepo } from '../types';
 import { queryGemini, getGeminiApiKey } from './fileAiService';
-import { fetchRepoSnapshotForAi, RepoReadFile } from './githubService';
+import { fetchRepoSnapshotForAi, fetchCommitDetail, RepoReadFile } from './githubService';
 
 export interface CourseAgentMessage {
   id: string;
@@ -459,4 +459,108 @@ I am ready to assist you with:
 Try one of the quick actions below, or connect your free Gemini API key for unrestricted deep academic tutoring!`;
 
   return { text, citations: [] };
+}
+
+export type ProjectTutorMode = 'rubric_check' | 'bug_trace' | 'commit_diff' | 'viva_start' | 'viva_grade';
+
+export async function runCourseProjectTutor(params: {
+  mode: ProjectTutorMode;
+  course: Course;
+  repos: GitHubRepo[];
+  inputText: string;
+  pinnedPaths?: string[];
+  commitSha?: string;
+  vivaQuestion?: string;
+}): Promise<{ text: string; citations: string[] }> {
+  const { mode, course, repos, inputText, pinnedPaths = [], commitSha, vivaQuestion } = params;
+  if (!repos || repos.length === 0) {
+    return {
+      text: `No GitHub repository is linked to **${course.code}** yet. Link a repo in tab **6. Projects** first so I can inspect your files!`,
+      citations: []
+    };
+  }
+
+  const snapshot = await fetchRepoSnapshotForAi(repos, `${inputText} ${vivaQuestion || ''}`, pinnedPaths);
+  const citations = snapshot.filesRead.map(rf => `Repo: ${rf.repoLabel} • ${rf.path}`);
+
+  let commitSection = '';
+  if (mode === 'commit_diff') {
+    const r = repos[0];
+    const targetSha = commitSha || r.commits?.[0]?.hash;
+    if (targetSha) {
+      try {
+        const diff = await fetchCommitDetail(r.owner, r.repo, targetSha);
+        commitSection = `\n=== TARGET COMMIT DIFF (${targetSha.slice(0, 7)}) ===\nAuthor: ${diff.author}\nMessage: ${diff.message}\n` +
+          diff.filesChanged
+            .map(f => `File: ${f.filename} (${f.status}, +${f.additions}/-${f.deletions})\n\`\`\`diff\n${f.patch || '(binary or omitted diff)'}\n\`\`\``)
+            .join('\n\n');
+      } catch (err: any) {
+        commitSection = `\nCommit fetch warning: ${err?.message || 'unable to read commit patch'}`;
+      }
+    }
+  }
+
+  let prompt = '';
+  if (mode === 'rubric_check') {
+    prompt = `Act as a strict but helpful university project grader for ${course.code}: ${course.name}.
+Compare the assignment rubric / requirements below against the linked GitHub repository files and tree:
+
+=== ASSIGNMENT RUBRIC / INSTRUCTIONS ===
+${inputText}
+
+${snapshot.contextText}
+
+Output a structured Markdown audit with:
+1. **Requirements Matrix** (use ✅ Implemented, ⚠️ Partial, ❌ Missing — citing exact file paths & symbol names you observed)
+2. **Critical Gaps or Bugs Before Submission**
+3. **Actionable Next Fixes** with concise code guidance.`;
+  } else if (mode === 'bug_trace') {
+    prompt = `Act as a senior software engineer helping debug and trace execution in ${course.code}.
+User issue / feature to trace:
+"${inputText}"
+
+${snapshot.contextText}
+
+Trace the flow step-by-step across the exact repository files, pinpoint potential bugs, race conditions, or edge cases, and provide clear corrected code snippets.`;
+  } else if (mode === 'commit_diff') {
+    prompt = `Explain the commit / pull request changes below clearly for a student in ${course.code}:
+${inputText ? `Focus question: ${inputText}\n` : ''}
+${commitSection}
+
+${snapshot.contextText}
+
+Summarize: 1) What changed, 2) Why it matters architecturally, 3) Any side effects or bugs introduced.`;
+  } else if (mode === 'viva_start') {
+    prompt = `You are a university Viva / Oral Exam Assessor testing a student's true understanding of their own project repository in ${course.code}:
+${snapshot.contextText}
+
+Generate **1 challenging, specific technical viva question** grounded directly in an exact file/function from their repo (state which file you are asking about). Wait for their answer — do NOT reveal the full answer yet! Also list 2 brief focus hints.`;
+  } else {
+    prompt = `You are grading a student's Viva / Oral Defense answer for ${course.code}.
+Question asked: "${vivaQuestion || 'Explain your project architecture'}"
+Student's spoken/written answer: "${inputText}"
+
+${snapshot.contextText}
+
+Output:
+- **Defense Score: X/10**
+- **What You Nailed**
+- **Missing Technical Details / Weak Spots** (citing exact files/code in their repo)
+- **Model High-Distinction Answer** + **1 Follow-Up Viva Question**.`;
+  }
+
+  const aiResp = await queryGemini(
+    prompt,
+    `You are an expert code mentor and university assessor grounded strictly in the repository files provided for ${course.name}.`
+  );
+
+  if (aiResp && aiResp.trim()) {
+    return { text: aiResp, citations };
+  }
+
+  const fileList = snapshot.filesRead.map(f => `- \`${f.path}\``).join('\n') || '_None loaded_';
+  return {
+    text: `### 💻 Repo Inspection Ready (${repos[0].owner}/${repos[0].repo})\n\nRead **${snapshot.filesRead.length} file(s)** from GitHub:\n${fileList}\n${commitSection ? '\n' + commitSection.slice(0, 1200) : ''}\n\n> Connect your Gemini API key in **Ask AI** to run deep AI Rubric Grading, Bug Tracing, and Oral Viva Grading across these files.`,
+    citations
+  };
 }

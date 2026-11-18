@@ -13,16 +13,28 @@ import {
   TrendingUp,
   Brain,
   Keyboard,
-  Award
+  Award,
+  Share2,
+  Users,
+  Mic,
+  MicOff,
+  Loader2
 } from 'lucide-react';
 import { Flashcard } from '../../../types';
+import { createSharedStudyLink } from '../../../services/shareService';
+import { evaluateFeynmanExplanation, FeynmanEvaluationResult } from '../../../services/feynmanService';
+import { stripHtmlTags } from '../../../services/noteBlockService';
 
 export const StudyHubView: React.FC = () => {
   const {
+    user,
     flashcards,
     flashcardDecks,
     reviewFlashcard,
     addFlashcard,
+    addFlashcardDeck,
+    notes,
+    files,
     courses,
     tasks,
     focusSessions,
@@ -34,7 +46,63 @@ export const StudyHubView: React.FC = () => {
     addFocusMinutes
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'flashcards' | 'timer' | 'insights'>('flashcards');
+  const [activeTab, setActiveTab] = useState<'flashcards' | 'feynman' | 'timer' | 'insights'>('flashcards');
+  const [shareToast, setShareToast] = useState<string | null>(null);
+
+  // Feynman AI Concept Mastery State
+  const [feynmanCourseId, setFeynmanCourseId] = useState<string>(courses[0]?.id || '');
+  const [feynmanTopic, setFeynmanTopic] = useState<string>('');
+  const [feynmanText, setFeynmanText] = useState<string>('');
+  const [isFeynmanListening, setIsFeynmanListening] = useState(false);
+  const [isGradingFeynman, setIsGradingFeynman] = useState(false);
+  const [feynmanResult, setFeynmanResult] = useState<FeynmanEvaluationResult | null>(null);
+  const [feynmanCardsMsg, setFeynmanCardsMsg] = useState<string | null>(null);
+
+  const startFeynmanVoiceInput = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      alert('Speech recognition is supported in Chrome, Edge, and Safari.');
+      return;
+    }
+    const rec = new SR();
+    rec.lang = 'en-US';
+    rec.interimResults = false;
+    setIsFeynmanListening(true);
+    rec.onresult = (e: any) => {
+      const spoken = Array.from(e.results)
+        .map((r: any) => r[0].transcript)
+        .join(' ')
+        .trim();
+      setFeynmanText(prev => (prev ? `${prev} ${spoken}` : spoken));
+    };
+    rec.onerror = () => setIsFeynmanListening(false);
+    rec.onend = () => setIsFeynmanListening(false);
+    rec.start();
+  };
+
+  const handleEvaluateFeynman = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!feynmanTopic.trim() || !feynmanText.trim()) return;
+    setIsGradingFeynman(true);
+    setFeynmanResult(null);
+    setFeynmanCardsMsg(null);
+    try {
+      const courseObj = courses.find(c => c.id === feynmanCourseId);
+      const refText = [
+        ...notes.filter(n => !n.inTrash && (!feynmanCourseId || n.courseId === feynmanCourseId)).map(n => `${n.title}: ${stripHtmlTags(n.content).slice(0, 800)}`),
+        ...files.filter(f => !feynmanCourseId || f.courseId === feynmanCourseId).map(f => `${f.name}: ${(f.rawText || f.summary || '').slice(0, 1200)}`)
+      ].join('\n\n');
+      const res = await evaluateFeynmanExplanation({
+        topic: feynmanTopic.trim(),
+        studentExplanation: feynmanText.trim(),
+        courseName: courseObj ? `${courseObj.code} ${courseObj.name}` : undefined,
+        referenceMaterials: refText
+      });
+      setFeynmanResult(res);
+    } finally {
+      setIsGradingFeynman(false);
+    }
+  };
 
   // Flashcard review state
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -129,6 +197,17 @@ export const StudyHubView: React.FC = () => {
             <span>Spaced Flashcards ({dueCards.length})</span>
           </button>
           <button
+            onClick={() => setActiveTab('feynman')}
+            className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
+              activeTab === 'feynman'
+                ? 'bg-white dark:bg-slate-900 shadow-sm text-violet-700 dark:text-violet-300 font-semibold'
+                : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+          >
+            <Brain className="w-3.5 h-3.5 text-violet-600" />
+            <span>Feynman AI Tutor</span>
+          </button>
+          <button
             onClick={() => setActiveTab('timer')}
             className={`px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors ${
               activeTab === 'timer'
@@ -188,11 +267,63 @@ export const StudyHubView: React.FC = () => {
               })}
             </div>
 
-            <div className="flex items-center gap-1 text-[11px] text-slate-400 hidden sm:flex">
-              <Keyboard className="w-3.5 h-3.5" />
-              <span>Space to flip • 1-4 to grade</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={async () => {
+                  const targetDeck =
+                    selectedDeckFilter !== 'all'
+                      ? flashcardDecks.find(d => d.id === selectedDeckFilter)
+                      : flashcardDecks[0];
+                  const deckCards = (targetDeck
+                    ? flashcards.filter(f => f.deckId === targetDeck.id)
+                    : flashcards
+                  ).slice(0, 60);
+                  if (deckCards.length === 0) {
+                    setShareToast('Create at least 1 flashcard first before sharing.');
+                    return;
+                  }
+                  const res = await createSharedStudyLink({
+                    itemType: 'deck',
+                    title: targetDeck?.name || 'Study Flashcard Deck',
+                    authorName: user?.name || 'Classmate',
+                    deck: {
+                      name: targetDeck?.name || 'Shared Flashcards',
+                      tag: targetDeck?.tag,
+                      cards: deckCards.map(c => ({ question: c.question, answer: c.answer, citation: c.citation }))
+                    }
+                  });
+                  try {
+                    await navigator.clipboard.writeText(res.shareUrl);
+                  } catch { }
+                  setShareToast(`Copied deck share link (${res.shareId})!`);
+                  setTimeout(() => setShareToast(null), 4000);
+                }}
+                className="px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold flex items-center gap-1"
+              >
+                <Share2 className="w-3 h-3 text-indigo-600" />
+                <span>Share Deck</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('nook:open-shared-room'))}
+                className="px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold flex items-center gap-1"
+              >
+                <Users className="w-3 h-3 text-emerald-600" />
+                <span>Study Room</span>
+              </button>
+              <div className="flex items-center gap-1 text-[11px] text-slate-400 hidden md:flex">
+                <Keyboard className="w-3.5 h-3.5" />
+                <span>Space to flip • 1-4 to grade</span>
+              </div>
             </div>
           </div>
+
+          {shareToast && (
+            <div className="px-4 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+              ✓ {shareToast}
+            </div>
+          )}
 
           {/* Flip Card Review Interface */}
           {activeCard ? (
@@ -453,9 +584,198 @@ export const StudyHubView: React.FC = () => {
               <span>AI Weekly Academic Review</span>
             </div>
             <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-              "Great consistency this week, Alex! You logged 190 focus minutes in CS 302 and mastered the AVL rotation proofs. Peak study focus occurred between 09:30 and 11:30 AM. For next week, recommend allocating two additional 45-minute blocks to MATH 210 spectral decomposition before the final problem set deadline."
+              {user?.name || 'Student'}, you have logged <strong>{totalFocusMinutes} total focus minutes</strong> across{' '}
+              <strong>{focusSessions.length} deep-work session(s)</strong> with{' '}
+              <strong>{flashcards.length} spaced-repetition flashcards</strong> across{' '}
+              <strong>{courses.filter(c => !c.isArchived).length} active courses</strong>. Try teaching a tough concept inside the{' '}
+              <strong>Feynman AI Tutor</strong> tab to catch blind spots before exams!
             </p>
           </div>
+        </div>
+      )}
+
+      {/* TAB 4: FEYNMAN CONCEPT MASTERY LOOP ("TEACH THE AI BACK") */}
+      {activeTab === 'feynman' && (
+        <div className="max-w-3xl mx-auto space-y-5">
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md space-y-1">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/15 text-[10px] font-bold uppercase tracking-wider">
+              <Brain className="w-3 h-3" /> Feynman Concept Mastery Loop
+            </div>
+            <h2 className="text-base sm:text-lg font-bold">
+              Teach a concept back in plain words — AI exposes gaps &amp; turns them into flashcards
+            </h2>
+            <p className="text-xs text-violet-100">
+              If you can explain an algorithm, theorem, or system simply without hiding behind jargon, you truly own it.
+            </p>
+          </div>
+
+          <form
+            onSubmit={handleEvaluateFeynman}
+            className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  Course Context (Optional)
+                </label>
+                <select
+                  value={feynmanCourseId}
+                  onChange={e => setFeynmanCourseId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+                >
+                  <option value="">All Courses</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} — {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  Concept / Topic to Teach Back
+                </label>
+                <input
+                  type="text"
+                  value={feynmanTopic}
+                  onChange={e => setFeynmanTopic(e.target.value)}
+                  placeholder="e.g. Dijkstra's Algorithm, TCP 3-Way Handshake, Normalization"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  Explain it as if teaching a friend (speak or type)
+                </label>
+                <button
+                  type="button"
+                  onClick={startFeynmanVoiceInput}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                    isFeynmanListening
+                      ? 'bg-rose-600 text-white animate-pulse'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200'
+                  }`}
+                >
+                  {isFeynmanListening ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3 text-indigo-600" />}
+                  <span>{isFeynmanListening ? 'Listening...' : 'Speak Explanation'}</span>
+                </button>
+              </div>
+              <textarea
+                rows={5}
+                value={feynmanText}
+                onChange={e => setFeynmanText(e.target.value)}
+                placeholder="Start from the intuition: What problem does it solve? How does it work step by step? When can it fail?"
+                className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs leading-relaxed"
+              />
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={isGradingFeynman || !feynmanTopic.trim() || !feynmanText.trim()}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isGradingFeynman ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                <span>{isGradingFeynman ? 'Analyzing Understanding...' : 'Grade My Explanation'}</span>
+              </button>
+            </div>
+          </form>
+
+          {feynmanResult && (
+            <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm text-xs">
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40">
+                  <div className="text-[11px] text-indigo-600 font-semibold">Overall Mastery</div>
+                  <div className="text-2xl font-extrabold font-mono text-indigo-700 dark:text-indigo-200">
+                    {feynmanResult.scorePercent}%
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40">
+                  <div className="text-[11px] text-emerald-600 font-semibold">Accuracy</div>
+                  <div className="text-2xl font-extrabold font-mono text-emerald-700 dark:text-emerald-200">
+                    {feynmanResult.accuracyScore}%
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-sky-50 dark:bg-sky-950/40">
+                  <div className="text-[11px] text-sky-600 font-semibold">Clarity</div>
+                  <div className="text-2xl font-extrabold font-mono text-sky-700 dark:text-sky-200">
+                    {feynmanResult.clarityScore}%
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 space-y-1">
+                  <div className="font-bold text-emerald-800 dark:text-emerald-200">✓ What You Nailed</div>
+                  <ul className="list-disc pl-4 space-y-1 text-emerald-900 dark:text-emerald-100">
+                    {feynmanResult.strengths.map((s, i) => (
+                      <li key={i}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-1">
+                  <div className="font-bold text-amber-800 dark:text-amber-200">⚠ Blind Spots &amp; Gaps</div>
+                  <ul className="list-disc pl-4 space-y-1 text-amber-900 dark:text-amber-100">
+                    {feynmanResult.missingOrWrong.length > 0 ? (
+                      feynmanResult.missingOrWrong.map((m, i) => <li key={i}>{m}</li>)
+                    ) : (
+                      <li>No major conceptual gaps detected!</li>
+                    )}
+                  </ul>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="font-bold text-slate-900 dark:text-white mb-1">💡 Model Feynman Takeaway</div>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {feynmanResult.simplifiedTakeaway}
+                </p>
+              </div>
+
+              {feynmanResult.suggestedFlashcards.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500">
+                    Generated {feynmanResult.suggestedFlashcards.length} targeted flashcard(s) for your gaps
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetDeck =
+                        flashcardDecks.find(d => d.courseId === feynmanCourseId) || flashcardDecks[0];
+                      if (!targetDeck) {
+                        addFlashcardDeck(`Feynman: ${feynmanTopic}`, feynmanCourseId || undefined, 'feynman');
+                      }
+                      const deckId = targetDeck?.id || 'deck_cs302';
+                      feynmanResult.suggestedFlashcards.forEach(c => {
+                        addFlashcard({
+                          deckId,
+                          courseId: feynmanCourseId || undefined,
+                          question: c.question,
+                          answer: c.answer,
+                          citation: { file: `Feynman: ${feynmanTopic}`, pageOrSlide: 'Self-Explanation Gap' }
+                        });
+                      });
+                      setFeynmanCardsMsg(
+                        `Added ${feynmanResult.suggestedFlashcards.length} flashcard(s) to your Spaced Repetition queue!`
+                      );
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold"
+                  >
+                    + Save Gap Flashcards to Study Hub
+                  </button>
+                </div>
+              )}
+
+              {feynmanCardsMsg && (
+                <div className="px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-semibold">
+                  ✓ {feynmanCardsMsg}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

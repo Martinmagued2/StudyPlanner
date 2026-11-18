@@ -3,7 +3,7 @@ import { Course, Assignment, Note, DocumentFile, Quiz, GitHubRepo } from '../../
 import { useApp } from '../../../context/AppContext';
 import { MarkdownRenderer } from '../../common/MarkdownRenderer';
 import { getGeminiApiKey } from '../../../services/fileAiService';
-import { askCourseAgent, CourseAgentMessage } from '../../../services/courseAgentService';
+import { askCourseAgent, runCourseProjectTutor, CourseAgentMessage, ProjectTutorMode } from '../../../services/courseAgentService';
 import {
   fetchRepoTree,
   fetchRepoFileContent,
@@ -113,6 +113,85 @@ How would you like to prepare today? You can ask me to **explain your GitHub pro
   const [repoSearch, setRepoSearch] = useState('');
   const [pinnedRepoFiles, setPinnedRepoFiles] = useState<string[]>([]);
   const [previewFile, setPreviewFile] = useState<{ path: string; content: string; loading: boolean } | null>(null);
+
+  // Project AI Tutor Tools State (Rubric Grader / Bug Tracer / Commit Diff / Viva Oral Defense)
+  const [isProjectToolsOpen, setIsProjectToolsOpen] = useState(false);
+  const [projectToolMode, setProjectToolMode] = useState<'rubric_check' | 'bug_trace' | 'commit_diff' | 'viva'>('rubric_check');
+  const [projectToolInput, setProjectToolInput] = useState('');
+  const [selectedCommitSha, setSelectedCommitSha] = useState<string>('');
+  const [activeVivaQuestion, setActiveVivaQuestion] = useState<string | null>(null);
+
+  const handleRunProjectTool = async (modeOverride?: ProjectTutorMode, customInput?: string) => {
+    const modeToRun: ProjectTutorMode =
+      modeOverride ||
+      (projectToolMode === 'viva'
+        ? activeVivaQuestion
+          ? 'viva_grade'
+          : 'viva_start'
+        : projectToolMode);
+
+    const txt = (customInput ?? projectToolInput).trim();
+    if ((modeToRun === 'rubric_check' || modeToRun === 'bug_trace' || modeToRun === 'viva_grade') && !txt) {
+      return;
+    }
+
+    const userLabel =
+      modeToRun === 'rubric_check'
+        ? `📋 **Rubric & Requirements Check** against \`${repos[0]?.owner}/${repos[0]?.repo}\`:\n${txt.slice(0, 300)}${txt.length > 300 ? '...' : ''}`
+        : modeToRun === 'bug_trace'
+          ? `🐛 **Bug & Multi-File Trace**: ${txt}`
+          : modeToRun === 'commit_diff'
+            ? `🔀 **Explain Commit Diff** ${(selectedCommitSha || repos[0]?.commits?.[0]?.shortHash || '').slice(0, 7)}`
+            : modeToRun === 'viva_start'
+              ? `🎓 **Start Viva / Oral Exam Defense** on \`${repos[0]?.owner}/${repos[0]?.repo}\``
+              : `🗣️ **My Viva Answer**: ${txt}`;
+
+    setMessages(prev => [
+      ...prev,
+      {
+        id: `msg_user_${Date.now()}`,
+        sender: 'user',
+        text: userLabel,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+    ]);
+    setIsGenerating(true);
+    setProjectToolInput('');
+    if (modeToRun !== 'viva_start') {
+      setIsProjectToolsOpen(false);
+    }
+
+    try {
+      const res = await runCourseProjectTutor({
+        mode: modeToRun,
+        course,
+        repos,
+        inputText: txt,
+        pinnedPaths: pinnedRepoFiles,
+        commitSha: selectedCommitSha || repos[0]?.commits?.[0]?.hash,
+        vivaQuestion: activeVivaQuestion || undefined
+      });
+
+      if (modeToRun === 'viva_start') {
+        setActiveVivaQuestion(res.text);
+      } else if (modeToRun === 'viva_grade') {
+        setActiveVivaQuestion(res.text);
+      }
+
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `msg_agent_${Date.now()}`,
+          sender: 'agent',
+          text: res.text,
+          citations: res.citations,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const hasApiKey = Boolean(getGeminiApiKey() && getGeminiApiKey().trim().length > 10);
 
@@ -443,19 +522,34 @@ How would you like to prepare today? You can ask me to **explain your GitHub pro
         {/* AI Engine Status & Utility Buttons */}
         <div className="flex items-center gap-2">
           {repos.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setIsRepoExplorerOpen(prev => !prev)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
-                isRepoExplorerOpen
-                  ? 'bg-indigo-600 text-white border-indigo-600'
-                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
-              }`}
-              title="Browse & select repository files for the Study Agent to read"
-            >
-              <FileCode2 className="w-3.5 h-3.5" />
-              <span>Repo Files ({repoTreeFiles.reduce((s, r) => s + r.files.length, 0)})</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setIsProjectToolsOpen(prev => !prev)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${
+                  isProjectToolsOpen
+                    ? 'bg-violet-600 text-white border-violet-600'
+                    : 'bg-violet-50 dark:bg-violet-950/50 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-100'
+                }`}
+                title="Rubric Checker, Bug Tracer, Commit Explainer & Viva Defense"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>Project AI Tools</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsRepoExplorerOpen(prev => !prev)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                  isRepoExplorerOpen
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                }`}
+                title="Browse & select repository files for the Study Agent to read"
+              >
+                <FileCode2 className="w-3.5 h-3.5" />
+                <span>Repo Files ({repoTreeFiles.reduce((s, r) => s + r.files.length, 0)})</span>
+              </button>
+            </>
           )}
           {hasApiKey ? (
             <div
@@ -510,6 +604,127 @@ How would you like to prepare today? You can ask me to **explain your GitHub pro
           </button>
         ))}
       </div>
+
+      {/* Collapsible Project Code Tutor Drawer (Rubric / Bug / Commit / Viva) */}
+      {isProjectToolsOpen && repos.length > 0 && (
+        <div className="border-b border-violet-200 dark:border-violet-900 bg-violet-50/70 dark:bg-violet-950/30 p-3.5 space-y-3 shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  { id: 'rubric_check', label: '📋 Rubric Grader' },
+                  { id: 'bug_trace', label: '🐛 Bug & Flow Tracer' },
+                  { id: 'commit_diff', label: '🔀 Commit Diff Explainer' },
+                  { id: 'viva', label: '🎓 Viva Oral Defense' }
+                ] as const
+              ).map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setProjectToolMode(tab.id)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition ${
+                    projectToolMode === tab.id
+                      ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                      : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setIsProjectToolsOpen(false)} className="text-slate-400 hover:text-slate-700">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {projectToolMode === 'commit_diff' ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={selectedCommitSha || repos[0]?.commits?.[0]?.hash || ''}
+                onChange={e => setSelectedCommitSha(e.target.value)}
+                className="flex-1 min-w-[200px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+              >
+                {(repos[0]?.commits || []).length === 0 ? (
+                  <option value="">Latest commit on {repos[0].branch}</option>
+                ) : (
+                  repos[0].commits.map(c => (
+                    <option key={c.hash} value={c.hash}>
+                      {c.shortHash} — {c.message}
+                    </option>
+                  ))
+                )}
+              </select>
+              <button
+                type="button"
+                disabled={isGenerating}
+                onClick={() => handleRunProjectTool('commit_diff', 'Explain this commit')}
+                className="px-3.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold"
+              >
+                Explain Commit Changes
+              </button>
+            </div>
+          ) : projectToolMode === 'viva' ? (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                  {activeVivaQuestion
+                    ? 'Type your defense answer below and click Grade My Answer:'
+                    : 'AI reads your repo and quizzes you like a university viva examiner:'}
+                </span>
+                <button
+                  type="button"
+                  disabled={isGenerating}
+                  onClick={() => handleRunProjectTool('viva_start', 'Ask me a viva question')}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-[11px] font-semibold"
+                >
+                  {activeVivaQuestion ? 'New Viva Question' : 'Start Viva Exam'}
+                </button>
+              </div>
+              {activeVivaQuestion && (
+                <div className="flex gap-2">
+                  <textarea
+                    rows={2}
+                    value={projectToolInput}
+                    onChange={e => setProjectToolInput(e.target.value)}
+                    placeholder="Explain how your code works..."
+                    className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+                  />
+                  <button
+                    type="button"
+                    disabled={isGenerating || !projectToolInput.trim()}
+                    onClick={() => handleRunProjectTool('viva_grade')}
+                    className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold shrink-0 disabled:opacity-50"
+                  >
+                    Grade Answer
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <textarea
+                rows={2}
+                value={projectToolInput}
+                onChange={e => setProjectToolInput(e.target.value)}
+                placeholder={
+                  projectToolMode === 'rubric_check'
+                    ? 'Paste your assignment specification or grading rubric here to check what is implemented vs missing in your repo...'
+                    : 'Describe the bug, error message, or feature flow you want traced across files...'
+                }
+                className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+              />
+              <button
+                type="button"
+                disabled={isGenerating || !projectToolInput.trim()}
+                onClick={() => handleRunProjectTool()}
+                className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold shrink-0 disabled:opacity-50"
+              >
+                {projectToolMode === 'rubric_check' ? 'Audit Repo' : 'Trace Bug'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Collapsible GitHub Repo Files Explorer */}
       {isRepoExplorerOpen && repos.length > 0 && (
