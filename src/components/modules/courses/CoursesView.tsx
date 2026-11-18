@@ -17,18 +17,95 @@ import {
   Calendar,
   Pencil,
   X,
-  Bot
+  Bot,
+  FileSpreadsheet
 } from 'lucide-react';
 import { Course, MeetingSlot, ClassType } from '../../../types';
+import { SyllabusImporterModal } from './SyllabusImporterModal';
+import { ExtractedSyllabusBundle } from '../../../services/syllabusImporterService';
 
 export const CoursesView: React.FC = () => {
-  const { courses, addCourse, updateCourse, archiveCourse, deleteCourse, navigateToCourse, setActiveCourseTab, assignments, notes } = useApp();
+  const { courses, addCourse, updateCourse, archiveCourse, deleteCourse, navigateToCourse, setActiveCourseTab, assignments, notes, addAssignment, addExam, addGradeItem } = useApp();
   const [showArchived, setShowArchived] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
   const [isMoodleModalOpen, setIsMoodleModalOpen] = useState(false);
+  const [isSyllabusModalOpen, setIsSyllabusModalOpen] = useState(false);
   const [courseToDelete, setCourseToDelete] = useState<Course | null>(null);
+
+  const handleImportSyllabusBundle = (bundle: ExtractedSyllabusBundle) => {
+    const createdCourse = addCourse({
+      name: bundle.course.name,
+      code: bundle.course.code,
+      instructor: bundle.course.instructor,
+      color: bundle.course.color,
+      location: bundle.course.location,
+      creditHours: bundle.course.creditHours,
+      term: bundle.course.term,
+      links: [],
+      isArchived: false,
+      meetingSlots: bundle.course.meetingSlots.map((slot, idx) => ({
+        id: `ms_syl_${Date.now()}_${idx}`,
+        day: slot.day,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        type: slot.type,
+        location: slot.location
+      }))
+    });
+
+    bundle.assignments.forEach(asg => {
+      addAssignment({
+        title: asg.title,
+        description: asg.description,
+        courseId: createdCourse.id,
+        type: asg.type,
+        status: 'todo',
+        priority: asg.priority,
+        dueDate: asg.dueDate,
+        estimatedMinutes: asg.estimatedMinutes,
+        links: []
+      });
+    });
+
+    bundle.exams.forEach(ex => {
+      addExam({
+        name: ex.name,
+        courseId: createdCourse.id,
+        date: ex.date,
+        startTime: ex.startTime,
+        durationMinutes: ex.durationMinutes,
+        examType: ex.examType,
+        weightPercentage: ex.weightPercentage,
+        description: ex.topics.length > 0 ? `Topics: ${ex.topics.join(', ')}` : undefined,
+        room: ex.location
+      });
+    });
+
+    bundle.gradeCategories.forEach(g => {
+      const cat = g.category.toLowerCase();
+      const mappedCat =
+        cat.includes('exam') || cat.includes('midterm') || cat.includes('final')
+          ? 'exam'
+          : cat.includes('quiz')
+          ? 'quiz'
+          : cat.includes('lab')
+          ? 'lab'
+          : cat.includes('project')
+          ? 'project'
+          : 'homework';
+      addGradeItem({
+        courseId: createdCourse.id,
+        name: g.title,
+        category: mappedCat,
+        earnedScore: 0,
+        maxScore: g.maxScore || 100,
+        weightPercent: g.weight,
+        isUngraded: true
+      });
+    });
+  };
 
   // New Course Form state
   const [code, setCode] = useState('');
@@ -211,7 +288,16 @@ export const CoursesView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setIsSyllabusModalOpen(true)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 shadow-sm transition-colors"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Import Syllabus (AI)</span>
+          </button>
+
           <button
             onClick={() => setIsMoodleModalOpen(true)}
             className="px-3 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 flex items-center gap-1.5"
@@ -760,6 +846,12 @@ export const CoursesView: React.FC = () => {
           </div>
         </div>
       )}
+
+      <SyllabusImporterModal
+        isOpen={isSyllabusModalOpen}
+        onClose={() => setIsSyllabusModalOpen(false)}
+        onConfirmImport={handleImportSyllabusBundle}
+      />
     </div>
   );
 };

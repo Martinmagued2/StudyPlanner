@@ -62,6 +62,11 @@ export const RemindersView: React.FC = () => {
   const [previewType, setPreviewType] = useState<'digest' | 'deadline' | 'nudge'>('digest');
   const [isSendingTest, setIsSendingTest] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [serverStatus, setServerStatus] = useState<'checking' | 'ready' | 'missing_env' | 'needs_restart'>('checking');
+  const [maskedSender, setMaskedSender] = useState('');
+  const isLocalHost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
   useEffect(() => {
     setDraft(notificationPreferences);
@@ -69,6 +74,18 @@ export const RemindersView: React.FC = () => {
 
   useEffect(() => {
     refreshEmailNotificationLogs().catch(() => {});
+    fetch('/api/notifications/send-test')
+      .then(async r => {
+        const ct = r.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          setServerStatus('needs_restart');
+          return;
+        }
+        const json = await r.json();
+        setMaskedSender(json.gmailUserMasked || '');
+        setServerStatus(json.gmailConfigured ? 'ready' : 'missing_env');
+      })
+      .catch(() => setServerStatus('needs_restart'));
   }, []);
 
   const todayKey = toLocalDateKey(new Date());
@@ -218,12 +235,21 @@ export const RemindersView: React.FC = () => {
 
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        triggerTestReminder();
-        setTestResult({
-          ok: false,
-          message:
-            'Local Vite dev server does not run Vercel `/api/*` serverless routes directly unless started via `vercel dev` or deployed to Vercel. Recorded a local test delivery entry instead.'
-        });
+        setServerStatus('needs_restart');
+        const snippet = (await res.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 140);
+        if (isLocalHost) {
+          triggerTestReminder();
+          setTestResult({
+            ok: false,
+            message:
+              'Local dev server has not loaded the `/api/*` middleware yet. Stop `npm run dev` (Ctrl+C) and run `npm run dev` again with GMAIL_USER & GMAIL_APP_PASSWORD in `.env.local`.'
+          });
+        } else {
+          setTestResult({
+            ok: false,
+            message: `Vercel endpoint /api/notifications/send-test returned HTTP ${res.status} (${contentType || 'non-JSON'}). Push the latest commit (including the api/ folder) so Vercel redeploys this serverless function, and check Vercel Function Logs.${snippet ? ` Response: "${snippet}"` : ''}`
+          });
+        }
         return;
       }
 
@@ -252,8 +278,31 @@ export const RemindersView: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold uppercase tracking-wider mb-2">
-            <Bell className="w-3.5 h-3.5" /> Gmail SMTP Email Engine
+          <div className="inline-flex items-center gap-2 flex-wrap mb-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold uppercase tracking-wider">
+              <Bell className="w-3.5 h-3.5" /> Gmail SMTP Email Engine
+            </span>
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                serverStatus === 'ready'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                  : serverStatus === 'missing_env'
+                    ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                    : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+              }`}
+            >
+              {serverStatus === 'ready'
+                ? `SMTP Ready (${maskedSender || 'Gmail Connected'})`
+                : serverStatus === 'missing_env'
+                  ? isLocalHost
+                    ? 'Add GMAIL_USER & GMAIL_APP_PASSWORD in .env.local or Vercel'
+                    : 'Add GMAIL_USER & GMAIL_APP_PASSWORD in Vercel Env Vars & Redeploy'
+                  : serverStatus === 'needs_restart'
+                    ? isLocalHost
+                      ? 'Restart npm run dev (Ctrl+C -> npm run dev) to activate local /api'
+                      : 'Vercel /api/notifications/send-test unavailable (Redeploy latest code & check Logs)'
+                    : 'Checking Gmail SMTP status...'}
+            </span>
           </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
             Intelligent Email Reminders &amp; Daily Digest

@@ -1,14 +1,26 @@
-import { sbInsert } from '../_lib/supabaseAdmin';
-import { isGmailSmtpConfigured, sendViaGmailSmtp } from '../_lib/gmailMailer';
+import { sbInsert } from '../_lib/supabaseAdmin.js';
+import { isGmailSmtpConfigured, sendViaGmailSmtp } from '../_lib/gmailMailer.js';
 import {
   renderDailyDigestEmail,
   renderDeadlineReminderEmail,
   renderProcrastinationEmail,
   DigestClassItem,
   DigestDeadlineItem
-} from '../_lib/emailRenderer';
+} from '../_lib/emailRenderer.js';
 
 export default async function handler(req: any, res: any) {
+  if (req.method === 'GET') {
+    const rawUser = (process.env.GMAIL_USER || '').trim();
+    const masked = rawUser.includes('@')
+      ? `${rawUser.slice(0, 2)}***@${rawUser.split('@')[1]}`
+      : '';
+    return res.status(200).json({
+      ok: true,
+      gmailConfigured: isGmailSmtpConfigured(),
+      gmailUserMasked: masked
+    });
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }

@@ -32,8 +32,10 @@ import {
   Layers,
   Camera,
   Share2,
-  UploadCloud
+  UploadCloud,
+  Mic
 } from 'lucide-react';
+import { LectureRecorderModal } from './LectureRecorderModal';
 import { useApp } from '../../../context/AppContext';
 import { Note, NoteFolder, NoteBlock } from '../../../types';
 import { NotionBlockEditor } from './NotionBlockEditor';
@@ -87,8 +89,11 @@ export const NotesView: React.FC = () => {
     addFlashcard,
     addFlashcardDeck,
     addQuiz,
+    addTask,
     setActiveView
   } = useApp();
+
+  const [isLectureRecorderOpen, setIsLectureRecorderOpen] = useState(false);
 
   const [navFilter, setNavFilter] = useState<NavFilter>('all');
   const [selectedCourseFilter, setSelectedCourseFilter] = useState<string>('all');
@@ -1313,6 +1318,16 @@ export const NotesView: React.FC = () => {
                     <Camera className="w-3.5 h-3.5" /> Scan Photo
                   </button>
 
+                  {/* Live Lecture Audio Recorder */}
+                  <button
+                    type="button"
+                    onClick={() => setIsLectureRecorderOpen(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-xs font-semibold transition"
+                    title="Record live lecture audio into Notion notes and extract deadlines"
+                  >
+                    <Mic className="w-3.5 h-3.5" /> Record Lecture
+                  </button>
+
                   {/* Export PDF / Preview */}
                   <button
                     type="button"
@@ -1811,11 +1826,10 @@ export const NotesView: React.FC = () => {
                   key={m.id}
                   type="button"
                   onClick={() => setVisionMode(m.id)}
-                  className={`py-2 px-2 rounded-xl font-semibold border transition ${
-                    visionMode === m.id
-                      ? 'bg-sky-600 text-white border-sky-600'
-                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                  }`}
+                  className={`py-2 px-2 rounded-xl font-semibold border transition ${visionMode === m.id
+                    ? 'bg-sky-600 text-white border-sky-600'
+                    : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
                 >
                   {m.label}
                 </button>
@@ -1899,6 +1913,40 @@ export const NotesView: React.FC = () => {
           </div>
         </div>
       )}
+
+      <LectureRecorderModal
+        isOpen={isLectureRecorderOpen}
+        onClose={() => setIsLectureRecorderOpen(false)}
+        courses={courses}
+        defaultCourseId={
+          selectedNote?.courseId ||
+          (selectedCourseFilter !== 'all' ? selectedCourseFilter : courses[0]?.id)
+        }
+        onSaveLectureNote={({ title, markdown, courseId }) => {
+          const blocks = parseHtmlOrMarkdownToBlocks(markdown);
+          handleCreateBlankNote({
+            title,
+            courseId: courseId || '',
+            icon: '🎙️',
+            tags: ['lecture-recording', 'ai-notes'],
+            blocks,
+            content: blocksToHtml(blocks)
+          });
+          showToast('Saved live lecture transcript as a Notion page!', 'success');
+        }}
+        onAddTaskDeadline={(deadline, courseId) => {
+          addTask({
+            title: deadline.title,
+            courseId,
+            dueDate: deadline.dueDate,
+            priority: deadline.priority,
+            tags: ['lecture-detected', deadline.kind],
+            completed: false,
+            source: 'ai'
+          });
+          showToast(`Added "${deadline.title}" (${deadline.dueDate}) to Tasks!`, 'success');
+        }}
+      />
     </div>
   );
 };

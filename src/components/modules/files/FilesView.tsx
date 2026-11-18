@@ -25,7 +25,8 @@ import {
   Clock,
   Award,
   ListOrdered,
-  Plus
+  Plus,
+  BrainCircuit
 } from 'lucide-react';
 import { DocumentFile, Quiz, QuizQuestion } from '../../../types';
 import {
@@ -35,6 +36,7 @@ import {
   generateFlashcardsFromFiles,
   getGeminiApiKey
 } from '../../../services/fileAiService';
+import { SocraticWhiteboardModal } from './SocraticWhiteboardModal';
 
 export const FilesView: React.FC = () => {
   const {
@@ -84,6 +86,7 @@ export const FilesView: React.FC = () => {
   const [isPasteTextModalOpen, setIsPasteTextModalOpen] = useState(false);
   const [isYoutubeModalOpen, setIsYoutubeModalOpen] = useState(false);
   const [isGdriveModalOpen, setIsGdriveModalOpen] = useState(false);
+  const [isSocraticOpen, setIsSocraticOpen] = useState(false);
 
   // Google Drive Link Form State
   const [gdriveTitle, setGdriveTitle] = useState('');
@@ -513,6 +516,17 @@ export const FilesView: React.FC = () => {
             <span>Video Captions</span>
           </button>
 
+          {/* Interactive Socratic PDF / Code Whiteboard */}
+          <button
+            type="button"
+            disabled={files.length === 0}
+            onClick={() => setIsSocraticOpen(true)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-violet-600 hover:bg-violet-700 text-white flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50"
+          >
+            <BrainCircuit className="w-3.5 h-3.5" />
+            <span>Socratic Whiteboard</span>
+          </button>
+
           {/* Upload Document Button */}
           <button
             onClick={() => {
@@ -736,14 +750,25 @@ export const FilesView: React.FC = () => {
               </div>
 
               {!isAllFiles && selectedFile && (
-                <button
-                  onClick={() => reindexFile(selectedFile.id)}
-                  className="px-2.5 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 text-slate-600 dark:text-slate-300 shrink-0 self-start sm:self-center"
-                  title="Re-run text parsing"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>Re-parse</span>
-                </button>
+                <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsSocraticOpen(true)}
+                    className="px-2.5 py-1 text-xs rounded-md bg-violet-600 hover:bg-violet-700 text-white font-semibold flex items-center gap-1 shadow-sm"
+                    title="Open Side-by-Side Socratic PDF / Code Whiteboard"
+                  >
+                    <BrainCircuit className="w-3.5 h-3.5" />
+                    <span>Socratic Whiteboard</span>
+                  </button>
+                  <button
+                    onClick={() => reindexFile(selectedFile.id)}
+                    className="px-2.5 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 text-slate-600 dark:text-slate-300"
+                    title="Re-run text parsing"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Re-parse</span>
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1888,6 +1913,25 @@ export const FilesView: React.FC = () => {
           </div>
         </div>
       )}
+
+      <SocraticWhiteboardModal
+        isOpen={isSocraticOpen}
+        onClose={() => setIsSocraticOpen(false)}
+        files={filteredFiles.length > 0 ? filteredFiles : files}
+        initialFileId={!isAllFiles && selectedFile ? selectedFile.id : targetFiles[0]?.id}
+        courses={courses}
+        onSaveToNote={(title, content, courseId) => {
+          addNote({
+            title,
+            content,
+            courseId,
+            tags: ['socratic-whiteboard', 'study-guide'],
+            pinned: false,
+            highlightedTerms: []
+          });
+          triggerToast('✓ Saved Socratic Whiteboard explanation to Notes!');
+        }}
+      />
     </div>
   );
 };

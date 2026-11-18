@@ -22,10 +22,10 @@ function localVercelApiPlugin(): Plugin {
         }
 
         try {
-          // Load .env and .env.local including server-only variables (GMAIL_USER, GMAIL_APP_PASSWORD, etc.)
+          // Reload .env and .env.local on every dev API request so changes take effect without restarting Vite
           const loaded = loadEnv(server.config.mode || 'development', process.cwd(), '');
           for (const [k, v] of Object.entries(loaded)) {
-            if (v !== undefined && process.env[k] === undefined) {
+            if (v !== undefined) {
               process.env[k] = v;
             }
           }

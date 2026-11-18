@@ -25,6 +25,7 @@ import {
 import { Exam, RevisionSession, ExamPeriodType } from '../../../types';
 import { generateExamCramPack, PredictedExamPack } from '../../../services/examPredictorService';
 import { parseHtmlOrMarkdownToBlocks, blocksToHtml } from '../../../services/noteBlockService';
+import { PastPaperSimulatorModal } from './PastPaperSimulatorModal';
 
 export const ExamsView: React.FC = () => {
   const {
@@ -33,6 +34,7 @@ export const ExamsView: React.FC = () => {
     notes,
     files,
     quizzes,
+    flashcardDecks,
     addNote,
     setNotesNavTarget,
     addExam,
@@ -45,8 +47,12 @@ export const ExamsView: React.FC = () => {
     academicConfig,
     updateAcademicConfig,
     activeAcademicMode,
-    setActiveView
+    setActiveView,
+    addFlashcardDeck,
+    addFlashcard
   } = useApp();
+
+  const [isPastPaperOpen, setIsPastPaperOpen] = useState(false);
 
   const [cramPack, setCramPack] = useState<PredictedExamPack | null>(null);
   const [isPredictingExam, setIsPredictingExam] = useState(false);
@@ -185,6 +191,14 @@ export const ExamsView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setIsPastPaperOpen(true)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-md bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-700 hover:to-amber-700 text-white flex items-center gap-1.5 shadow-sm"
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Past-Paper Timer Mode</span>
+          </button>
           <button
             onClick={() => setActiveView('settings')}
             className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 flex items-center gap-1.5 shadow-sm"
@@ -855,7 +869,7 @@ export const ExamsView: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setEditingExam(null)}
@@ -874,6 +888,31 @@ export const ExamsView: React.FC = () => {
           </div>
         </div>
       )}
+
+      <PastPaperSimulatorModal
+        isOpen={isPastPaperOpen}
+        onClose={() => setIsPastPaperOpen(false)}
+        courses={courses}
+        exams={exams}
+        files={files}
+        defaultExam={selectedExam}
+        onCreateFlashcards={(deckName, courseId, cards) => {
+          addFlashcardDeck(deckName, courseId, 'Past-Paper');
+          const targetDeckId =
+            flashcardDecks.find(d => d.courseId === courseId)?.id ||
+            flashcardDecks[0]?.id ||
+            'deck_cs302';
+          cards.forEach(c => {
+            addFlashcard({
+              deckId: targetDeckId,
+              courseId,
+              question: c.question,
+              answer: c.answer,
+              citation: { file: deckName, pageOrSlide: 'Past Paper Review' }
+            });
+          });
+        }}
+      />
     </div>
   );
 };
