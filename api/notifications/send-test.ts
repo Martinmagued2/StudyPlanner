@@ -18,7 +18,7 @@ export default async function handler(req: any, res: any) {
       ok: false,
       configured: false,
       error:
-        'Gmail SMTP is not configured on the server yet. Add GMAIL_USER and GMAIL_APP_PASSWORD (your 16-char Google App Password) in Vercel Environment Variables.'
+        'Gmail SMTP is not configured yet. Add GMAIL_USER and GMAIL_APP_PASSWORD (your 16-char Google App Password) in .env.local (for local dev) or Vercel Environment Variables.'
     });
   }
 
