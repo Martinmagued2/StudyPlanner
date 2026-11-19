@@ -37,6 +37,7 @@ import {
   getGeminiApiKey
 } from '../../../services/fileAiService';
 import { SocraticWhiteboardModal } from './SocraticWhiteboardModal';
+import { parseHtmlOrMarkdownToBlocks, blocksToHtml } from '../../../services/noteBlockService';
 
 export const FilesView: React.FC = () => {
   const {
@@ -1921,15 +1922,17 @@ export const FilesView: React.FC = () => {
         initialFileId={!isAllFiles && selectedFile ? selectedFile.id : targetFiles[0]?.id}
         courses={courses}
         onSaveToNote={(title, content, courseId) => {
+          const parsedBlocks = parseHtmlOrMarkdownToBlocks(content);
           addNote({
             title,
-            content,
+            content: blocksToHtml(parsedBlocks),
+            blocks: parsedBlocks,
             courseId,
             tags: ['socratic-whiteboard', 'study-guide'],
             pinned: false,
             highlightedTerms: []
           });
-          triggerToast('✓ Saved Socratic Whiteboard explanation to Notes!');
+          triggerToast('✓ Saved formatted Socratic Whiteboard note to Notes!');
         }}
       />
     </div>

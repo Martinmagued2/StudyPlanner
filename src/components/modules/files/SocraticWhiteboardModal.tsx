@@ -17,6 +17,7 @@ import {
   runSocraticWhiteboardAction,
   SocraticMode
 } from '../../../services/socraticWhiteboardService';
+import { MarkdownRenderer } from '../../common/MarkdownRenderer';
 
 interface SocraticWhiteboardModalProps {
   isOpen: boolean;
@@ -491,8 +492,8 @@ export const SocraticWhiteboardModal: React.FC<SocraticWhiteboardModalProps> = (
                       </button>
                     )}
                   </div>
-                  <div className="text-xs leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap font-sans">
-                    {item.responseMarkdown}
+                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/60">
+                    <MarkdownRenderer content={item.responseMarkdown} />
                   </div>
                 </div>
               ))}

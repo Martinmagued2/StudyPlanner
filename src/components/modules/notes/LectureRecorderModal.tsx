@@ -14,6 +14,7 @@ import {
   ProcessedLectureResult,
   processLectureTranscript
 } from '../../../services/lectureRecorderService';
+import { MarkdownRenderer } from '../../common/MarkdownRenderer';
 
 interface LectureRecorderModalProps {
   isOpen: boolean;
@@ -308,9 +309,9 @@ export const LectureRecorderModal: React.FC<LectureRecorderModalProps> = ({
                 </div>
               )}
 
-              <pre className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 whitespace-pre-wrap font-sans text-xs text-slate-700 dark:text-slate-200 max-h-56 overflow-y-auto">
-                {processed.notesMarkdown}
-              </pre>
+              <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-h-64 overflow-y-auto">
+                <MarkdownRenderer content={processed.notesMarkdown} />
+              </div>
             </div>
           )}
         </div>
