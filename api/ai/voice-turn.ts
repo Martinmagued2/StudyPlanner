@@ -71,22 +71,29 @@ User just said: "${transcript}"`;
   try {
     let rawText = '';
     if (geminiKey) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiKey)}`;
-      const gRes = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-          generationConfig: {
-            temperature: 0.35,
-            maxOutputTokens: 450,
-            responseMimeType: 'application/json'
-          }
-        })
-      });
-      const gJson: any = await gRes.json().catch(() => ({}));
-      rawText = gJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      for (const model of ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
+        const gRes = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+            generationConfig: {
+              temperature: 0.35,
+              maxOutputTokens: 450,
+              responseMimeType: 'application/json'
+            }
+          })
+        });
+        if (!gRes.ok) continue;
+        const gJson: any = await gRes.json().catch(() => ({}));
+        const candidate = gJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (candidate.trim()) {
+          rawText = candidate;
+          break;
+        }
+      }
     } else if (openaiKey) {
       const oRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',

@@ -68,10 +68,10 @@ export const GlobalAiDrawer: React.FC = () => {
 
     // Prioritize high-throughput, low-latency models to avoid 503 / high demand bottlenecks
     const candidateModels = [
-      'gemini-3.5-flash-lite',
       'gemini-3.5-flash',
-      'gemini-3.1-flash-lite',
-      'gemini-3.8-flash'
+      'gemini-3.8-flash',
+      'gemini-2.5-flash',
+      'gemini-3.5-flash-lite'
     ];
 
     let verified = false;

@@ -37,7 +37,7 @@ async function queryGeminiWithOptionalImage(
   const apiKey = getGeminiApiKey();
   if (!apiKey || apiKey.trim().length < 10) return null;
 
-  const models = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+  const models = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
   for (const model of models) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;

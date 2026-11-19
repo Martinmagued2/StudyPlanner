@@ -75,7 +75,7 @@ Output clean Markdown with:
     ? `${promptByMode[mode]}\n\nAdditional user context: ${extraNotes.trim()}`
     : promptByMode[mode];
 
-  const models = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+  const models = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
   let lastError = 'Gemini Vision request failed.';
 
   for (const model of models) {
