@@ -19,7 +19,11 @@ import {
   Key,
   ExternalLink,
   Maximize2,
-  Edit2
+  Edit2,
+  Copy,
+  BookmarkPlus,
+  Plus,
+  Loader2
 } from 'lucide-react';
 import { MarkdownRenderer } from '../../common/MarkdownRenderer';
 
@@ -29,8 +33,13 @@ export const GlobalAiDrawer: React.FC = () => {
     isAiDrawerOpen,
     setIsAiDrawerOpen,
     aiMessages,
+    chatSessions,
+    activeChatSessionId,
+    createNewChatSession,
+    selectChatSession,
     sendAiMessage,
     clearAiChat,
+    isAiThinking,
     isAiReasoning,
     setIsAiReasoning,
     aiMemories,
@@ -38,8 +47,12 @@ export const GlobalAiDrawer: React.FC = () => {
     updateAiMemory,
     deleteAiMemory,
     handleActionProposal,
+    addNote,
     setActiveView
   } = useApp();
+
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [savedMsgId, setSavedMsgId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'chat' | 'memory' | 'guide'>('chat');
   const [inputText, setInputText] = useState('');
@@ -242,6 +255,31 @@ export const GlobalAiDrawer: React.FC = () => {
       {/* Body */}
       {activeTab === 'chat' ? (
         <>
+          {/* Saved Sessions Bar */}
+          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 flex items-center gap-2 text-[11px]">
+            <select
+              value={activeChatSessionId}
+              onChange={e => selectChatSession(e.target.value)}
+              className="flex-1 min-w-0 px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 truncate focus:outline-none"
+              title="Switch saved AI conversations"
+            >
+              {chatSessions.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.title} ({s.messages.length} msg)
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => createNewChatSession()}
+              className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-1 shrink-0"
+              title="Start a new saved chat session"
+            >
+              <Plus className="w-3 h-3" />
+              <span>New</span>
+            </button>
+          </div>
+
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {aiMessages.map(msg => (
               <div
@@ -299,6 +337,39 @@ export const GlobalAiDrawer: React.FC = () => {
                           </span>
                         </div>
                       )}
+                      <div className="mt-2.5 pt-2 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(msg.content);
+                            setCopiedMsgId(msg.id);
+                            setTimeout(() => setCopiedMsgId(null), 2000);
+                          }}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-200/70 dark:hover:bg-slate-700/70 transition-colors"
+                        >
+                          {copiedMsgId === msg.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedMsgId === msg.id ? 'Copied' : 'Copy'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const titleLine = msg.content.split('\n')[0].replace(/^#+\s*/, '').trim() || 'Saved AI Response';
+                            addNote({
+                              title: titleLine.slice(0, 48),
+                              content: `<p>${msg.content.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br/>')}</p>`,
+                              tags: ['ai-saved', 'ask-ai'],
+                              pinned: false,
+                              highlightedTerms: []
+                            });
+                            setSavedMsgId(msg.id);
+                            setTimeout(() => setSavedMsgId(null), 2500);
+                          }}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-200/70 dark:hover:bg-slate-700/70 transition-colors"
+                        >
+                          {savedMsgId === msg.id ? <Check className="w-3 h-3 text-emerald-600" /> : <BookmarkPlus className="w-3 h-3" />}
+                          <span>{savedMsgId === msg.id ? 'Saved to Notes!' : 'Save Response'}</span>
+                        </button>
+                      </div>
                     </>
                   )}
 
@@ -369,6 +440,15 @@ export const GlobalAiDrawer: React.FC = () => {
                 </div>
               </div>
             ))}
+            {isAiThinking && (
+              <div className="flex flex-col items-start">
+                <div className="text-[10px] text-slate-400 mb-1 px-1">Nook AI • Thinking...</div>
+                <div className="rounded-xl px-3.5 py-2.5 text-xs bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/60 flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                  <span>Thinking with Gemini 3.5 Flash...</span>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
 
@@ -436,9 +516,10 @@ export const GlobalAiDrawer: React.FC = () => {
             />
             <button
               type="submit"
-              className="p-2 rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white transition-colors"
+              disabled={isAiThinking || !inputText.trim()}
+              className="p-2 rounded-md bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white transition-colors disabled:opacity-50"
             >
-              <Send className="w-3.5 h-3.5" />
+              {isAiThinking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             </button>
           </form>
         </>

@@ -36,6 +36,7 @@ export const AiTutorView: React.FC = () => {
     renameChatSession,
     clearChatSessionMessages,
     sendAiMessage,
+    isAiThinking,
     courses,
     tasks,
     addNote,
@@ -49,7 +50,6 @@ export const AiTutorView: React.FC = () => {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [savedNoteMsgId, setSavedNoteMsgId] = useState<string | null>(null);
   const [savedTaskMsgId, setSavedTaskMsgId] = useState<string | null>(null);
@@ -58,6 +58,7 @@ export const AiTutorView: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const isGenerating = isAiThinking;
   const activeSession = chatSessions.find(s => s.id === activeChatSessionId) || chatSessions[0];
 
   useEffect(() => {
@@ -82,11 +83,7 @@ export const AiTutorView: React.FC = () => {
       textareaRef.current.style.height = 'auto';
     }
 
-    setIsGenerating(true);
     sendAiMessage(text);
-    setTimeout(() => {
-      setIsGenerating(false);
-    }, 1200);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -299,7 +296,7 @@ export const AiTutorView: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Gemini 3.5 Flash-Lite</span>
+              <span>Gemini 3.5 Flash</span>
             </div>
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold">
               ● Active

@@ -853,13 +853,14 @@ export async function dbSaveAllTablesToDatabase(userId: string, data: any): Prom
     // Ask AI Chat Sessions & Full Message Histories
     if (Array.isArray(data.chatSessions) && data.chatSessions.length > 0) {
       const records = data.chatSessions.map((s: ChatSession) => ({
-        id: s.id,
+        id: s.id === 'session_default' ? `session_${userId}_default` : s.id,
         user_id: userId,
         title: s.title,
         messages: s.messages || [],
         updated_at: s.updatedAt || new Date().toISOString()
       }));
-      await client.from('chat_sessions').upsert(records, { onConflict: 'id' });
+      const { error } = await client.from('chat_sessions').upsert(records, { onConflict: 'id' });
+      if (error) console.warn('Failed upserting chat_sessions batch:', error.message);
     }
 
     // Calendar Events
@@ -1919,13 +1920,17 @@ export async function dbSaveChatSession(userId: string, session: ChatSession): P
   if (!client || !userId) return;
   try {
     markLocalDbWrite();
-    await client.from('chat_sessions').upsert({
-      id: session.id,
+    const scopedId = session.id === 'session_default' ? `session_${userId}_default` : session.id;
+    const { error } = await client.from('chat_sessions').upsert({
+      id: scopedId,
       user_id: userId,
       title: session.title,
       messages: session.messages || [],
       updated_at: session.updatedAt || new Date().toISOString()
     }, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase chat_sessions upsert warning:', error.message);
+    }
   } catch (err) {
     console.warn('Failed saving chat session to DB:', err);
   }

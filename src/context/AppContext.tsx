@@ -197,6 +197,7 @@ interface AppContextType {
   clearChatSessionMessages: (id: string) => void;
   sendAiMessage: (text: string) => void;
   clearAiChat: () => void;
+  isAiThinking: boolean;
   isAiReasoning: boolean;
   setIsAiReasoning: (reasoning: boolean) => void;
   aiMemories: AiMemory[];
@@ -866,23 +867,76 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Derived current session messages
   const activeChatSession = chatSessions.find(s => s.id === activeChatSessionId) || chatSessions[0];
   const aiMessages = activeChatSession ? activeChatSession.messages : [defaultInitialWelcome];
+  const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
 
-  const setAiMessages = useCallback((updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
-    setChatSessions(prev => {
-      const active = prev.find(s => s.id === activeChatSessionId) || prev[0];
-      if (!active) return prev;
-      const nextMsgs = typeof updater === 'function' ? updater(active.messages) : updater;
-      const updatedSession: ChatSession = {
-        ...active,
-        messages: nextMsgs,
-        updatedAt: new Date().toISOString()
-      };
-      if (user && isSupabaseConfigured()) {
-        dbSaveChatSession(user.id, updatedSession).catch(err => console.warn('DB chat save:', err));
-      }
-      return prev.map(s => s.id === active.id ? updatedSession : s);
-    });
-  }, [activeChatSessionId, user]);
+  const updateSessionMessages = useCallback(
+    (
+      targetSessionId: string | undefined,
+      updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
+      optionalNewTitle?: string
+    ) => {
+      setChatSessions(prev => {
+        const fallbackId = user?.id ? `session_${user.id}_default` : `session_${Date.now()}`;
+        const existingTarget =
+          (targetSessionId && prev.find(s => s.id === targetSessionId)) ||
+          prev.find(s => s.id === activeChatSessionId) ||
+          prev[0];
+
+        let nextList: ChatSession[];
+        let savedSession: ChatSession;
+
+        if (!existingTarget) {
+          const initialMsgs = typeof updater === 'function' ? updater([defaultInitialWelcome]) : updater;
+          savedSession = {
+            id: targetSessionId || fallbackId,
+            title: optionalNewTitle || 'Study Assistant',
+            messages: initialMsgs,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          setActiveChatSessionId(savedSession.id);
+          nextList = [savedSession];
+        } else {
+          const resolvedId =
+            user?.id && existingTarget.id === 'session_default'
+              ? `session_${user.id}_default`
+              : existingTarget.id;
+          const nextMsgs = typeof updater === 'function' ? updater(existingTarget.messages) : updater;
+          savedSession = {
+            ...existingTarget,
+            id: resolvedId,
+            title: optionalNewTitle || existingTarget.title,
+            messages: nextMsgs,
+            updatedAt: new Date().toISOString()
+          };
+          if (resolvedId !== existingTarget.id) {
+            setActiveChatSessionId(resolvedId);
+          }
+          nextList = prev.map(s => (s.id === existingTarget.id ? savedSession : s));
+        }
+
+        // Persist immediately to localStorage even during settling refs so responses are never lost
+        try {
+          localStorage.setItem(`${storageKey}_chat_sessions`, JSON.stringify(nextList));
+          localStorage.setItem(`${storageKey}_active_chat_session_id`, savedSession.id);
+        } catch { }
+
+        if (user && isSupabaseConfigured()) {
+          dbSaveChatSession(user.id, savedSession).catch(err => console.warn('DB chat save:', err));
+        }
+
+        return nextList;
+      });
+    },
+    [activeChatSessionId, defaultInitialWelcome, storageKey, user]
+  );
+
+  const setAiMessages = useCallback(
+    (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+      updateSessionMessages(activeChatSessionId, updater);
+    },
+    [activeChatSessionId, updateSessionMessages]
+  );
 
   const createNewChatSession = useCallback((title?: string) => {
     const newId = `session_${Date.now()}`;
@@ -3765,36 +3819,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // AI Assistant Chat & Actions
   const sendAiMessage = (text: string) => {
+    const trimmedInput = text.trim();
+    if (!trimmedInput) return;
+
+    const currentSession = chatSessions.find(s => s.id === activeChatSessionId) || chatSessions[0];
+    const resolvedSessionId =
+      currentSession?.id === 'session_default' && user?.id
+        ? `session_${user.id}_default`
+        : currentSession?.id || (user?.id ? `session_${user.id}_default` : `session_${Date.now()}`);
+
     const userMsg: ChatMessage = {
       id: generateUniqueId('msg_usr'),
       sender: 'user',
-      content: text,
+      content: trimmedInput,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setAiMessages(prev => [...prev, userMsg]);
+    const shouldRename =
+      !currentSession || currentSession.title === 'New Chat' || currentSession.title === 'Study Assistant';
+    const generatedTitle = shouldRename
+      ? trimmedInput.slice(0, 34).trim() + (trimmedInput.length > 34 ? '...' : '')
+      : undefined;
+
+    // Atomically save the user's message + updated title into the active session
+    updateSessionMessages(resolvedSessionId, prev => [...prev, userMsg], generatedTitle);
 
     // Detect & persist any explicit preferences the user stated in this message
-    const newlySavedMemories = detectAndSaveExplicitMemories(text);
+    const newlySavedMemories = detectAndSaveExplicitMemories(trimmedInput);
     const activeMemoryStrings: string[] = [
       ...newlySavedMemories.map(m => m.content || m.fact || ''),
       ...aiMemories.map(m => m.content || m.fact || '')
     ].filter((s): s is string => Boolean(s)).slice(0, 6);
 
-    const currentSession = chatSessions.find(s => s.id === activeChatSessionId);
-    if (currentSession && (currentSession.title === 'New Chat' || currentSession.title === 'Study Assistant')) {
-      const trimmedTitle = text.trim();
-      const generatedTitle = trimmedTitle.slice(0, 34).trim() + (trimmedTitle.length > 34 ? '...' : '');
-      if (generatedTitle) {
-        renameChatSession(currentSession.id, generatedTitle);
-      }
+    const geminiKey = ((import.meta as any).env?.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '';
+    const lower = trimmedInput.toLowerCase();
+
+    let scheduleCtx: ReturnType<typeof getAcademicScheduleContext> | null = null;
+    try {
+      scheduleCtx = getAcademicScheduleContext(courses, assignments, tasks, events, exams);
+    } catch (err) {
+      console.warn('Schedule context build warning:', err);
     }
 
-    const geminiKey = ((import.meta as any).env?.VITE_GEMINI_API_KEY as string) || localStorage.getItem('nook_gemini_api_key') || '';
-    const lower = text.toLowerCase();
-    const scheduleCtx = getAcademicScheduleContext(courses, assignments, tasks, events, exams);
-
-    // If student has connected their free Google Gemini API key and is asking study/concept questions
+    // If student has connected their Google Gemini API key and is asking study/concept questions
     if (
       geminiKey &&
       geminiKey.trim().length > 10 &&
@@ -3802,86 +3869,127 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       !lower.startsWith('add course') &&
       !lower.startsWith('create course')
     ) {
+      setIsAiThinking(true);
       (async () => {
-        const candidateModels = [
-          'gemini-3.5-flash',
-          'gemini-2.5-flash',
-          'gemini-2.0-flash'
-        ];
+        let lastGeminiError = '';
+        try {
+          const candidateModels = [
+            'gemini-3.5-flash',
+            'gemini-2.5-flash',
+            'gemini-2.0-flash'
+          ];
 
-        const memoryContextBlock =
-          activeMemoryStrings.length > 0
-            ? `\n\nUSER SAVED PREFERENCES & AI MEMORY (Strictly respect these and never invent preferences not listed here):\n${activeMemoryStrings.map(m => `- ${m}`).join('\n')}`
-            : '\n\nUSER SAVED PREFERENCES: None saved yet. Do not assume or hallucinate unstated preferences.';
+          const memoryContextBlock =
+            activeMemoryStrings.length > 0
+              ? `\n\nUSER SAVED PREFERENCES & AI MEMORY (Strictly respect these and never invent preferences not listed here):\n${activeMemoryStrings.map(m => `- ${m}`).join('\n')}`
+              : '\n\nUSER SAVED PREFERENCES: None saved yet. Do not assume or hallucinate unstated preferences.';
 
-        const modeContextBlock = `\nCURRENT ACADEMIC MODE: ${activeAcademicMode.toUpperCase()} MODE (${activeAcademicMode === 'normal'
-          ? 'Regular weekly classes active'
-          : 'Regular weekly lectures are SUSPENDED; only examinations and revision take place'
-          }).`;
+          const modeContextBlock = `\nCURRENT ACADEMIC MODE: ${activeAcademicMode.toUpperCase()} MODE (${activeAcademicMode === 'normal'
+            ? 'Regular weekly classes active'
+            : 'Regular weekly lectures are SUSPENDED; only examinations and revision take place'
+            }).`;
 
-        const academicPrompt =
-          buildGeminiAcademicPrompt(scheduleCtx, courses, text) + memoryContextBlock + modeContextBlock;
+          const academicPrompt =
+            (scheduleCtx
+              ? buildGeminiAcademicPrompt(scheduleCtx, courses, trimmedInput)
+              : `Student question: ${trimmedInput}`) +
+            memoryContextBlock +
+            modeContextBlock;
 
-        for (const model of candidateModels) {
-          try {
-            const resp = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey.trim()}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  contents: [
-                    {
-                      role: 'user',
-                      parts: [{ text: academicPrompt }]
-                    }
-                  ]
-                })
-              }
-            );
-            const data = await resp.json();
-            const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (geminiText) {
-              const isEvasive =
-                geminiText.toLowerCase().includes('does not currently have access') ||
-                geminiText.toLowerCase().includes('do not currently have access') ||
-                geminiText.toLowerCase().includes('reply with the specific day of the week');
-
-              let finalText = isEvasive ? generateScheduleAnswer(text, scheduleCtx, courses) : geminiText;
-              if (newlySavedMemories.length > 0) {
-                finalText = `🧠 *Saved to your AI Memory: "${newlySavedMemories[0].content}"*\n\n` + finalText;
-              }
-
-              setAiMessages(prev => [
-                ...prev,
+          for (const model of candidateModels) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 14000);
+            try {
+              const resp = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey.trim())}`,
                 {
-                  id: generateUniqueId('msg_ai'),
-                  sender: 'assistant',
-                  content: finalText,
-                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  memoriesUsed: activeMemoryStrings.length > 0 ? activeMemoryStrings.slice(0, 3) : undefined
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  signal: controller.signal,
+                  body: JSON.stringify({
+                    contents: [
+                      {
+                        role: 'user',
+                        parts: [{ text: academicPrompt }]
+                      }
+                    ]
+                  })
                 }
-              ]);
-              return;
-            }
-          } catch (err) {
-            console.warn(`Model ${model} fetch error, trying next fallback:`, err);
-          }
-        }
+              );
+              clearTimeout(timeoutId);
+              const data = await resp.json().catch(() => ({}));
+              if (!resp.ok) {
+                lastGeminiError = data?.error?.message || `HTTP ${resp.status} from ${model}`;
+                console.warn(`Gemini ${model} failed:`, lastGeminiError);
+                continue;
+              }
+              const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (geminiText && geminiText.trim()) {
+                const isEvasive =
+                  geminiText.toLowerCase().includes('does not currently have access') ||
+                  geminiText.toLowerCase().includes('do not currently have access') ||
+                  geminiText.toLowerCase().includes('reply with the specific day of the week');
 
-        // Fallback to local heuristic engine on all errors
-        runLocalAiResponse(text, newlySavedMemories, activeMemoryStrings);
+                let finalText =
+                  isEvasive && scheduleCtx
+                    ? generateScheduleAnswer(trimmedInput, scheduleCtx, courses)
+                    : geminiText;
+                if (newlySavedMemories.length > 0) {
+                  finalText = `🧠 *Saved to your AI Memory: "${newlySavedMemories[0].content}"*\n\n` + finalText;
+                }
+
+                updateSessionMessages(resolvedSessionId, prev => [
+                  ...prev,
+                  {
+                    id: generateUniqueId('msg_ai'),
+                    sender: 'assistant',
+                    content: finalText,
+                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    memoriesUsed: activeMemoryStrings.length > 0 ? activeMemoryStrings.slice(0, 3) : undefined
+                  }
+                ]);
+                return;
+              }
+            } catch (err: any) {
+              clearTimeout(timeoutId);
+              lastGeminiError = err?.name === 'AbortError' ? `${model} timed out` : err?.message || 'Network error';
+              console.warn(`Model ${model} fetch error, trying next fallback:`, err);
+            }
+          }
+
+          // Fallback to local heuristic engine on all errors — always post an answer so chat never stalls
+          runLocalAiResponse(
+            trimmedInput,
+            newlySavedMemories,
+            activeMemoryStrings,
+            resolvedSessionId,
+            lastGeminiError
+          );
+        } catch (err: any) {
+          console.warn('Ask AI unexpected error:', err);
+          runLocalAiResponse(
+            trimmedInput,
+            newlySavedMemories,
+            activeMemoryStrings,
+            resolvedSessionId,
+            err?.message || 'Unexpected AI error'
+          );
+        } finally {
+          setIsAiThinking(false);
+        }
       })();
       return;
     }
 
-    runLocalAiResponse(text, newlySavedMemories, activeMemoryStrings);
+    runLocalAiResponse(trimmedInput, newlySavedMemories, activeMemoryStrings, resolvedSessionId);
   };
 
   const runLocalAiResponse = (
     text: string,
     newlySavedMemories: AiMemory[] = [],
-    activeMemoryStrings: string[] = []
+    activeMemoryStrings: string[] = [],
+    targetSessionId?: string,
+    geminiErrorNote?: string
   ) => {
     setTimeout(() => {
       const lower = text.toLowerCase();
@@ -4034,17 +4142,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }** open task(s), and **${exams.length}** scheduled exam(s).\n\nHow would you like me to help with your study plan, notes, or coursework today?`;
       }
 
+      const finalReplyContent = geminiErrorNote
+        ? `> ⚠️ *Live Gemini API unavailable (${geminiErrorNote}). Showing built-in workspace response instead — verify your key in **Study with AI & Key**.*\n\n${replyContent}`
+        : replyContent;
+
       const assistantMsg: ChatMessage = {
         id: generateUniqueId('msg_ai'),
         sender: 'assistant',
-        content: replyContent,
+        content: finalReplyContent,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         reasoningSteps,
         memoriesUsed: activeMemoryStrings.length > 0 ? activeMemoryStrings.slice(0, 3) : undefined,
         actionProposals: proposals.length > 0 ? proposals : undefined
       };
 
-      setAiMessages(prev => [...prev, assistantMsg]);
+      updateSessionMessages(targetSessionId, prev => [...prev, assistantMsg]);
     }, 350);
   };
 
@@ -4748,7 +4860,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(data.githubRepos)) setIfChanged(setGithubRepos, data.githubRepos);
     if (Array.isArray(data.chatSessions) && data.chatSessions.length > 0) {
       setIfChanged(setChatSessions, data.chatSessions);
-      if (data.activeChatSessionId) setIfChanged(setActiveChatSessionId, data.activeChatSessionId);
+      const validSessionId =
+        data.activeChatSessionId && data.chatSessions.some((s: ChatSession) => s.id === data.activeChatSessionId)
+          ? data.activeChatSessionId
+          : data.chatSessions[0].id;
+      setIfChanged(setActiveChatSessionId, validSessionId);
     }
     if (Array.isArray(data.notifications)) setIfChanged(setNotifications, data.notifications);
     if (Array.isArray(data.reminderLogs)) setIfChanged(setReminderLogs, data.reminderLogs);
@@ -4990,6 +5106,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clearChatSessionMessages,
         sendAiMessage,
         clearAiChat,
+        isAiThinking,
         isAiReasoning,
         setIsAiReasoning,
         aiMemories,
