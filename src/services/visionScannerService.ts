@@ -1,4 +1,4 @@
-import { getGeminiApiKey } from './fileAiService';
+import { getGeminiApiKey, getPreferredGeminiModels } from './fileAiService';
 
 export type VisionScanMode = 'handwriting' | 'homework_hints' | 'diagram';
 
@@ -75,7 +75,7 @@ Output clean Markdown with:
     ? `${promptByMode[mode]}\n\nAdditional user context: ${extraNotes.trim()}`
     : promptByMode[mode];
 
-  const models = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+  const models = getPreferredGeminiModels(['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']);
   let lastError = 'Gemini Vision request failed.';
 
   for (const model of models) {

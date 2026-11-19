@@ -1,4 +1,4 @@
-import { getGeminiApiKey, queryGemini } from './fileAiService';
+import { getGeminiApiKey, getPreferredGeminiModels, queryGemini } from './fileAiService';
 
 export interface UploadedImagePayload {
   name?: string;
@@ -213,7 +213,7 @@ Return ONLY valid JSON (no markdown wrappers outside JSON) with this exact schem
         parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
       }
 
-      const models = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+      const models = getPreferredGeminiModels(['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']);
       for (const model of models) {
         try {
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;

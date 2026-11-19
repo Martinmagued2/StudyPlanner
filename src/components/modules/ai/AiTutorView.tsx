@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../../context/AppContext';
 import { MarkdownRenderer } from '../../common/MarkdownRenderer';
+import { GeminiModelSelect } from './GeminiModelSelect';
 
 export const AiTutorView: React.FC = () => {
   const {
@@ -291,17 +292,15 @@ export const AiTutorView: React.FC = () => {
           )}
         </div>
 
-        {/* Sidebar Footer: Model Status & Key Settings */}
+        {/* Sidebar Footer: Active Model Selector & Key Settings */}
         <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 space-y-2 text-xs">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Gemini 3.5 Flash</span>
-            </div>
+          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+            <span className="font-semibold">AI Model</span>
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold">
-              ● Active
+              ● Live
             </span>
           </div>
+          <GeminiModelSelect compact />
           <button
             onClick={() => setIsAiDrawerOpen(true)}
             className="w-full py-1 px-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/60 flex items-center justify-center gap-1.5 transition-colors"
@@ -341,6 +340,7 @@ export const AiTutorView: React.FC = () => {
 
           {/* Action Bar */}
           <div className="flex items-center gap-2">
+            <GeminiModelSelect compact showRefresh={false} className="hidden md:flex w-48" />
             <button
               onClick={handleExportTranscript}
               className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition-colors"

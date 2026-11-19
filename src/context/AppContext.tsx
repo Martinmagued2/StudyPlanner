@@ -92,6 +92,15 @@ import {
 } from '../services/supabase';
 import { fetchRepoCommits, getGitHubToken } from '../services/githubService';
 import {
+  GEMINI_FLASH_MODELS,
+  discoverActiveFlashModels,
+  discoverAllActiveGeminiModels,
+  getGeminiApiKey,
+  getPreferredGeminiModels,
+  getSelectedGeminiModel,
+  saveSelectedGeminiModel
+} from '../services/fileAiService';
+import {
   getAcademicScheduleContext,
   isScheduleOrDateQuery,
   generateScheduleAnswer,
@@ -200,6 +209,10 @@ interface AppContextType {
   isAiThinking: boolean;
   isAiReasoning: boolean;
   setIsAiReasoning: (reasoning: boolean) => void;
+  selectedGeminiModel: string;
+  setSelectedGeminiModel: (modelId: string) => void;
+  availableGeminiModels: Array<{ id: string; displayName: string }>;
+  refreshAvailableGeminiModels: () => Promise<Array<{ id: string; displayName: string }>>;
   aiMemories: AiMemory[];
   addAiMemory: (content: string, category?: AiMemory['category'], source?: 'explicit' | 'inferred') => AiMemory;
   updateAiMemory: (id: string, updates: Partial<AiMemory>) => void;
@@ -868,6 +881,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const activeChatSession = chatSessions.find(s => s.id === activeChatSessionId) || chatSessions[0];
   const aiMessages = activeChatSession ? activeChatSession.messages : [defaultInitialWelcome];
   const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
+  const [selectedGeminiModel, setSelectedGeminiModelState] = useState<string>(() => getSelectedGeminiModel());
+  const [availableGeminiModels, setAvailableGeminiModels] = useState<Array<{ id: string; displayName: string }>>([]);
+
+  const setSelectedGeminiModel = useCallback((modelId: string) => {
+    const clean = modelId || 'auto';
+    setSelectedGeminiModelState(clean);
+    saveSelectedGeminiModel(clean);
+  }, []);
+
+  const refreshAvailableGeminiModels = useCallback(async (overrideKey?: string) => {
+    const key = (overrideKey ?? getGeminiApiKey()).trim();
+    if (!key || key.length < 10) return [];
+    const list = await discoverAllActiveGeminiModels(key);
+    if (list.length > 0) {
+      setAvailableGeminiModels(list);
+    }
+    return list;
+  }, []);
+
+  useEffect(() => {
+    const key = getGeminiApiKey();
+    if (key && key.trim().length >= 10) {
+      refreshAvailableGeminiModels(key).catch(() => {});
+    }
+  }, [refreshAvailableGeminiModels]);
 
   const updateSessionMessages = useCallback(
     (
@@ -3873,12 +3911,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (async () => {
         let lastGeminiError = '';
         try {
-          const candidateModels = [
-            'gemini-3.5-flash',
-            'gemini-2.5-flash',
-            'gemini-2.0-flash'
-          ];
-
           const memoryContextBlock =
             activeMemoryStrings.length > 0
               ? `\n\nUSER SAVED PREFERENCES & AI MEMORY (Strictly respect these and never invent preferences not listed here):\n${activeMemoryStrings.map(m => `- ${m}`).join('\n')}`
@@ -3896,65 +3928,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             memoryContextBlock +
             modeContextBlock;
 
-          for (const model of candidateModels) {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 14000);
-            try {
-              const resp = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey.trim())}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  signal: controller.signal,
-                  body: JSON.stringify({
-                    contents: [
-                      {
-                        role: 'user',
-                        parts: [{ text: academicPrompt }]
-                      }
-                    ]
-                  })
-                }
-              );
-              clearTimeout(timeoutId);
-              const data = await resp.json().catch(() => ({}));
-              if (!resp.ok) {
-                lastGeminiError = data?.error?.message || `HTTP ${resp.status} from ${model}`;
-                console.warn(`Gemini ${model} failed:`, lastGeminiError);
-                continue;
-              }
-              const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (geminiText && geminiText.trim()) {
-                const isEvasive =
-                  geminiText.toLowerCase().includes('does not currently have access') ||
-                  geminiText.toLowerCase().includes('do not currently have access') ||
-                  geminiText.toLowerCase().includes('reply with the specific day of the week');
-
-                let finalText =
-                  isEvasive && scheduleCtx
-                    ? generateScheduleAnswer(trimmedInput, scheduleCtx, courses)
-                    : geminiText;
-                if (newlySavedMemories.length > 0) {
-                  finalText = `🧠 *Saved to your AI Memory: "${newlySavedMemories[0].content}"*\n\n` + finalText;
-                }
-
-                updateSessionMessages(resolvedSessionId, prev => [
-                  ...prev,
+          const tried = new Set<string>();
+          const tryCandidateList = async (modelsToTry: string[]): Promise<boolean> => {
+            for (const model of modelsToTry) {
+              if (tried.has(model)) continue;
+              tried.add(model);
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 14000);
+              try {
+                const resp = await fetch(
+                  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey.trim())}`,
                   {
-                    id: generateUniqueId('msg_ai'),
-                    sender: 'assistant',
-                    content: finalText,
-                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    memoriesUsed: activeMemoryStrings.length > 0 ? activeMemoryStrings.slice(0, 3) : undefined
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: controller.signal,
+                    body: JSON.stringify({
+                      contents: [
+                        {
+                          role: 'user',
+                          parts: [{ text: academicPrompt }]
+                        }
+                      ]
+                    })
                   }
-                ]);
-                return;
+                );
+                clearTimeout(timeoutId);
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                  lastGeminiError = data?.error?.message || `HTTP ${resp.status} from ${model}`;
+                  console.warn(`Gemini ${model} failed:`, lastGeminiError);
+                  continue;
+                }
+                const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (geminiText && geminiText.trim()) {
+                  const isEvasive =
+                    geminiText.toLowerCase().includes('does not currently have access') ||
+                    geminiText.toLowerCase().includes('do not currently have access') ||
+                    geminiText.toLowerCase().includes('reply with the specific day of the week');
+
+                  let finalText =
+                    isEvasive && scheduleCtx
+                      ? generateScheduleAnswer(trimmedInput, scheduleCtx, courses)
+                      : geminiText;
+                  if (newlySavedMemories.length > 0) {
+                    finalText = `🧠 *Saved to your AI Memory: "${newlySavedMemories[0].content}"*\n\n` + finalText;
+                  }
+
+                  updateSessionMessages(resolvedSessionId, prev => [
+                    ...prev,
+                    {
+                      id: generateUniqueId('msg_ai'),
+                      sender: 'assistant',
+                      content: finalText,
+                      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                      memoriesUsed: activeMemoryStrings.length > 0 ? activeMemoryStrings.slice(0, 3) : undefined
+                    }
+                  ]);
+                  return true;
+                }
+              } catch (err: any) {
+                clearTimeout(timeoutId);
+                lastGeminiError = err?.name === 'AbortError' ? `${model} timed out` : err?.message || 'Network error';
+                console.warn(`Model ${model} fetch error, trying next fallback:`, err);
               }
-            } catch (err: any) {
-              clearTimeout(timeoutId);
-              lastGeminiError = err?.name === 'AbortError' ? `${model} timed out` : err?.message || 'Network error';
-              console.warn(`Model ${model} fetch error, trying next fallback:`, err);
             }
+            return false;
+          };
+
+          const succeededPrimary = await tryCandidateList(getPreferredGeminiModels());
+          if (succeededPrimary) return;
+
+          const discovered = await discoverActiveFlashModels(geminiKey);
+          if (discovered.length > 0 && (await tryCandidateList(discovered))) {
+            return;
           }
 
           // Fallback to local heuristic engine on all errors — always post an answer so chat never stalls
@@ -5109,6 +5155,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isAiThinking,
         isAiReasoning,
         setIsAiReasoning,
+        selectedGeminiModel,
+        setSelectedGeminiModel,
+        availableGeminiModels,
+        refreshAvailableGeminiModels,
         aiMemories,
         addAiMemory,
         updateAiMemory,

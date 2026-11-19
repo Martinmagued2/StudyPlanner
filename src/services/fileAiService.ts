@@ -291,6 +291,86 @@ export function getGeminiApiKey(): string {
   }
 }
 
+export const GEMINI_MODEL_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: 'auto', label: 'Auto (Recommended • Latest Active)' },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+  { id: 'gemini-3.8-pro', label: 'Gemini 3.8 Pro' },
+  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' }
+];
+
+export const GEMINI_FLASH_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash'
+];
+
+export function getSelectedGeminiModel(): string {
+  try {
+    return localStorage.getItem('nook_gemini_model') || 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+export function saveSelectedGeminiModel(modelId: string): void {
+  try {
+    localStorage.setItem('nook_gemini_model', modelId || 'auto');
+  } catch { }
+}
+
+export function getPreferredGeminiModels(customModels?: string[]): string[] {
+  const chosen = getSelectedGeminiModel();
+  const base = customModels && customModels.length > 0 ? customModels : GEMINI_FLASH_MODELS;
+  if (!chosen || chosen === 'auto') {
+    return Array.from(new Set(base));
+  }
+  return Array.from(new Set([chosen, ...base]));
+}
+
+export async function discoverAllActiveGeminiModels(
+  apiKey: string
+): Promise<Array<{ id: string; displayName: string }>> {
+  if (!apiKey || apiKey.trim().length < 10) return [];
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`
+    );
+    if (!res.ok) return [];
+    const data: any = await res.json().catch(() => ({}));
+    const list: any[] = Array.isArray(data?.models) ? data.models : [];
+    return list
+      .filter(
+        m =>
+          typeof m?.name === 'string' &&
+          m.name.includes('gemini') &&
+          !m.name.includes('embedding') &&
+          !m.name.includes('aqa') &&
+          !m.name.includes('tts') &&
+          Array.isArray(m.supportedGenerationMethods) &&
+          m.supportedGenerationMethods.includes('generateContent')
+      )
+      .map(m => ({
+        id: String(m.name).replace(/^models\//, ''),
+        displayName: String(m.displayName || String(m.name).replace(/^models\//, ''))
+      }))
+      .reverse();
+  } catch {
+    return [];
+  }
+}
+
+export async function discoverActiveFlashModels(apiKey: string): Promise<string[]> {
+  const all = await discoverAllActiveGeminiModels(apiKey);
+  return all
+    .filter(m => m.id.includes('flash'))
+    .map(m => m.id)
+    .slice(0, 4);
+}
+
 /**
  * Query Google Gemini API with fallback models
  */
@@ -298,46 +378,52 @@ export async function queryGemini(prompt: string, systemInstruction?: string): P
   const apiKey = getGeminiApiKey();
   if (!apiKey || apiKey.trim().length < 10) return null;
 
-  const candidateModels = [
-    'gemini-3.5-flash',
-    'gemini-3.8-flash',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash'
-  ];
-
-  for (const model of candidateModels) {
-    try {
-      const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              {
-                role: 'user',
-                parts: [{ text: `${systemInstruction ? `[INSTRUCTION: ${systemInstruction}]\n\n` : ''}${prompt}` }]
+  const tried = new Set<string>();
+  const tryModels = async (models: string[]): Promise<string | null> => {
+    for (const model of models) {
+      if (tried.has(model)) continue;
+      tried.add(model);
+      try {
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey.trim())}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: 'user',
+                  parts: [{ text: `${systemInstruction ? `[INSTRUCTION: ${systemInstruction}]\n\n` : ''}${prompt}` }]
+                }
+              ],
+              generationConfig: {
+                temperature: 0.3,
+                maxOutputTokens: 3000
               }
-            ],
-            generationConfig: {
-              temperature: 0.3,
-              maxOutputTokens: 3000
-            }
-          })
+            })
+          }
+        );
+
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text && text.trim().length > 10) {
+          return text.trim();
         }
-      );
-
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text && text.trim().length > 10) {
-        return text.trim();
+      } catch (err) {
+        console.warn(`Gemini model ${model} request failed, trying next fallback:`, err);
       }
-    } catch (err) {
-      console.warn(`Gemini model ${model} request failed, trying next fallback:`, err);
     }
-  }
+    return null;
+  };
 
+  const direct = await tryModels(getPreferredGeminiModels());
+  if (direct) return direct;
+
+  const discovered = await discoverActiveFlashModels(apiKey);
+  if (discovered.length > 0) {
+    return tryModels(discovered);
+  }
   return null;
 }
 

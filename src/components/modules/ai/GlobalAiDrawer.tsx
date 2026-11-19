@@ -26,6 +26,12 @@ import {
   Loader2
 } from 'lucide-react';
 import { MarkdownRenderer } from '../../common/MarkdownRenderer';
+import {
+  GEMINI_FLASH_MODELS,
+  discoverActiveFlashModels,
+  getPreferredGeminiModels
+} from '../../../services/fileAiService';
+import { GeminiModelSelect } from './GeminiModelSelect';
 
 export const GlobalAiDrawer: React.FC = () => {
   const {
@@ -42,6 +48,8 @@ export const GlobalAiDrawer: React.FC = () => {
     isAiThinking,
     isAiReasoning,
     setIsAiReasoning,
+    selectedGeminiModel,
+    refreshAvailableGeminiModels,
     aiMemories,
     addAiMemory,
     updateAiMemory,
@@ -79,13 +87,10 @@ export const GlobalAiDrawer: React.FC = () => {
     setIsTestingKey(true);
     setApiKeySavedStatus('Verifying with Google Gemini...');
 
-    // Prioritize high-throughput, low-latency models to avoid 503 / high demand bottlenecks
-    const candidateModels = [
-      'gemini-3.5-flash',
-      'gemini-3.8-flash',
-      'gemini-2.5-flash',
-      'gemini-3.5-flash-lite'
-    ];
+    // Prioritize user-selected model, then fallback Flash models + live key discovery
+    const discovered = await discoverActiveFlashModels(geminiApiKey);
+    await refreshAvailableGeminiModels();
+    const candidateModels = getPreferredGeminiModels([...GEMINI_FLASH_MODELS, ...discovered]);
 
     let verified = false;
     let lastError = '';
@@ -255,29 +260,32 @@ export const GlobalAiDrawer: React.FC = () => {
       {/* Body */}
       {activeTab === 'chat' ? (
         <>
-          {/* Saved Sessions Bar */}
-          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 flex items-center gap-2 text-[11px]">
-            <select
-              value={activeChatSessionId}
-              onChange={e => selectChatSession(e.target.value)}
-              className="flex-1 min-w-0 px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 truncate focus:outline-none"
-              title="Switch saved AI conversations"
-            >
-              {chatSessions.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.title} ({s.messages.length} msg)
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => createNewChatSession()}
-              className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-1 shrink-0"
-              title="Start a new saved chat session"
-            >
-              <Plus className="w-3 h-3" />
-              <span>New</span>
-            </button>
+          {/* Saved Sessions & Model Bar */}
+          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 space-y-1.5 text-[11px]">
+            <div className="flex items-center gap-2">
+              <select
+                value={activeChatSessionId}
+                onChange={e => selectChatSession(e.target.value)}
+                className="flex-1 min-w-0 px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 truncate focus:outline-none"
+                title="Switch saved AI conversations"
+              >
+                {chatSessions.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.title} ({s.messages.length} msg)
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => createNewChatSession()}
+                className="px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-1 shrink-0"
+                title="Start a new saved chat session"
+              >
+                <Plus className="w-3 h-3" />
+                <span>New</span>
+              </button>
+            </div>
+            <GeminiModelSelect compact />
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -445,7 +453,9 @@ export const GlobalAiDrawer: React.FC = () => {
                 <div className="text-[10px] text-slate-400 mb-1 px-1">Nook AI • Thinking...</div>
                 <div className="rounded-xl px-3.5 py-2.5 text-xs bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/60 flex items-center gap-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                  <span>Thinking with Gemini 3.5 Flash...</span>
+                  <span>
+                    Thinking with {selectedGeminiModel === 'auto' ? 'Gemini (Auto • 3.8 Flash)' : selectedGeminiModel}...
+                  </span>
                 </div>
               </div>
             )}
@@ -764,6 +774,14 @@ export const GlobalAiDrawer: React.FC = () => {
                 </div>
               )}
             </form>
+
+            <div className="pt-2 border-t border-blue-200/70 dark:border-blue-900/60 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                <span>Active Gemini Model</span>
+                <span className="text-[10px] font-normal text-slate-500">Click refresh to fetch your key&apos;s live models</span>
+              </div>
+              <GeminiModelSelect />
+            </div>
           </div>
 
           {/* Quick Study Prompts (Click to Use) */}
